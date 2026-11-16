@@ -3725,6 +3725,109 @@
                     "minLength": 1,
                     "maxLength": 64
                   },
+                  "ui": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      },
+                      "platform": {
+                        "type": "string",
+                        "maxLength": 40
+                      },
+                      "locale": {
+                        "type": "string",
+                        "maxLength": 40
+                      },
+                      "width": {
+                        "type": "integer",
+                        "minimum": 64,
+                        "maximum": 8192
+                      },
+                      "height": {
+                        "type": "integer",
+                        "minimum": 64,
+                        "maximum": 8192
+                      },
+                      "root": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "screen",
+                              "section",
+                              "row",
+                              "card",
+                              "text",
+                              "button",
+                              "input",
+                              "image",
+                              "icon",
+                              "divider",
+                              "badge"
+                            ]
+                          },
+                          "text": {
+                            "type": "string",
+                            "maxLength": 2000
+                          },
+                          "key": {
+                            "type": "string",
+                            "maxLength": 512
+                          },
+                          "namespace": {
+                            "type": "string",
+                            "maxLength": 255
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "heading",
+                              "subheading",
+                              "body",
+                              "label",
+                              "caption"
+                            ]
+                          },
+                          "bordered": {
+                            "type": "boolean"
+                          },
+                          "width": {
+                            "type": "number",
+                            "exclusiveMinimum": 0,
+                            "maximum": 8192
+                          },
+                          "height": {
+                            "type": "number",
+                            "exclusiveMinimum": 0,
+                            "maximum": 8192
+                          },
+                          "columns": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 6
+                          },
+                          "children": {
+                            "type": "array",
+                            "items": {},
+                            "maxItems": 400
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "root"
+                    ],
+                    "additionalProperties": false
+                  },
                   "imageBase64": {
                     "type": "string",
                     "minLength": 1
@@ -3798,7 +3901,6 @@
                       ],
                       "additionalProperties": false
                     },
-                    "minItems": 1,
                     "maxItems": 400
                   },
                   "replace": {
@@ -3807,9 +3909,7 @@
                 },
                 "required": [
                   "name",
-                  "locale",
-                  "imageBase64",
-                  "markers"
+                  "locale"
                 ],
                 "additionalProperties": false,
                 "$schema": "http://json-schema.org/draft-07/schema#"

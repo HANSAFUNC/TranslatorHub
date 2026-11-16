@@ -213,6 +213,38 @@ export class ApiClient {
     return this.request('GET', `/projects/${projectId}/sync/sessions`);
   }
 
+  /**
+   * Upload a screen sketch, either as a picture the caller drew or as a `ui` description the
+   * platform draws. The second form is what `localehub mockup` sends: the caller has the page's
+   * code, and the platform turns it into the picture and the marker geometry.
+   */
+  uploadScreenMockup(
+    projectId: string,
+    body: {
+      name: string;
+      platform?: string;
+      locale: string;
+      ui?: unknown;
+      imageBase64?: string;
+      mimeType?: string;
+      width?: number;
+      height?: number;
+      markers?: unknown[];
+      replace?: boolean;
+    },
+  ): Promise<{
+    mockupId: string;
+    name: string;
+    platform: string;
+    locale: string;
+    replaced: boolean;
+    image: { mimeType: string; byteSize: number; width: number | null; height: number | null; checksum: string };
+    markers: { total: number; matchedKeys: number; unmatched: { key: string; namespace: string; reason: string }[] };
+    imagePath: string;
+  }> {
+    return this.request('POST', `/projects/${projectId}/mockups`, body);
+  }
+
   /* ------------------------------------------------------------------- sync */
 
   uploadScan(

@@ -10,11 +10,14 @@ import {
   imageDimensions,
   isValidLocaleTag,
   normalizeMarker,
+  renderUiSketch,
+  uiSpecIssues,
   unsafeSvgReasons,
   type MockupImageType,
   type MockupMarkerInput,
   type PlatformName,
   type ReviewStatus,
+  type UiSpec,
 } from '@localehub/contracts';
 import { createHash } from 'node:crypto';
 
@@ -144,6 +147,145 @@ export function assertMockupDimensions(image: DecodedMockupImage): void {
     413,
     { width: image.width, height: image.height, limit: MAX_MOCKUP_DIMENSION },
   );
+}
+
+/**
+ * Turn a caller's screen description into the image and markers an upload stores.
+ *
+ * This is the "generate the sketch from code" path: instead of sending a picture and measuring every
+ * string by hand, the caller sends the page's elements (`ui`) and the platform lays them out, draws
+ * them and derives the marker geometry itself. The picture and the coordinates therefore always agree
+ * with each other, and the same description always produces the same sketch.
+ *
+ * A spec is validated like an image is: the renderer's work is proportional to what the caller sent,
+ * and the result has to satisfy the same size and marker limits an upload does.
+ */
+export function renderMockupSpec(spec: UiSpec): { image: DecodedMockupImage; markers: MockupMarkerInput[] } {
+  const issues = uiSpecIssues(spec);
+  if (issues.length) {
+    throw new LocaleHubError(ErrorCode.VALIDATION_ERROR, `ui 描述有问题：${issues.join('；')}`, 422, { issues });
+  }
+
+  const rendered = renderUiSketch(spec);
+  if (rendered.truncated) {
+    throw new LocaleHubError(
+      ErrorCode.VALIDATION_ERROR,
+      'ui 描述在渲染时被截断（层级或元素数超过上限），请拆成更小的屏幕再上传。',
+      422,
+    );
+  }
+  if (!rendered.markers.length) {
+    throw new LocaleHubError(
+      ErrorCode.VALIDATION_ERROR,
+      'ui 描述里没有任何带文字的节点，画出来的草图没有可标记的 key。给 text / button / badge / input 节点填上文字。',
+      422,
+    );
+  }
+  if (rendered.markers.length > MAX_MARKERS_PER_MOCKUP) {
+    throw new LocaleHubError(
+      ErrorCode.VALIDATION_ERROR,
+      `ui 描述会生成 ${rendered.markers.length} 个标记，一个屏幕的上限是 ${MAX_MARKERS_PER_MOCKUP}`,
+      422,
+    );
+  }
+
+  const bytes = Buffer.from(rendered.svg, 'utf8');
+  if (bytes.length > MAX_MOCKUP_BYTES) {
+    throw new LocaleHubError(
+      ErrorCode.VALIDATION_ERROR,
+      `根据 ui 描述生成的草图有 ${Math.round(bytes.length / 1024)} KB，超过 ${Math.round(MAX_MOCKUP_BYTES / 1024 / 1024)} MB 的图片上限。少画一些元素，或把屏幕拆开。`,
+      413,
+      { limitBytes: MAX_MOCKUP_BYTES, actualBytes: bytes.length },
+    );
+  }
+
+  const image: DecodedMockupImage = {
+    bytes,
+    mimeType: 'image/svg+xml',
+    declaredMimeType: null,
+    width: rendered.width,
+    height: rendered.height,
+  };
+  assertMockupDimensions(image);
+
+  return {
+    image,
+    markers: rendered.markers.map((marker) => ({
+      key: marker.key,
+      namespace: marker.namespace,
+      x: marker.x,
+      y: marker.y,
+      width: marker.width,
+      height: marker.height,
+      text: marker.text,
+    })),
+  };
+}
+
+/**
+ * The one place that decides which of the two input shapes a caller used.
+ *
+ * `upload_screen_mockup` accepts either a picture (`image_base64` + `markers`) or a description
+ * (`ui`), and so does `POST /projects/:projectId/mockups`. Resolving the pair here keeps the two
+ * surfaces from disagreeing about what is required — a caller that sends neither, or both, gets the
+ * same sentence whichever door it came through.
+ */
+export function resolveMockupInput(input: {
+  imageBase64?: string | null;
+  mimeType?: string | null;
+  width?: number | null;
+  height?: number | null;
+  /** Required with `imageBase64`; ignored with `ui`, where the platform derives them. */
+  markers?: readonly (Omit<MockupMarkerInput, 'namespace'> & { namespace?: string })[] | null;
+  ui?: UiSpec | null;
+}): { image: DecodedMockupImage; markers: MockupMarkerInput[] } {
+  const hasImage = Boolean(input.imageBase64);
+  const hasUi = Boolean(input.ui);
+
+  if (hasUi && hasImage) {
+    throw new LocaleHubError(
+      ErrorCode.VALIDATION_ERROR,
+      '要么传 image_base64（自己画的图）+ markers，要么传 ui（让平台按描述画），不要同时传。',
+      422,
+    );
+  }
+
+  if (hasUi) {
+    const rendered = renderMockupSpec(input.ui!);
+    return { image: rendered.image, markers: rendered.markers };
+  }
+
+  if (!hasImage) {
+    throw new LocaleHubError(
+      ErrorCode.VALIDATION_ERROR,
+      '缺少草图：传 image_base64 + markers，或者传 ui 让平台按界面描述生成（推荐用 ui，省去手算坐标）。',
+      422,
+    );
+  }
+
+  // The wire type makes `namespace` optional (a schema default fills it in for the MCP path), while
+  // the domain requires it: an omitted namespace is the empty one.
+  const markers: MockupMarkerInput[] = (input.markers ?? []).map((marker) => ({
+    ...marker,
+    namespace: marker.namespace ?? '',
+  }));
+  if (!markers.length) {
+    throw new LocaleHubError(
+      ErrorCode.VALIDATION_ERROR,
+      '传了 image_base64 但没有 markers：图片上的每个 key 需要坐标。也可以改传 ui，由平台算坐标。',
+      422,
+    );
+  }
+
+  return {
+    image: decodeMockupImage({
+      imageBase64: input.imageBase64!,
+      mimeType: input.mimeType ?? null,
+      width: input.width ?? null,
+      height: input.height ?? null,
+    }),
+    markers,
+  };
 }
 
 export interface UpsertScreenMockupInput {

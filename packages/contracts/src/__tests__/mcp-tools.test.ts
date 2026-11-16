@@ -65,6 +65,7 @@ describe('the Remote MCP tool registry', () => {
       'platform',
       'project_id',
       'replace',
+      'ui',
       'width',
     ]);
 

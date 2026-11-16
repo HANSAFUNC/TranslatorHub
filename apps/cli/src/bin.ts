@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { loadEnvFiles } from '@localehub/config';
 import { LocalSyncServices } from '@localehub/local-sync';
@@ -47,6 +47,12 @@ const HELP = `localehub <command>
 
   status
       Local state + remote sync status + open conflicts.
+
+  mockup --page <file> [--name <screen>] [--platform web] [--locale zh-CN]
+         [--namespace <ns>] [--keys <json-file>] [--width <px>] [--height <px>] [--confirm]
+      Generate a screen sketch from a page's code — every string on the page becomes a marker at the
+      position the layout gives it — and, with --confirm, upload it so translators see it next to the
+      translations. Without --confirm it writes the sketch to .localehub/mockups/ and uploads nothing.
 
   patch
       Write a git patch of the current working tree (never commits).
@@ -133,6 +139,42 @@ async function main(): Promise<void> {
       }
       process.stderr.write(`unknown sync action: ${action ?? ''}\n`);
       process.exitCode = 2;
+      return;
+    }
+    case 'mockup': {
+      const page = (flags.page as string | undefined) ?? positionals[0];
+      if (!page) {
+        process.stderr.write('mockup requires --page <file> (a page component or an .html file)\n');
+        process.exitCode = 2;
+        return;
+      }
+      const keysFile = flags.keys as string | undefined;
+      let keys: Record<string, string> | undefined;
+      if (keysFile) {
+        const raw = readFileSync(resolve(workspace, keysFile), 'utf8');
+        keys = JSON.parse(raw) as Record<string, string>;
+      }
+      const result = await services.generateScreenMockup({
+        page,
+        name: flags.name as string | undefined,
+        platform: flags.platform as string | undefined,
+        locale: flags.locale as string | undefined,
+        namespace: flags.namespace as string | undefined,
+        keys,
+        width: flags.width ? Number(flags.width) : undefined,
+        height: flags.height ? Number(flags.height) : undefined,
+        confirm: flagBool(flags, 'confirm'),
+        replace: flags.replace === undefined ? undefined : flagBool(flags, 'replace'),
+      });
+      if (json) return output(result);
+      process.stdout.write(
+        `${result.name} · ${result.platform} · ${result.locale} · ${(result.canvas as {width:number}).width}×${(result.canvas as {height:number}).height}\n`,
+      );
+      process.stdout.write(`  ${result.strings} 个字符串 → ${result.markers} 个标记\n`);
+      for (const key of result.keys as string[]) process.stdout.write(`    ${key}\n`);
+      process.stdout.write(`  草图：${result.svgPath}\n`);
+      for (const warning of result.warnings as string[]) process.stdout.write(`  ⚠ ${warning}\n`);
+      process.stdout.write(`${result.message}\n`);
       return;
     }
     case 'pull': {

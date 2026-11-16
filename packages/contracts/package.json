@@ -31,6 +31,10 @@
     "./mockup": {
       "types": "./dist/mockup.d.ts",
       "default": "./dist/mockup.js"
+    },
+    "./ui-spec": {
+      "types": "./dist/ui-spec.d.ts",
+      "default": "./dist/ui-spec.js"
     }
   }
 }

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ErrorCode, LocaleHubError, Role, type PlatformName } from '@localehub/contracts';
 import { assertRole, type ActorContext } from '@localehub/permissions';
-import { decodeMockupImage, listScreenMockups, resolveScreenMarkers, upsertScreenMockup } from '@localehub/domain';
+import { listScreenMockups, resolveMockupInput, resolveScreenMarkers, upsertScreenMockup } from '@localehub/domain';
 import { PrismaService } from '../../common/prisma.service';
 import { AuditService } from '../../common/audit.service';
 import type { MockupUploadBody } from './mockups.controller';
@@ -174,11 +174,15 @@ export class MockupsService {
    */
   async upload(actor: ActorContext, projectId: string, body: MockupUploadBody) {
     assertRole(actor, projectId, Role.DEVELOPER);
-    const image = decodeMockupImage({
-      imageBase64: body.imageBase64,
+    // Either a picture the caller drew, or a description the platform draws. Same resolver as the MCP
+    // tool, so "you sent neither / both" reads identically on both surfaces.
+    const { image, markers } = resolveMockupInput({
+      imageBase64: body.imageBase64 ?? null,
       mimeType: body.mimeType ?? null,
       width: body.width ?? null,
       height: body.height ?? null,
+      markers: body.markers,
+      ui: body.ui ?? null,
     });
 
     const result = await this.prisma.tenant.withOrganization(actor.organizationId, (tx) =>
@@ -190,7 +194,7 @@ export class MockupsService {
         platform: body.platform ?? 'web',
         locale: body.locale,
         image,
-        markers: body.markers,
+        markers,
         replace: body.replace ?? true,
       }),
     );

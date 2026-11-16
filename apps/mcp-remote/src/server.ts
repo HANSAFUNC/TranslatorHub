@@ -6,12 +6,13 @@ import {
   SyncService,
   assertPlaceholdersPreserved,
   createProject,
-  decodeMockupImage,
   recordAudit,
+  resolveMockupInput,
   emitProjectEvent,
   upsertScreenMockup,
   upsertTranslation,
 } from '@localehub/domain';
+import type { UiSpec } from '@localehub/contracts';
 import { renderLocalConfig } from '@localehub/workspace';
 import {
   ErrorCode,
@@ -879,11 +880,12 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       name: string;
       platform?: string;
       locale: string;
-      image_base64: string;
+      ui?: UiSpec;
+      image_base64?: string;
       mime_type?: string;
       width?: number;
       height?: number;
-      markers: {
+      markers?: {
         key: string;
         namespace?: string;
         x: number;
@@ -898,14 +900,17 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       assertRole(actor, input.project_id, Role.DEVELOPER);
       assertProjectBound(actor, input.project_id);
 
-      // Decoded before the transaction opens: a malformed or oversized upload should be refused
-      // without holding a database connection, and the error it throws already names the construct to
-      // remove or the limit that was passed.
-      const image = decodeMockupImage({
-        imageBase64: input.image_base64,
+      // Resolved before the transaction opens: a malformed, oversized or self-contradictory upload
+      // should be refused without holding a database connection, and both error messages already say
+      // what to change. `ui` is rendered here, so the stored picture and the stored markers come from
+      // one pass over one description.
+      const { image, markers: resolvedMarkers } = resolveMockupInput({
+        imageBase64: input.image_base64 ?? null,
         mimeType: input.mime_type ?? null,
         width: input.width ?? null,
         height: input.height ?? null,
+        markers: input.markers,
+        ui: input.ui ?? null,
       });
 
       const result = await tenant.withOrganization(actor.organizationId, (tx) =>
@@ -919,7 +924,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
           image,
           // `namespace` carries a schema default, and a client is free to omit it; filling it here
           // means the domain function always receives the shape its type declares.
-          markers: input.markers.map((marker) => ({ ...marker, namespace: marker.namespace ?? '' })),
+          markers: resolvedMarkers,
           replace: input.replace,
         }),
       );
@@ -941,6 +946,9 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
           // purpose: a caller that keeps declaring the wrong type is worth noticing.
           detectedMimeType: result.image.mimeType,
           declaredMimeType: image.declaredMimeType,
+          // How the screen got here: drawn by the caller, or rendered from a description. Recorded so
+          // "which callers still hand-measure coordinates" is answerable from the audit trail.
+          source: input.ui ? 'ui' : 'image',
         },
       });
 

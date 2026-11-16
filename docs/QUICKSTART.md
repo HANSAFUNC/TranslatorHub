@@ -71,6 +71,15 @@ git diff          # 只应包含预期的语言文件条目
 Agent 会依次跑 `localehub info` → `localehub scan` → `localehub sync preview`，
 并把计划展示出来；只有你说"确认"之后才会跑 `localehub sync push --confirm`。
 
+**想让翻译编辑器里看到界面草图**（译文旁边并排显示界面、点标记跳到对应译文），让 Agent 从页面代码
+生成即可——不需要截图，也不需要手量坐标：
+
+> 用 `localehub mockup --page src/app/projects/page.tsx --name 项目列表` 生成草图给我看，
+> 确认后再加 `--confirm` 提交。
+
+它会读这个页面的元素结构和界面文案，画出 SVG，并给每个字符串一个位置标记；页面改了就再跑一次。
+详见 `docs/MCP.md` §2.10。
+
 ## 5. 常见问题
 
 | 现象                                                           | 原因 / 处理                                                                               |

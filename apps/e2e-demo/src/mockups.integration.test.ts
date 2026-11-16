@@ -721,6 +721,87 @@ describe('screen mockups', () => {
     if (racer) await call(`/projects/${projectId}/mockups/${racer.id}`, { method: 'DELETE', token: session.token });
   }, 120_000);
 
+  it('draws the sketch itself when the caller sends a page description instead of a picture', async () => {
+    // The path this exists for: a caller that has the page's code rather than a drawing. It sends the
+    // elements, the platform lays them out, draws them and computes every marker — so the picture and
+    // the coordinates cannot disagree, which is what hand-measured markers get wrong.
+    const spec = {
+      name: 'ui-probe',
+      platform: 'ios',
+      locale: 'en-US',
+      width: 390,
+      root: {
+        type: 'screen',
+        children: [
+          { type: 'text', text: 'Checkout', role: 'heading', key: 'checkout.title' },
+          { type: 'text', text: 'Your cart is empty', key: 'checkout.empty' },
+          { type: 'row', columns: 2, children: [{ type: 'button', text: 'Pay now', key: 'checkout.pay' }] },
+          { type: 'text', text: 'Not a key yet' },
+        ],
+      },
+    };
+
+    const uploaded = await call<UploadResult & { matchedKeys: number; markers: { matchedKeys: number; unmatched: { key: string }[] } }>(
+      `/projects/${projectId}/mockups`,
+      { method: 'POST', token: session.token, body: { ...spec, ui: spec, replace: true } },
+    );
+    expect(uploaded.status, JSON.stringify(uploaded.body)).toBe(201);
+    const data = uploaded.body.data!;
+    expect(data.image.mimeType).toBe('image/svg+xml');
+    expect(data.image.width).toBe(390);
+    // Three keys the project has, one it does not.
+    expect(data.markers.total).toBe(4);
+    expect(data.markers.matchedKeys).toBe(3);
+    expect(data.markers.unmatched.map((row) => row.key)).toEqual(['Not a key yet']);
+
+    // The bytes really are a sketch, and they draw the strings the caller described.
+    const image = await fetch(`${API_BASE}/projects/${projectId}/mockups/${data.mockupId}/image`, {
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(image.status).toBe(200);
+    const svg = await image.text();
+    expect(svg).toContain('<svg');
+    for (const text of ['Checkout', 'Your cart is empty', 'Pay now', 'Not a key yet']) {
+      expect(svg).toContain(text);
+    }
+
+    // And the editor can join those markers back to real entries.
+    const detail = await call<{ markers: { key: string; source: string | null }[] }>(
+      `/projects/${projectId}/mockups/${data.mockupId}?locale=ja-JP`,
+      { token: session.token },
+    );
+    const pay = detail.body.data!.markers.find((marker) => marker.key === 'checkout.pay')!;
+    expect(pay.source).toBe('Pay now');
+
+    await call(`/projects/${projectId}/mockups/${data.mockupId}`, { method: 'DELETE', token: session.token });
+  }, 120_000);
+
+  it('refuses a request that sends neither a picture nor a description, and one that sends both', async () => {
+    // The rule lives in one resolver shared by this route and the MCP tool, so the sentence is the
+    // same whichever door the caller came through.
+    const neither = await call('/projects/' + projectId + '/mockups', {
+      method: 'POST',
+      token: session.token,
+      body: { name: 'empty', locale: 'en-US' },
+    });
+    expect(neither.status).toBe(422);
+    expect(neither.body.error!.message).toContain('image_base64');
+
+    const both = await call('/projects/' + projectId + '/mockups', {
+      method: 'POST',
+      token: session.token,
+      body: {
+        name: 'both',
+        locale: 'en-US',
+        imageBase64: base64(SKETCH),
+        markers: [{ key: 'checkout.title', x: 0.1, y: 0.1 }],
+        ui: { name: 'both', root: { type: 'screen', children: [{ type: 'text', text: 'x' }] } },
+      },
+    });
+    expect(both.status).toBe(422);
+    expect(both.body.error!.message).toContain('不要同时传');
+  }, 60_000);
+
   it('answers a body over the route limit with 413 in the standard envelope', async () => {
     // The larger limit is mounted on this route alone. A refusal used to arrive as 500 (Express's
     // parser error passing through the generic branch) or, before that, as Nest's default HTML.

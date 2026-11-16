@@ -365,10 +365,51 @@ CLI 的 `localehub scan` 输出（`expanded` 字段直接给中文说明）。�
 }
 ```
 
+**首选：把界面描述成数据，让平台画。** 手画一张 SVG 再逐个量坐标，是这套流程里最容易错、也最容易
+过时的一步——页面改一行文案，坐标就全废了。所以 `upload_screen_mockup` 还接受另一种输入：
+
+```jsonc
+{
+  "project_id": "...",
+  "name": "练习页",
+  "platform": "ios",
+  "locale": "zh-CN",
+  "ui": {
+    "name": "练习页", "platform": "ios",
+    "root": { "type": "screen", "children": [
+      { "type": "text", "text": "亲爱的", "role": "heading" },
+      { "type": "text", "text": "先练习" },
+      { "type": "row", "columns": 2, "children": [
+        { "type": "button", "text": "再想想" },
+        { "type": "button", "text": "下一步" }
+      ]}
+    ]}
+  }
+}
+```
+
+平台按这棵树排版、画图，并**自己算出每个标记的位置与大小**——`markers` 不用传，传了也不采用。
+节点上的 `text` 就是界面上显示的文字，它同时是标记的默认 key（项目按 key 命名时，用 `key` 覆盖；
+`namespace` 可以写在根节点上，整棵树继承）。可用的节点类型：`screen`、`section`、`card`、`row`、
+`text`（`role`: heading/subheading/body/label/caption）、`button`、`input`、`image`、`icon`、
+`badge`、`divider`。
+
+**本仓库的 CLI 能直接从页面源码生成这份描述**——这是「草稿对应那个页面的所有UI」最省事的做法：
+
+```bash
+localehub mockup --page src/app/projects/page.tsx --name 项目列表          # 预览，写 .localehub/mockups/*.svg
+localehub mockup --page src/app/projects/page.tsx --name 项目列表 --confirm # 提交到平台
+```
+
+它读 JSX/TSX 或 HTML：元素结构进树，界面文案进标记；`t('key')` 之类的调用用真实 key，硬编码的文案
+（这个仓库的产品就大量如此）就以文案本身为 key。README 里的示例页面、`--namespace` 指定字符串表、
+`--keys keys.json` 覆盖映射，都支持。生成的是 SVG（几 KB），图片上限与安全规则和手画的一模一样。
+
 几条不肯让步的规则：
 
 - **坐标是比例（0~1），不是像素。** 同一张图在 400px 的弹窗里和全屏下必须落在同一处，设计师换 2x
   导出也不该让所有标记作废。传像素会被拒绝，错误信息说明该传什么——这是调用端最容易犯的错。
+  传 `ui` 时这条不用管：坐标由平台算，本来就是比例。
 - **格式由字节决定，不由 `mime_type` 决定。** 声明的类型只是一句声明：一个文本文件自称
   `image/png` 会被按内容识破。服务端还会读真实像素尺寸（PNG 的 IHDR、JPEG 的 SOF、SVG 的
   viewBox），因为「小于 2 MB」不等于「画得出来」——200 KB 的纯色 PNG 可以是 30000×30000。

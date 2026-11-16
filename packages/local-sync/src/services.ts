@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import {
   ErrorCode,
   LocaleHubError,
@@ -11,6 +11,7 @@ import {
   type PlatformChange,
   type ProjectShapeExpansion,
   type PushResult,
+  renderUiSketch,
 } from '@localehub/contracts';
 import { ApiClient, type SyncPreviewResponse } from '@localehub/api-client';
 import {
@@ -28,6 +29,7 @@ import { globToRegExp } from '@localehub/contracts';
 import type { ApplyPlan } from '@localehub/sync-engine';
 import { executeApply, planApply, toApplyReportPayload } from './apply';
 import { scanAndCollect, type ScanSummary } from './scan';
+import { buildUiSpec, readPageFile } from './ui-extract';
 import { StateStore } from './state';
 
 export interface ServiceContext {
@@ -426,6 +428,100 @@ export class LocalSyncServices {
   }
 
   /* ------------------------------------------------- pull_platform_updates */
+
+  /**
+   * Generate a screen sketch from a page in this repository and (optionally) upload it.
+   *
+   * The whole point is that nobody measures coordinates: the page's own code says which elements it
+   * has and what text is on them, so every string on the screen gets a marker at the position the
+   * layout gives it. Without `confirm` nothing is uploaded — the preview is written next to the
+   * config as an SVG so it can be looked at first, which is the same "look before you write" rule the
+   * sync commands follow.
+   */
+  async generateScreenMockup(input: {
+    page: string;
+    name?: string;
+    platform?: string;
+    locale?: string;
+    namespace?: string;
+    keys?: Record<string, string>;
+    width?: number;
+    height?: number;
+    confirm?: boolean;
+    replace?: boolean;
+  }): Promise<OperationResult> {
+    const config = this.config().config;
+    const guard = this.workspace();
+    const { source, fileName } = readPageFile(guard, input.page);
+    const name = input.name ?? fileName.split('/').pop()!.replace(/\.[^.]+$/, '');
+    const locale = input.locale ?? config.project.sourceLocale;
+    const platform = input.platform ?? config.project.platforms?.[0] ?? 'web';
+
+    const { spec, strings, warnings } = buildUiSpec(source, fileName, {
+      name,
+      platform,
+      locale,
+      ...(input.namespace ? { namespace: input.namespace } : {}),
+      ...(input.keys ? { keys: input.keys } : {}),
+      ...(input.width ? { width: input.width } : {}),
+      ...(input.height ? { height: input.height } : {}),
+    });
+
+    const sketch = renderUiSketch(spec);
+    const outDir = join(guard.root, '.localehub', 'mockups');
+    mkdirSync(outDir, { recursive: true });
+    // The screen's name is usually the page's name in its own language, so keep Unicode letters.
+    const svgPath = join(outDir, `${name.replace(/[^\p{L}\p{N}._-]+/gu, '-')}.svg`);
+    writeFileSync(svgPath, sketch.svg, 'utf8');
+
+    const summary = {
+      page: fileName,
+      name,
+      platform,
+      locale,
+      canvas: { width: sketch.width, height: sketch.height },
+      strings: strings.length,
+      markers: sketch.markers.length,
+      keys: strings.slice(0, 5).map((entry) => entry.key),
+      svgPath: relative(guard.root, svgPath),
+      warnings,
+      uploaded: false as boolean,
+      requiresConfirmation: !input.confirm,
+    };
+
+    if (!input.confirm) {
+      return {
+        ...summary,
+        message:
+          `生成了 ${sketch.markers.length} 个标记（写到这里：${summary.svgPath}）。` +
+          '要提交到平台，加 --confirm；提交后这个屏幕在翻译编辑器里就能和译文并排看了。',
+      };
+    }
+
+    const result = await this.client().uploadScreenMockup(this.projectId(), {
+      name,
+      platform,
+      locale,
+      ui: spec,
+      replace: input.replace ?? true,
+    });
+
+    return {
+      ...summary,
+      uploaded: true,
+      requiresConfirmation: false,
+      mockupId: result.mockupId,
+      replaced: result.replaced,
+      matchedKeys: result.markers.matchedKeys,
+      unmatched: result.markers.unmatched,
+      imagePath: result.imagePath,
+      message:
+        `已提交：${result.markers.total} 个标记，${result.markers.matchedKeys} 个对上了平台的 Key` +
+        (result.markers.unmatched.length
+          ? `，${result.markers.unmatched.length} 个还没有导入（编辑器会显示「平台没有这个 Key」）。`
+          : '。'),
+    };
+  }
 
   async pullPlatformUpdates(
     input: {

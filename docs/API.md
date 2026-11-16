@@ -131,8 +131,20 @@ public 路由不受影响，负载均衡仍可探测。
 | GET    | `/projects/:projectId/mockups`                | READONLY                 | 屏幕列表（不含图片字节）；`?key=&namespace=` 时每行附 `containsKey` |
 | GET    | `/projects/:projectId/mockups/:mockupId`      | READONLY                 | 标记（含源文与 `?locale=` 的译文），按阅读顺序排序          |
 | GET    | `/projects/:projectId/mockups/:mockupId/image`| READONLY                 | 图片字节（非 JSON 信封）；带 ETag，可 304                  |
-| POST   | `/projects/:projectId/mockups`                | DEVELOPER + `sync.push`  | 上传/替换屏幕（`imageBase64` + `markers`）                 |
+| POST   | `/projects/:projectId/mockups`                | DEVELOPER + `sync.push`  | 上传/替换屏幕（`imageBase64` + `markers`，或 `ui` 由平台绘制） |
 | DELETE | `/projects/:projectId/mockups/:mockupId`      | DEVELOPER + `sync.push`  | 删除屏幕（标记随外键级联）                                 |
+
+上传有两种输入，二选一：
+
+- **`imageBase64` + `markers`**：调用方自己画的图，以及每个 Key 在图上的位置。
+- **`ui`**：界面的结构描述（元素树）。平台据此排版、绘制 SVG，并**自己算出每个标记**——图片与坐标
+  出自同一次排版，所以不可能互相矛盾。坐标、图片大小这些容易传错的东西都不再需要调用方提供。
+  `ui.root` 的 `namespace` 会被整棵树继承；节点上的 `text` 是默认 key，可用 `key` 覆盖。
+  两层上限：嵌套 24 层、每个屏幕 600 个元素。
+
+`ui` 也是「从页面源码生成草图」的落点：`localehub mockup --page <file>` 读本地页面的 JSX/HTML，
+生成这份描述并（加 `--confirm` 时）上传。两个入口共用 `resolveMockupInput`，所以「两个都传」或
+「都没传」在两边得到同一句话。
 
 上传的校验与 MCP 的 `upload_screen_mockup` 完全同一份实现（`@localehub/domain`）：坐标是
 相对图片的比例（0~1）而不是像素，格式由字节判断而不是 `mime_type`，SVG 内的

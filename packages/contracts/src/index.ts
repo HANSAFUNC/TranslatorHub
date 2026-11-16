@@ -6,6 +6,7 @@ export * from './roles';
 export * from './locale';
 export * from './locale-catalog';
 export * from './mockup';
+export * from './ui-spec';
 export * from './placeholders';
 export * from './keys';
 export * from './schemas';

@@ -1139,6 +1139,42 @@ CLI 的往返仍然是自洽的（读与写两边都按 `web` 走），所以此
 取屏幕自己的端，取到别的端会在编辑器里直接标出来（「Key 在 web，不在 ios」），而不是假装没看见。
 详见 `docs/MCP.md` §2.10。
 
+### 1.36 界面草图：用代码生成整页的标记，而不是手量坐标
+
+用户要求：「需要草稿对应那个页面的所有UI，用代码生成标记对应页面，然后提交到后端」。
+
+手画一张 SVG、再逐个把坐标量出来，是这套流程里最容易错也最容易过时的一步：页面改一句文案，标好的
+位置就全废了；漏掉一个按钮，就少一个标记。而**页面的代码本来就说清了它有哪些元素、上面有哪些字**。
+
+**新增的是第二种输入：描述而不是图片。** `upload_screen_mockup` 与 `POST /projects/:id/mockups`
+现在都接受 `ui`——一棵元素树（`screen` / `section` / `card` / `row` / `text` / `button` / `input` /
+`image` / `icon` / `badge` / `divider`）。平台按树排版、画成 SVG、并**在同一次遍历里算出每个标记的
+位置与大小**。图片与坐标来自同一次排版，所以不可能对不上，这正是手量坐标做不到的。渲染器在
+`packages/contracts/src/ui-spec.ts`：纯函数、浏览器安全（CLI 用、API 也用），同一份描述永远画出
+同一张图。文本量宽按 CJK 全宽 / 拉丁半宽估算，行内换行、grid 列数、`flex` 方向都参与排版。
+
+**本地生成器**：`localehub mockup --page <file>`（`packages/local-sync/src/ui-extract.ts`）。
+它读 JSX/TSX 或 HTML——不编译，只做容错扫描——把元素结构变成树、把界面文案变成标记：
+
+```bash
+localehub mockup --page src/app/projects/page.tsx --name 项目列表            # 预览：写 .localehub/mockups/*.svg
+localehub mockup --page src/app/projects/page.tsx --name 项目列表 --confirm   # 提交
+```
+
+`t('key')` / `$t('key')` / `i18nKey` 等调用取真实 key；硬编码文案（这个仓库的产品就是这样）以文案
+本身为 key；`--keys` 可覆盖映射，`--namespace` 指定字符串表（根节点上的 namespace 整棵树继承）。
+
+**质量是被测出来的，不是声明出来的**：单元测试直接读本仓库 7 个真实页面（`projects/page.tsx`、
+`mcp/page.tsx`、`translations/page.tsx` 等），断言「提取到的每个字符串都在排版结果里有标记」。
+这一步逼出了六个真实缺陷，全部修掉并各有回归测试：`useState<Foo>` 被当成标签（整页解析成空）、
+函数体的 `{` 被当成 JSX 表达式（吞掉整个组件）、`.map()` 里的 JSX 被整段跳过（列表画成空框）、
+`<Field>` 因名字含 field 被当成 input（表单标签全丢）、`flex-1` 被当成 `display:flex`（子元素叠在
+一起）、中文里被表达式分开的句子多出空格（`已选 项` → `已选项`）。
+
+**实测**：真实浏览器里，`localehub mockup --page` → 提交 → 翻译编辑器的「界面草图」，10 个标记
+10 个落在图内、双向联动正常；MCP 客户端用 `ui` 调用同一工具，5 个标记 4 个对上 Key、1 个如实报
+unmatched。全量 308 单元 + 157 集成测试通过。
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

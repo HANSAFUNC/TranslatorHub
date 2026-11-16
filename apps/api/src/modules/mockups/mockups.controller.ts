@@ -7,6 +7,7 @@ import {
   localeTagSchema,
   markerSchema,
   platformSchema,
+  uiSpecSchema,
 } from '@localehub/contracts';
 import { z } from 'zod';
 import { Actor, RequireRole, RequireScopes, type ActorContext } from '../../common/auth';
@@ -35,7 +36,13 @@ const uploadSchema = z.object({
   platform: platformSchema.optional(),
   /** The language the sketch's text is drawn in; normally the project's source locale. */
   locale: localeTagSchema,
-  imageBase64: z.string().min(1),
+  /**
+   * The screen described as data, for callers that have the page's code rather than a picture. The
+   * platform lays it out, draws it and computes the markers. Exactly one of `ui` / `imageBase64` is
+   * required, and `resolveMockupInput` is what decides that, so this route and the MCP tool agree.
+   */
+  ui: uiSpecSchema.optional(),
+  imageBase64: z.string().min(1).optional(),
   /**
    * Advisory: the format is read from the bytes, and a wrong claim cannot change the stored one. The
    * values are the ones the MCP tool accepts, so the same caller mistake is refused the same way on
@@ -44,7 +51,7 @@ const uploadSchema = z.object({
   mimeType: z.enum(['image/svg+xml', 'image/png', 'image/jpeg']).optional(),
   width: z.number().int().positive().max(8192).optional(),
   height: z.number().int().positive().max(8192).optional(),
-  markers: z.array(markerSchema).min(1).max(MAX_MARKERS_PER_MOCKUP),
+  markers: z.array(markerSchema).max(MAX_MARKERS_PER_MOCKUP).optional(),
   replace: z.boolean().optional(),
 });
 

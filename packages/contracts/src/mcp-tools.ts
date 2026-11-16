@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { McpScope } from './roles';
 import { localeTagSchema, platformSchema } from './schemas';
 import { MAX_MARKERS_PER_MOCKUP, MAX_MOCKUP_BYTES, MAX_MOCKUP_REQUEST_BYTES, markerSchema } from './mockup';
+import { uiSpecSchema } from './ui-spec';
 
 /**
  * Canonical registry of the Remote MCP's tools. Shared by the server, the API's discovery
@@ -284,9 +285,21 @@ export const remoteToolSchemas = {
     locale: localeTagSchema.describe(
       '草图里文字用的语言，通常就是项目源语言。它只描述这张图，不参与 key 的身份。',
     ),
+    /**
+     * The other way to describe a screen: its elements, not its picture.
+     *
+     * A caller reading a page's source has the structure but not an image, and measuring coordinates by
+     * hand is where sketches go wrong. With `ui` the platform lays the page out, draws it and computes
+     * every marker itself. Exactly one of `ui` / `image_base64` is required.
+     */
+    ui: uiSpecSchema.optional().describe(
+      '界面描述（推荐）：按元素描述页面，平台据此画出草图并自动计算每个标记的位置与大小——不需要你量坐标。' +
+        'root 是一个树：screen 里放 text / button / input / card / row / image 等节点，节点上的 text 就是界面上显示的文字，' +
+        '它同时是标记的默认 key（可用 key 覆盖）。与 image_base64 二选一。',
+    ),
     image_base64: z
       .string()
-      .min(1)
+      .optional()
       .describe(
         `草图本身，base64（可以带 data: 前缀）。支持 SVG / PNG / JPEG，解码后不超过 ${Math.round(MAX_MOCKUP_BYTES / 1024 / 1024)} MB。` +
           `整个请求（图片 + 标记的 text/note）共用 ${Math.round(MAX_MOCKUP_REQUEST_BYTES / 1024 / 1024)} MB 的传输上限，base64 会让图片占约 1.37 倍——超了整单会被拒。` +
@@ -300,12 +313,13 @@ export const remoteToolSchemas = {
     height: z.number().int().positive().max(8192).optional().describe('图片像素高（可选）'),
     markers: z
       .array(markerSchema)
-      .min(1)
       .max(MAX_MARKERS_PER_MOCKUP)
+      .optional()
       .describe(
-        '每个标记指向界面上一个 key 的位置。坐标是**相对图片的比例 0~1**，不是像素：x 是左边缘占宽的比例，y 是上边缘占高的比例,' +
-          'width/height 可选（省略就画一个点）。比例坐标的好处是同一张图在任何尺寸下都对齐，设计师换 2x 导出也不用重标。' +
-          'markers[].text 填图里显示的文字，编辑器可以据此提示「草图与平台原文不一致」。',
+        '传 image_base64 时必填：每个标记指向界面上一个 key 的位置。坐标是**相对图片的比例 0~1**，不是像素：' +
+          'x 是左边缘占宽的比例，y 是上边缘占高的比例，width/height 可选（省略就画一个点）。' +
+          'markers[].text 填图里显示的文字，编辑器可以据此提示「草图与平台原文不一致」。' +
+          '**传 ui 时不要传 markers**——平台会自己算，传了也不采用。',
       ),
     replace: z
       .boolean()
