@@ -382,6 +382,11 @@ Agent 读完仍然会去手画。
 组件语汇都可以在平台侧继续演进，调用方不用重传。转写对照表在 `localehub://screen-sketch-guide`（顶栏 / 贴底标签栏 /
 开关 / 滑块 / 卡片 / 徽标 / 分段控件各有对应写法，类名不必是真 Tailwind——`class="tabbar"`、`class="card"` 也认）。
 
+**页面自己没带颜色时**有两个入口，通常一起用：`css`（把颜色所在的那份样式表一起传，规则先于页面内的 `<style>`）、
+`theme`（`{accent, background}`，accent 落在按钮/开关/滑块与选中的页签上；不传按端取默认：iOS 系统蓝、Android Material 蓝、
+web 近黑）。**图片**只有带在载荷里的才画得出来：`<img src="data:image/png;base64,…">`（单张 ≤ 300 KB、合计 ≤ 1.2 MB）；
+外链与仓库路径是占位框（平台不联网取图），要真图就用 CLI——`localehub mockup --page` 会把页面引用的小图自动内联。
+
 **只解析，不渲染**：不跑浏览器、不执行 `<script>`、不联网取任何资源；`<script>`、`<style>`、注释里的文字都不会
 被当成文案；样式只认渲染器画得出来的属性（颜色、圆角、字号字重、间距、阴影、对齐），`hsl()`、`@media`、伪类忽略。
 结尾给元素加 `data-key="checkout.pay"`（或 i18next 的 `data-i18n-key`）就能把文案对到 key 上——HTML 没有
