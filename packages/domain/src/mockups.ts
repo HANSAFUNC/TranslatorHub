@@ -462,13 +462,16 @@ export async function upsertScreenMockup(
   // Resolve which markers name a key the project actually has, by (namespace, key) rather than by the
   // full identity.
   //
-  // The platform is deliberately *not* part of this lookup. A key's identity includes its platform,
-  // but the platform a caller names never reaches it today: `scanEntrySchema` has no `platform` field,
-  // so both `toScanEntry` (the CLI) and the MCP import drop it and every key is stored as `web` —
-  // verified against the database, where a project whose mappings declare `ios` holds 0 `ios` keys and
-  // 2,792 `web` ones. Matching sketches on the platform would therefore fail for every sketch that
-  // names the platform truthfully, which is the opposite of what the field is for. Markers match
-  // textually, and the platform each one resolved to is reported so a mismatch stays visible.
+  // The platform is deliberately *not* part of this lookup. A sketch is one screen, and the same key
+  // name can legitimately exist under several platforms with different text (an iOS and a web build
+  // of the same product hold separate keys); asking "does this screen show my entry?" is answered by
+  // the name, and which entry it is answered by the platform the screen names. That resolution is
+  // reported per marker, so a key that resolved under a different platform stays visible in the
+  // editor instead of silently counting as a match.
+  //
+  // (This lookup used to be textual for a second, worse reason: entries lost their platform on the
+  // way in, so every key was stored as `web` and matching by platform failed for every honest sketch.
+  // Fixed — see `scanEntrySchema` — but the lookup still does not filter on it, for the reason above.)
   const keyNames = [...new Set(markers.map((marker) => marker.key))];
   const keys = await tx.translationKey.findMany({
     // `archivedAt: null`, like every other key read in the codebase. An archived key was dropped from

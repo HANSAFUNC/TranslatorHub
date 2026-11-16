@@ -96,6 +96,17 @@ export const scanEntrySchema = z.object({
   key: z.string().min(1).max(512),
   namespace: z.string().max(255).default(''),
   locale: localeTagSchema,
+  /**
+   * The platform this entry belongs to, which is part of a key's identity
+   * (`(project, platform, namespace, key)`).
+   *
+   * Optional, and normally left out: an entry's platform is the platform of the file it came from,
+   * and `files[].platform` already says that. It was missing from this schema entirely, so *every*
+   * caller's platform was dropped and every key was stored as `web` — an iOS project's 2,791 keys
+   * included. The server resolves `entry.platform ?? files[fileId].platform ?? 'web'`, so a caller
+   * that only fills in the file mapping gets the right identity.
+   */
+  platform: platformSchema.optional(),
   value: z.string(),
   isSource: z.boolean(),
   contentHash: z.string().length(64),

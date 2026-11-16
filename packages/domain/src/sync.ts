@@ -175,11 +175,31 @@ export class SyncService {
         projectId,
         sourceLocale: project.sourceLocale,
         locales: [...payload.files.map((file) => file.locale), ...payload.entries.map((entry) => entry.locale)],
-        platforms: payload.files.map((file) => file.platform),
+        // Entries count too, not just files: an entry may name its own platform, and a key created
+        // under a platform the project does not declare is exactly the inconsistency this list
+        // exists to prevent.
+        platforms: [
+          ...payload.files.map((file) => file.platform),
+          ...payload.entries.map((entry) => entry.platform).filter((platform): platform is PlatformName => Boolean(platform)),
+        ],
         dryRun: false,
       });
       const files = payload.files.map((file) => ({ ...file, locale: resolve(file.locale) }));
-      const entries = payload.entries.map((entry) => ({ ...entry, locale: resolve(entry.locale) }));
+      /**
+       * An entry's platform is the platform of the file it came from.
+       *
+       * Resolved here rather than trusted from the entry alone, because this is the one place that
+       * has both halves: the entry names its `fileId`, the file names its `platform`. Without this
+       * the platform a caller declared never reached a key's identity — every push wrote `web` — and
+       * the fix for that has to be in the resolver, not only in the schema, or a client that sends
+       * files without per-entry platforms (every client there is) would keep producing `web` keys.
+       */
+      const filePlatform = new Map(files.map((file) => [file.fileId, file.platform as PlatformName]));
+      const entries = payload.entries.map((entry) => ({
+        ...entry,
+        locale: resolve(entry.locale),
+        platform: (entry.platform as PlatformName | undefined) ?? filePlatform.get(entry.fileId) ?? 'web',
+      }));
 
       const connectionId = await this.ensureConnection(tx, {
         organizationId: actor.organizationId,
@@ -415,6 +435,8 @@ export class SyncService {
       const entry = raw as Record<string, unknown>;
       return {
         projectId: String(entry.projectId ?? ''),
+        // `web` here is a legacy fallback, not a default: scans recorded before entries carried a
+        // platform are stored without one, and re-reading them must not change what they mean.
         platform: (entry.platform as PlatformName) ?? 'web',
         namespace: String(entry.namespace ?? ''),
         key: String(entry.key ?? ''),

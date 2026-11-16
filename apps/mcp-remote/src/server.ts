@@ -343,6 +343,10 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
             key: entry.key,
             namespace: file.namespace ?? '',
             locale: file.locale,
+            // The platform of the file this entry came from, which is part of the key's identity.
+            // Leaving it out is what made every MCP import land under `web`, whatever the caller
+            // declared — an iOS project's keys included.
+            platform: file.platform,
             value: entry.value,
             // The scan's own copy of this flag is informational; the push re-derives source from
             // `identity.locale === project.sourceLocale` after `recordScan` normalises the locale.

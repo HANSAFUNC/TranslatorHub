@@ -97,6 +97,8 @@ export const REMOTE_MCP_IMPORT_GUIDE = `# 把本地语言文件上传到平台
 \`.localehub/config.yaml\` 里文件映射的 \`platform\` 一致：导入成 \`web\`、之后用 \`ios\` 扫同一批文件，平台会认为是
 两套不相干的 key，表现为「一批新 key + 一批待归档」，不报错。iOS 用 \`ios\`，Android 用 \`android\`，
 多端共用一份文案用 \`universal\`。项目没有这个端时也会自动加上，并在 \`expansion.platformsAdded\` 里报告。
+每条 key 的 platform 取它所属文件的 \`files[].platform\`（条目自带 \`platform\` 时以条目为准），所以一个文件
+放什么端，是整批 key 的身份。
 
 **多张字符串表要用 namespace 分开。** key 的身份里**没有文件路径**。iOS 的 \`Localizable\` / \`InfoPlist\` /
 \`LaunchScreen\` 是三张独立的表，都用默认空 namespace 导入就是拍平成一个 key 空间，同名 key 互相覆盖（后写的赢，

@@ -190,6 +190,13 @@ namespace」回答 yes。详情接口的 `?locale=` 会先规范化（与写入�
 | GET      | `/projects/:projectId/events?since_revision=`                                | —                   | 项目事件日志                                 |
 | GET/POST | `/projects/:projectId/repository-connections`                                | PROJECT_MANAGER     | 仓库连接                                     |
 
+### 5.0 扫描批次里 platform 落在哪里
+
+`POST /sync/scans` 的 platform 有两个位置，解析顺序是 `entries[].platform` → `files[fileId].platform`
+→ `web`，`files[].platform` 是通常要填的那个（每条 key 的端就是它所属文件的端）。这一条曾经不成立：
+条目上的 platform 会被 schema 丢掉，于是**任何调用方填的端都到不了 key 的身份上**，库里所有 key 都是
+`web`。已修，存量数据已按扫描记录回填（`scripts/backfill-key-platform.mjs`，见 `docs/STATUS.md` §1.39）。
+
 ### 5.1 创建预览
 
 ```http

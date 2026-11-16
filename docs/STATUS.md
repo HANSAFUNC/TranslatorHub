@@ -1135,7 +1135,8 @@ CLI 的往返仍然是自洽的（读与写两边都按 `web` 走），所以此
 
 修它会让下一次全量推送把已有的 `web` key 全部判成「本地已删除」并另建一套 `ios` key——对任何已同步过的
 项目都是一次数据迁移（需要先按 `repository_file_mappings` 回填已有 key 的 platform），不属于本次改动
-范围，所以没有一并改。**本次的标记匹配因此按 key + namespace 做，不按端**：同名 key 存在于多个端时优先
+范围，所以没有一并改。**（这个缺陷已在 §1.39 修掉并完成回填：回填的证据取自扫描记录本身，比
+`repository_file_mappings` 更准——后者只覆盖有连接的仓库。）****本次的标记匹配因此按 key + namespace 做，不按端**：同名 key 存在于多个端时优先
 取屏幕自己的端，取到别的端会在编辑器里直接标出来（「Key 在 web，不在 ios」），而不是假装没看见。
 详见 `docs/MCP.md` §2.10。
 
@@ -1235,6 +1236,54 @@ unmatched。全量 308 单元 + 157 集成测试通过。
 `KEY_NOT_IMPORTED`、画布 390×844、图能取回且其中没有可执行内容（临时项目用完即删）。浏览器里
 `/mcp` 页渲染出新示例与说明，「Resources & Prompts」页签列出新资源与新提示词，无控制台错误。
 验证：319 单元 + 162 集成测试通过。
+
+### 1.39 修掉「platform 到不了 key 身份」这个缺陷，并回填存量
+
+用户问「这个问题解决了吗」——问的是 §1.35 结尾记下的那处已知缺陷，答案是**没有，当时故意推迟了**，现在修掉并迁移。
+
+**缺陷本身**：`scanEntrySchema` 里根本没有 `platform` 字段，于是 zod 把调用方传的条目级 platform 直接
+剥掉，`parseScanEntries` 一律回落到 `web`。三条链路合起来的效果是：**任何调用方填的 platform 都到不了
+key 的身份上**，而 `docs/MCP.md` 与导入指南都写着「platform 是 key 身份的一部分，必须与仓库配置一致」。
+实测库里 19,436 条 key 全部是 `web`；`project_platforms` 是 `{ios}` 的「高研院iOS」2,791 条 key 也全是
+`web`，一条 `ios` 都没有（Agent 那轮同步报告里标的第 1 点就是它）。
+
+**修法（四处，缺一不可）**：
+
+| 位置 | 改动 |
+| --- | --- |
+| `scanEntrySchema` | 增加可选 `platform`（条目自带时优先） |
+| `recordScan` | 解析 `entry.platform ?? files[fileId].platform ?? 'web'`，并把结果写进存储的 scan JSON——这是唯一同时拿到条目与文件两半的地方，改造只能落在这里 |
+| `toScanEntry`（CLI）/ MCP `import_translations` | 显式带上文件的 platform：平台能从 `fileId` 推出来，但一个说清自己意思的载荷不需要别人推理 |
+| `expandProjectShape` | 平台列表也考虑条目自带的端，否则「只传条目不传文件」的调用方会在项目没声明的端下建 key |
+
+`parseScanEntries` 里的 `?? 'web'` 保留，但降级为**历史 scan 的兼容回退**（迁移前记录的 scan JSON 里确实
+没有 platform，重读不能改变它们的意思）。
+
+**回填**：`scripts/backfill-key-platform.mjs`（新增）。证据不许猜——每条 key 的端从**扫描记录**推：
+每个 scan 都存着 `files[].platform`，每个条目都写着它的 `fileId`，两者一拼就是这条 key 当时是从哪个端的
+文件里读出来的。含糊的（同名 key 在两种端下都出现过）与无证据的（直接调 API 建的 key）**一律不动**，
+只报告。默认 dry-run，`--confirm` 才写，且 key、它所属的 namespace（`namespaces` 按
+`(project, platform, name)` 唯一，push 靠它解析 key）、以及 sync baseline（不然迁移后第一次推送会把
+已有的 key 当成新的）三者一起搬；搬空的 namespace 行删掉。
+
+第一次跑踩到 Prisma 交互事务的 5 秒上限：2,791 条 key 逐条 update + 8,295 条 baseline 逐条 update
+撑爆了预算，中途报 `Transaction already closed`。改成按 (端, namespace, 目标端) 分组的 `updateMany`
+并把事务上限提到 300 秒。已提交的项目重跑是幂等的（重新推导后无事可做）。
+
+**实测**：66 个项目有待迁移、合计 **2,888 条 key**（其中 2,791 条是「高研院iOS」）、8,300+ 条 baseline；
+回填后全项目复查 **0 条不符**。高研院iOS 现在是 2,791 条 `ios` key、8,295 条 `ios` baseline、一个 `ios`
+namespace（空的 `web` 行已删），`platform=web` 查询返回 0 条。
+
+**回归证据有三层**：
+
+1. 新增集成测试 `apps/e2e-demo/src/platform-identity.integration.test.ts`：iOS 文件 → `ios` key；同一批
+   再推一次 `pushNew 0 / archiveCandidates 0 / unchanged 2`；同名 key 落在两个端下 → 两条 key、两份值
+   互不覆盖；条目自带 platform → 项目端列表扩展且 key 落在该端。
+2. 用户 Agent 的推送脚本原样重跑（三语 8,295 条、300/批）：**每批计划 0 项**——修复前每一批都会是
+   「300 条新 web key + 300 条待归档」。
+3. 从平台读回 3 条 en 条目再扫一次：`unchanged: 3`、`archiveCandidates: 0`。
+
+迁移前的 `translation_keys` / `namespaces` / `sync_baselines` 三张表已整体备份（`pg_dump`，25 MB）。
 
 ## 附：最终验证记录（本文件写入后重跑）
 

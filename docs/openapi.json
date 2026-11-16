@@ -7417,6 +7417,15 @@
                           "minLength": 1,
                           "maxLength": 64
                         },
+                        "platform": {
+                          "type": "string",
+                          "enum": [
+                            "web",
+                            "ios",
+                            "android",
+                            "universal"
+                          ]
+                        },
                         "value": {
                           "type": "string"
                         },

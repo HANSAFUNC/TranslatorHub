@@ -100,6 +100,9 @@ export function toScanEntry(entry: NormalizedEntry) {
     key: entry.key,
     namespace: entry.namespace ?? '',
     locale: entry.locale,
+    // The file's platform, carried onto the entry as well: the server can derive it from `fileId`,
+    // but a payload that says what it means is one nobody has to reason about.
+    platform: entry.platform,
     value: entry.value,
     isSource: entry.isSource,
     contentHash: entry.contentHash,
