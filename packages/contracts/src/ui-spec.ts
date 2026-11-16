@@ -24,9 +24,12 @@ import { z } from 'zod';
 export const UI_NODE_TYPES = [
   'screen',
   'nav',
+  'tabbar',
   'section',
   'row',
   'tabs',
+  'switch',
+  'slider',
   'card',
   'text',
   'button',
@@ -293,9 +296,13 @@ const PAGE_PADDING = 20;
 const GAP = 10;
 const FONT_SIZE: Record<UiTextRole, number> = { heading: 22, subheading: 17, body: 14, label: 13, caption: 12 };
 const LINE_HEIGHT = 1.45;
-/** Bar heights for the two structural elements, so a nav looks like a nav and not like a paragraph. */
+/** Bar heights for the structural elements, so a nav looks like a nav and not like a paragraph. */
 const NAV_HEIGHT = 52;
 const TABS_HEIGHT = 34;
+const TABBAR_HEIGHT = 56;
+const SWITCH_WIDTH = 46;
+const SWITCH_HEIGHT = 28;
+const SLIDER_HEIGHT = 28;
 
 /** The size a node's text is drawn at: its own if it says so, otherwise whatever its kind uses. */
 function fontSizeOf(node: UiNode): number {
@@ -308,6 +315,7 @@ function fontSizeOf(node: UiNode): number {
     case 'nav':
       return FONT_SIZE.subheading;
     case 'tabs':
+    case 'tabbar':
       return FONT_SIZE.label;
     default:
       return FONT_SIZE.body;
@@ -410,6 +418,15 @@ interface LayoutState {
   boxes: UiBox[];
   nodes: number;
   truncated: boolean;
+  /**
+   * Bars that belong to the bottom edge of the screen rather than to the flow.
+   *
+   * A tab bar sits at the bottom of the *screen*, not after the last row of content — laying it out
+   * inline put it below the fold on every screen whose content is taller than the viewport, which is
+   * most of them. They are placed once the canvas height is known, so the picture and their markers
+   * still come from one pass.
+   */
+  docked?: { node: UiNode; x: number; width: number; depth: number }[];
 }
 
 /**
@@ -487,13 +504,58 @@ function layoutNode(node: UiNode, x: number, y: number, width: number, state: La
     case 'image': {
       const height = node.height ?? 120;
       const boxWidth = Math.min(width, node.width ?? width);
-      return push(height, false, boxWidth, x, y, { x: 0, y: 0 });
+      // `alt`/`aria-label` is copy when it is the only name the element has, so it gets a marker.
+      return push(height, Boolean(node.text), boxWidth, x, y, { x: 0, y: 0 });
     }
     case 'icon':
       // An icon with a radius is a rounded square (an app icon, a tile); without one it is a circle.
-      return push(node.height ?? 20, false, node.width ?? 20, x, y, { x: 0, y: 0 });
+      return push(node.height ?? 20, Boolean(node.text), node.width ?? 20, x, y, { x: 0, y: 0 });
     case 'divider':
       return push(node.height ?? 1, false, width, x, y, { x: 0, y: 0 });
+    case 'switch':
+    case 'slider': {
+      const controlWidth = node.type === 'switch' ? node.width ?? SWITCH_WIDTH : Math.min(width, node.width ?? width);
+      const controlHeight = node.height ?? (node.type === 'switch' ? SWITCH_HEIGHT : SLIDER_HEIGHT);
+      // A labelled control — `<label class="checkbox">全选</label>`, a settings row — is a label and a
+      // control side by side: the string gets its own marker on the left, and the control sits against
+      // the right edge, the way it does on a phone.
+      if (node.text) {
+        const label: UiNode = {
+          type: 'text',
+          text: node.text,
+          ...(node.key ? { key: node.key } : {}),
+          ...(node.namespace ? { namespace: node.namespace } : {}),
+          ...(node.role ? { role: node.role } : {}),
+        };
+        const height = Math.max(controlHeight, FONT_SIZE.body * LINE_HEIGHT);
+        const labelWidth = Math.max(1, width - controlWidth - 12);
+        layoutNode(label, x, y + (height - FONT_SIZE.body * LINE_HEIGHT) / 2, labelWidth, state, depth + 1);
+        const control: UiNode = { ...node, text: undefined };
+        state.boxes.push({
+          node: control,
+          depth,
+          x: x + width - controlWidth,
+          y: y + (height - controlHeight) / 2,
+          width: controlWidth,
+          height: controlHeight,
+          content: rect(x + width - controlWidth, y + (height - controlHeight) / 2, controlWidth, controlHeight),
+          marker: false,
+        });
+        return height;
+      }
+      return push(controlHeight, false, controlWidth, x, y, { x: 0, y: 0 });
+    }
+    case 'tabbar': {
+      // Like a nav, but it belongs to the bottom edge of the screen: items spread across the full
+      // width, each drawing whatever it came with.
+      const height = node.height ?? TABBAR_HEIGHT;
+      const items = node.children ?? [];
+      const each = Math.max(1, width / Math.max(1, items.length));
+      items.forEach((item, index) => {
+        layoutNode(item, x + index * each, y + 8, each, state, depth + 1);
+      });
+      return push(height, false, width, x, y, { x: 0, y: 0 });
+    }
     case 'nav': {
       const height = node.height ?? NAV_HEIGHT;
       const actions = node.children ?? [];
@@ -564,6 +626,10 @@ function layoutNode(node: UiNode, x: number, y: number, width: number, state: La
       let cursor = y + padding.y;
       let bottom = y;
       for (const child of children) {
+        if (node.type === 'screen' && child.type === 'tabbar') {
+          (state.docked ??= []).push({ node: child, x, width, depth: depth + 1 });
+          continue;
+        }
         // A nav spans the screen: a page's header is not inset like its content, and drawing it inset
         // is the difference between "a phone screen" and "a box in a box".
         const bleeds = node.type === 'screen' && child.type === 'nav';
@@ -635,6 +701,16 @@ export function layoutUiSpec(spec: UiSpec): UiLayout {
 
   const state: LayoutState = { boxes: [], nodes: 0, truncated: false };
   const contentHeight = layoutNode(root, 0, 0, width, state, 0);
+
+  // Anything docked to the bottom edge waits for the canvas: it is placed against the bottom of the
+  // drawing, whatever the content above it turned out to need.
+  const placed = (): number => state.boxes.reduce((lowest, box) => Math.max(lowest, box.y + box.height), 0);
+  let canvasHeight = Math.max(spec.height ?? viewport.height, contentHeight, placed());
+  for (const docked of state.docked ?? []) {
+    const barHeight = docked.node.height ?? TABBAR_HEIGHT;
+    layoutNode(docked.node, docked.x, canvasHeight - barHeight, docked.width, state, docked.depth);
+  }
+  canvasHeight = Math.max(canvasHeight, placed());
   /**
    * The canvas covers everything that was drawn into it.
    *
@@ -644,8 +720,7 @@ export function layoutUiSpec(spec: UiSpec): UiLayout {
    * markers hanging off the bottom: the guarantee holds by construction instead of by every node
    * type being careful.
    */
-  const drawnBottom = state.boxes.reduce((lowest, box) => Math.max(lowest, box.y + box.height), 0);
-  let height = Math.max(spec.height ?? viewport.height, contentHeight, drawnBottom);
+  let height = canvasHeight;
 
   let boxes = state.boxes;
   const scale = height > maxHeight ? maxHeight / height : 1;
@@ -819,6 +894,38 @@ export function renderUiSvg(layout: UiLayout, fontFamily = 'system-ui, -apple-sy
         } else if (style.background || style.border) {
           surfaces.push(panel(style.background ?? 'transparent', style.border, style.radius ?? 0));
         }
+        break;
+      }
+      case 'tabbar': {
+        surfaces.push(panel(style.background ?? COLORS.page, style.border, style.radius ?? 0));
+        contents.push(
+          `<line x1="${round(x)}" y1="${round(y)}" x2="${round(x + width)}" y2="${round(y)}" stroke="${escapeXml(style.border ?? COLORS.border)}" stroke-width="1"/>`,
+        );
+        break;
+      }
+      case 'switch': {
+        // On, and drawn as on: a switch whose state is ambiguous is worse than no switch.
+        const fill = style.background ?? COLORS.button;
+        surfaces.push(panel(fill, style.border, style.radius ?? height / 2));
+        const knob = height / 2 - 3;
+        contents.push(
+          `<circle cx="${round(x + width - height / 2)}" cy="${round(y + height / 2)}" r="${round(knob)}" fill="#ffffff"/>`,
+        );
+        break;
+      }
+      case 'slider': {
+        const track = Math.max(4, height * 0.18);
+        const trackY = y + (height - track) / 2;
+        const fill = style.background ?? COLORS.button;
+        surfaces.push(
+          `<rect x="${round(x)}" y="${round(trackY)}" width="${round(width)}" height="${round(track)}" rx="${round(track / 2)}" fill="${escapeXml(COLORS.track)}"/>`,
+        );
+        // Two thirds along: a slider at rest sits somewhere, and drawing it at zero reads as empty.
+        const at = x + width * 0.62;
+        contents.push(
+          `<rect x="${round(x)}" y="${round(trackY)}" width="${round(at - x)}" height="${round(track)}" rx="${round(track / 2)}" fill="${escapeXml(fill)}"/>`,
+          `<circle cx="${round(at)}" cy="${round(y + height / 2)}" r="${round(height / 2)}" fill="#ffffff" stroke="${escapeXml(COLORS.border)}" stroke-width="1"/>`,
+        );
         break;
       }
       case 'divider':

@@ -377,6 +377,11 @@ Agent 读完仍然会去手画。
 自己排版画图、自己算坐标，**颜色与组件外观也一起还原**——读它的 class（含 Tailwind 全套调色板）、inline style
 与 `<style>` 规则（含 `:root` 变量），所以一眼能认出是哪个页面。灰线框给得出位置，给不出「这是哪一屏」。
 
+它是**所有技术栈的统一入口**：iOS / Android / Web / Flutter / RN 的界面都先转成 HTML 再上传——一套写法、一份教程、
+一个渲染器。为什么敢统一：平台存下来的不是调用方的 HTML，而是它自己按元素树画出的 SVG 与标记坐标，所以画法、主题、
+组件语汇都可以在平台侧继续演进，调用方不用重传。转写对照表在 `localehub://screen-sketch-guide`（顶栏 / 贴底标签栏 /
+开关 / 滑块 / 卡片 / 徽标 / 分段控件各有对应写法，类名不必是真 Tailwind——`class="tabbar"`、`class="card"` 也认）。
+
 **只解析，不渲染**：不跑浏览器、不执行 `<script>`、不联网取任何资源；`<script>`、`<style>`、注释里的文字都不会
 被当成文案；样式只认渲染器画得出来的属性（颜色、圆角、字号字重、间距、阴影、对齐），`hsl()`、`@media`、伪类忽略。
 结尾给元素加 `data-key="checkout.pay"`（或 i18next 的 `data-i18n-key`）就能把文案对到 key 上——HTML 没有
@@ -409,8 +414,9 @@ Agent 读完仍然会去手画。
 颜色只接受 `#rgb`、`#rrggbb`、`#rrggbbaa`、`rgb()`/`rgba()` 与常见颜色名；不写就是这套元素本该有的样子。
 节点上的 `text` 就是界面上显示的文字，它同时是标记的默认 key（项目按 key 命名时，用 `key` 覆盖；
 `namespace` 可以写在根节点上，整棵树继承）。可用的节点类型：`screen`、`nav`（顶栏，`text` 是标题、
-`children` 是右侧动作）、`section`、`card`、`row`、`tabs`、`text`（`role`: heading/subheading/body/label/caption）、
-`button`、`input`、`image`、`icon`、`badge`、`divider`。
+`children` 是右侧动作）、`tabbar`（**贴屏幕底部的**标签栏，内容再长也不会把它挤到下面去）、`section`、`card`、`row`、
+`tabs`（分段控件）、`switch`、`slider`、`text`（`role`: heading/subheading/body/label/caption）、`button`、`input`、
+`image`（`alt` 进标记）、`icon`、`badge`、`divider`。
 
 **本仓库的 CLI 能直接从页面源码生成这份描述**——这是「草稿对应那个页面的所有UI」最省事的做法：
 

@@ -3759,9 +3759,12 @@
                             "enum": [
                               "screen",
                               "nav",
+                              "tabbar",
                               "section",
                               "row",
                               "tabs",
+                              "switch",
+                              "slider",
                               "card",
                               "text",
                               "button",

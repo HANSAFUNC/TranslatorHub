@@ -363,3 +363,62 @@ describe('what is drawn over what', () => {
     expect(deep.svg.indexOf('深层按钮')).toBeGreaterThan(lastSurface);
   });
 });
+
+/**
+ * The vocabulary a phone screen needs.
+ *
+ * A settings page is switches, a volume row is a slider, and every app has a bar at the bottom. Drawn
+ * as plain boxes they read as neither, and the sketch stops answering "which screen is this?" — which
+ * is what a caller describing an iOS or Android screen is asking for.
+ */
+describe('native controls', () => {
+  it('docks a tab bar to the bottom of the screen, whatever the content above it does', () => {
+    const tall = Array.from({ length: 40 }, (_, index) => ({ type: 'text' as const, text: `第 ${index} 行` }));
+    const layout = layoutUiSpec(
+      spec({
+        type: 'screen',
+        children: [
+          { type: 'nav', text: '设置' },
+          ...tall,
+          { type: 'tabbar', children: [{ type: 'text', text: '首页' }, { type: 'text', text: '我的' }] },
+        ],
+      }),
+    );
+    const bar = layout.boxes.find((box) => box.node.type === 'tabbar')!;
+    // Against the bottom edge of the picture, not after the last row of content.
+    expect(bar.y + bar.height).toBeCloseTo(layout.height, 5);
+    expect(bar.y).toBeGreaterThan(400);
+    const labels = layout.markers.filter((marker) => ['首页', '我的'].includes(marker.text));
+    expect(labels).toHaveLength(2);
+    expect(labels[0]!.y).toBeCloseTo(labels[1]!.y, 5);
+    expect(labels[0]!.x).toBeLessThan(labels[1]!.x);
+  });
+
+  it('marks a labelled switch’s label, and puts the control at the right edge', () => {
+    const layout = layoutUiSpec(
+      spec({ type: 'screen', children: [{ type: 'switch', text: '推送通知' }] }),
+    );
+    const marker = layout.markers.find((entry) => entry.text === '推送通知')!;
+    expect(marker).toBeTruthy();
+    // The label is on the left, the control against the right edge.
+    expect(marker.x + marker.width).toBeLessThan(0.85);
+  });
+
+  it('keeps a switch’s key when the label is what gets the marker', () => {
+    const layout = layoutUiSpec(
+      spec({ type: 'screen', children: [{ type: 'switch', text: '推送通知', key: 'settings.push' }] }),
+    );
+    expect(layout.markers.map((marker) => marker.key)).toEqual(['settings.push']);
+  });
+
+  it('draws a slider as a track with a knob, not as an empty row', () => {
+    const sketch = renderUiSketch(spec({ type: 'screen', children: [{ type: 'slider' }] }));
+    expect(sketch.svg).toContain('<circle');
+    expect((sketch.svg.match(/<rect /g) ?? []).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('gives an image whose alt is its only name a marker', () => {
+    const layout = layoutUiSpec(spec({ type: 'screen', children: [{ type: 'image', text: '院徽', width: 80, height: 80 }] }));
+    expect(layout.markers.map((marker) => marker.key)).toEqual(['院徽']);
+  });
+});

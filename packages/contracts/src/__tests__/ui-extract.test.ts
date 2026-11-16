@@ -263,3 +263,43 @@ describe('program code is not copy', () => {
     expect(strings.map((entry) => entry.text)).toEqual(['真的文案']);
   });
 });
+
+/**
+ * A page that names its parts in classes.
+ *
+ * `<div class="tabbar">` is a tab bar to a reader, exactly as `<TabBar>` is, and the same goes for
+ * `btn`, `badge`, `switch` and `slider`. Reading only tag names drew every one of them as a plain
+ * box.
+ */
+describe('components named in classes', () => {
+  it('reads a class-named tab bar, with its items', () => {
+    const { root } = extractUiSpec(`<div class="tabbar"><a>首页</a><a>保单</a><a>我的</a></div>`, 'page.html', {});
+    const bar = root.children![0]!;
+    expect(bar.type).toBe('tabbar');
+    expect(bar.children).toHaveLength(3);
+  });
+
+  it('reads the controls markup actually uses', () => {
+    const { root, strings } = extractUiSpec(
+      `<ul><li>推送通知 <input type="checkbox" checked></li><li>音量 <input type="range"></li></ul>`,
+      'page.html',
+      {},
+    );
+    const types: string[] = [];
+    const walk = (node: { type: string; children?: unknown[] }): void => {
+      types.push(node.type);
+      for (const child of (node.children ?? []) as { type: string; children?: unknown[] }[]) walk(child);
+    };
+    walk(root as never);
+    expect(types).toContain('switch');
+    expect(types).toContain('slider');
+    expect(strings.map((entry) => entry.text)).toEqual(['推送通知', '音量']);
+  });
+
+  it('reads a class-named card and badge', () => {
+    const { root } = extractUiSpec(`<div class="card"><span class="badge">已完成</span></div>`, 'page.html', {});
+    const card = root.children![0]!;
+    expect(card.type).toBe('card');
+    expect(card.children![0]!.type).toBe('badge');
+  });
+});

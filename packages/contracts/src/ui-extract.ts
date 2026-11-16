@@ -50,41 +50,73 @@ export interface ExtractResult {
 /* ------------------------------------------------------------------ elements */
 
 /** Map a tag or component name to the node kind that draws it recognizably. */
-function kindOf(tag: string): UiNode['type'] | null {
+function kindOf(tag: string, attributes: Record<string, string> = {}): UiNode['type'] | null {
   const name = tag.toLowerCase();
   const raw = tag;
-  // A page's chrome, drawn as chrome: a header bar reads as a header bar and not as a paragraph,
-  // and a segmented control reads as one instead of as three loose labels.
-  if (['nav', 'header'].includes(name) || /(navbar|nav-?bar|toolbar|topbar|top-?bar|appbar|app-?bar|titlebar)$/i.test(raw)) {
+  const classes = (attributes.class ?? attributes.className ?? '').split(/\s+/).filter(Boolean);
+  /**
+   * Whether a *component* name appears on the element — in its tag or in one of its classes.
+   *
+   * `<div class="card">` and `<Card>` are the same thing to a reader, and a page that names its parts
+   * in classes (`tabbar`, `btn`, `badge`) is as explicit as one that names them in components. So the
+   * component names are read first, from either place; only what is left over is classified by its
+   * tag (a `div` is a grouping, an `li` is a row). Reading the tag first meant `<div class="card">`
+   * was a `section` and its own class was consulted only for styling.
+   */
+  const named = (pattern: RegExp): boolean => pattern.test(raw) || classes.some((token) => pattern.test(token));
+
+  // `<input>` is decided by its `type` before anything else: a range is a slider and a checkbox is a
+  // switch, and the name rule below would read the tag `input` as "a text field" and stop there.
+  if (name === 'input') {
+    const type = (attributes.type ?? '').toLowerCase();
+    if (type === 'range') return 'slider';
+    if (type === 'checkbox') return 'switch';
+    return 'input';
+  }
+
+  // Component names, whichever way the page wrote them down.
+  if (['nav', 'header'].includes(name) || named(/(navbar|nav-?bar|toolbar|topbar|top-?bar|appbar|app-?bar|titlebar)$/i)) {
     return 'nav';
   }
+  // The bottom bar of a phone app: `UITabBar`, `BottomNavigationView`, `.tabbar`, `<TabBar>`.
+  if (named(/(tabbar|tab-?bar|bottomnavigation|bottom-?navigation|bottombar|bottom-?bar|tabbarview)$/i)) {
+    return 'tabbar';
+  }
+  // Controls that are neither text nor a text field. A settings page is mostly switches, and a switch
+  // is the difference between "settings" and "a list of rows".
+  if (named(/(switch|toggle|checkbox)$/i)) return 'switch';
+  if (named(/(slider|range|stepper)$/i)) return 'slider';
   // Deliberately not `<Tabs>` or `<TabsList>`: a component library's `Tabs` wraps the triggers *and*
   // every panel, so drawing it as one segmented control squeezes whole screens into a 34 px bar.
-  // Only the things that are a segmented control by name are one.
-  if (/(tabbar|tab-?bar|segmented|segmentedcontrol|segmented-?control)$/i.test(raw)) {
-    return 'tabs';
-  }
-  if (['div', 'main', 'section', 'article', 'aside', 'form', 'ul', 'ol', 'dl', 'table', 'tbody', 'thead', 'tr', 'figure', 'body', 'html'].includes(name)) {
-    return 'section';
-  }
-  if (name === 'li' || name === 'td' || name === 'th') return 'row';
-  if (/^h[1-6]$/.test(name) || name === 'title' || name === 'legend') return 'text';
-  if (['p', 'span', 'label', 'strong', 'em', 'small', 'dt', 'dd', 'figcaption', 'caption', 'blockquote'].includes(name)) return 'text';
-  if (['button', 'a'].includes(name)) return 'button';
-  if (['input', 'textarea', 'select'].includes(name)) return 'input';
-  if (name === 'img' || name === 'picture' || name === 'video' || name === 'svg' || name === 'canvas') return 'image';
-  if (name === 'hr') return 'divider';
-  // Components: `Button`, `PrimaryButton`, `IconButton`, `Card`, `NavBar`…
+  if (named(/(tabs?|segmented|segmentedcontrol|segmented-?control)$/i) && !named(/table$/i)) return 'tabs';
   // Suffix-anchored on purpose. A `Field` wraps a label and an input, but `FieldLabel` and
   // `FieldGroup` are not inputs — matching the substring anywhere turned a whole form into one box
   // and dropped every label inside it.
-  if (/(button|btn)$/i.test(raw)) return 'button';
-  if (/(card|panel|sheet|dialog|modal)$/i.test(raw)) return 'card';
-  if (/(input|textarea|select|searchfield|textfield|field)$/i.test(raw)) return 'input';
-  if (/icon$/i.test(raw)) return 'icon';
-  if (/(image|img|avatar|logo|thumbnail|picture)$/i.test(raw)) return 'image';
-  if (/(badge|tag|chip|pill)$/i.test(raw)) return 'badge';
-  if (/(text|label|title|heading|caption|description|subtitle)$/i.test(raw)) return 'text';
+  if (named(/(button|btn)$/i)) return 'button';
+  if (named(/(card|panel|sheet|dialog|modal)$/i)) return 'card';
+  if (named(/(input|textarea|select|searchfield|textfield|field)$/i)) return 'input';
+  if (named(/icon$/i)) return 'icon';
+  if (named(/(image|img|avatar|logo|thumbnail|picture)$/i)) return 'image';
+  if (named(/(badge|tag|chip|pill)$/i)) return 'badge';
+  if (named(/(text|label|title|heading|caption|description|subtitle)$/i)) return 'text';
+
+  // Then the markup itself.
+  if (['textarea', 'select'].includes(name)) return 'input';
+  if (name === 'img' || name === 'picture' || name === 'video' || name === 'svg' || name === 'canvas') return 'image';
+  if (name === 'hr') return 'divider';
+  if (name === 'li' || name === 'td' || name === 'th') return 'row';
+  if (/^h[1-6]$/.test(name) || name === 'title' || name === 'legend') return 'text';
+  if (['p', 'span', 'label', 'strong', 'em', 'small', 'dt', 'dd', 'figcaption', 'caption', 'blockquote'].includes(name)) {
+    return 'text';
+  }
+  if (['button', 'a'].includes(name)) return 'button';
+  if (
+    ['div', 'main', 'section', 'article', 'aside', 'form', 'ul', 'ol', 'dl', 'table', 'tbody', 'thead', 'tr', 'figure', 'body', 'html', 'footer'].includes(
+      name,
+    )
+  ) {
+    return 'section';
+  }
   return null;
 }
 
@@ -613,7 +645,7 @@ function toNode(
   const explicitKey = KEY_ATTRIBUTES.map((attribute) => element.attributes[attribute]).find(
     (value) => value && value !== 'true' && !element.expressions?.includes('data-key'),
   );
-  const kind = kindOf(element.tag);
+  const kind = kindOf(element.tag, element.attributes);
   // Whatever the page says about how this element looks — its tag's rules, its classes, its inline
   // style, in that order. `undefined` means "draw it the way this kind of element is drawn".
   const style = styleForElement(element, options.styleSheet);
@@ -806,13 +838,17 @@ export function extractUiSpec(source: string, fileName: string, options: Extract
   const isKeptText = (text: string): boolean =>
     kept.some((entry) => entry.text === text || text.includes(entry.text));
 
+  // Controls that are worth keeping even when they carry no string: dropping them left a settings
+  // page as a list of labels with no switches beside them, which is not the screen anyone is on.
+  const drawsItself = new Set<UiNode['type']>(['switch', 'slider', 'image', 'icon', 'divider', 'input']);
+
   const pick = (node: UiNode): UiNode | null => {
     // Drop nodes whose only purpose was to carry a string we did not keep, so the picture and the
     // markers stay in step.
     const children = (node.children ?? []).map(pick).filter((child): child is UiNode => child !== null);
     const carriesText = Boolean(node.text);
     const keepText = !carriesText || isKeptText(node.text!);
-    if (!children.length && !keepText) return null;
+    if (!children.length && !keepText && !drawsItself.has(node.type)) return null;
     const next: UiNode = { ...node };
     if (!keepText) delete next.text;
     if (children.length) next.children = children;

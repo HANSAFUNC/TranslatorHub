@@ -32,8 +32,9 @@ export const REMOTE_MCP_INSTRUCTIONS = [
   '· 一次调用只放 300~400 条，整个导入在一个 5 秒的事务里（实测 400 条通过、1000 条超时），超时会整批回滚。',
   '',
   '顺手（可选，但很值）：upload_screen_mockup 把译文放回界面里——编辑器的「界面草图」并排显示图与译文，点标记跳到译文。',
-  '把页面的源码传进来（html，JSX/TSX 也行）：平台解析出元素树，自己排版、画图，并算出每个标记的坐标，',
-  '颜色与组件外观按 class / inline style / <style> 规则还原——不用你画图，也不用你量坐标。也可以传 ui（自己写元素树）。',
+  '不管源码是什么技术栈（iOS / Android / Web / Flutter / RN），都先把它转成 HTML 传进来：平台解析出元素树，',
+  '自己排版、画图、算出每个标记的坐标，颜色与组件外观按 class / inline style / <style> 还原。',
+  '一套写法通吃，也不用你画图、不用你量坐标；标签栏、开关、滑块、卡片都有对应写法，见教程。',
   '节点的 text 默认就是 key（可用 key 覆盖）；指向还没导入的 key 不算错，会在 markers.unmatched 里报告，导入后自动对上。',
   '有 shell 权限时更省事：localehub mockup --page <页面文件> --confirm 读同一个页面的源码并直接上传。',
   '注意没有 dry run：同名屏幕再传一次是整体替换（旧图与旧标记不再保留），别拿它「先试一下」。细节见 localehub://screen-sketch-guide。',
@@ -200,6 +201,33 @@ export const REMOTE_MCP_SKETCH_GUIDE = `# 把界面草图传上来：让每句�
 **HTML 里的文案怎么对上 key**：给元素加 \`data-key="checkout.pay"\`（或 i18next 的 \`data-i18n-key\`）——HTML 没有
 \`t('…')\` 这样的调用，不写的话标记就以文案本身为 key，只有按源文命名的项目才对得上。
 
+### 不管源码是什么技术栈，都先转成 HTML
+
+这是这套流程里唯一的「统一入口」：一套写法、一份教程、一个渲染器。平台存下来的不是你的 HTML，而是它自己按元素树
+画出的 SVG 与标记坐标——所以以后要改画法、加主题，都不用你重新上传。
+
+| 你的代码 | 写成 | 平台画成 |
+| --- | --- | --- |
+| iOS \`NavigationStack\` + \`.navigationTitle("设置")\` | \`<nav><h1>设置</h1></nav>\` | 顶栏（横跨整屏） |
+| Android \`TopAppBar\` | 同上 | 同上 |
+| iOS \`TabView\` / \`UITabBar\` | \`<div class="tabbar"><a>首页</a><a>保单</a><a>我的</a></div>\` | **贴屏幕底部的**标签栏 |
+| Android \`BottomNavigationView\` / Compose \`NavigationBar\` | 同上 | 同上 |
+| \`UISwitch\` / \`SwitchMaterial\` | \`<input type="checkbox">\`（标签写在旁边） | 开关 |
+| \`UISlider\` / \`SeekBar\` | \`<input type="range">\` | 滑块（轨道 + 滑块） |
+| \`List\` / \`RecyclerView\` / \`FlatList\` 的行 | \`<ul><li>…</li></ul>\` 或 \`<div class="row">\` | 一行元素 |
+| \`Card\` / \`MaterialCardView\` | \`<div class="card">\` | 卡片（描边 + 圆角） |
+| \`Button\` / \`MaterialButton\` / \`TouchableOpacity\` | \`<button class="bg-blue-600 text-white rounded-lg px-4 py-2">\` | 按钮（带页面配色） |
+| \`TextField\` / \`TextInputLayout\` / \`EditText\` | \`<input placeholder="搜索课程">\` | 输入框（占位文案进标记） |
+| \`Image\` / \`ImageView\` / \`AsyncImage\` | \`<img alt="院徽">\` | 图片占位，\`alt\` 进标记 |
+| 徽标 / \`Chip\` / \`Badge\` | \`<span class="badge">已完成</span>\` | 药丸 |
+| \`UISegmentedControl\` / \`SegmentedButton\` | \`<div class="tabs"><span>全部</span><span>未读</span></div>\` | 分段控件 |
+| 只属于某个端的布局细节 | 用下面的 \`ui\` 元素树直接写 | 同上 |
+
+类名不必是 Tailwind 的真类名——\`class="tabbar"\`、\`class="card"\`、\`class="btn"\` 这种写法平台都认；
+颜色写 Tailwind 的（\`bg-blue-600\`）、\`#rrggbb\` 或 inline \`style\` 都行。三个选择要一次定对：
+\`platform\`（ios → 画布 390×844、android → 412×915、web → 1280×800）、\`namespace\`（iOS 的多张字符串表必须写）、
+以及要不要给文案挂 \`data-key\`。
+
 ### 也可以自己描述（\`ui\`）
 
 \`\`\`jsonc
@@ -314,7 +342,7 @@ export function remoteSketchPrompt(args: { projectId?: string; page?: string } =
     '按这个顺序做，不要跳步：',
     '1. 读 localehub://screen-sketch-guide，它是这个流程的权威说明。',
     '2. 能跑命令就用：localehub mockup --page <页面文件> --name <屏幕名> 先生成预览，把「哪些字符串变成了标记、用了哪些颜色」报给我确认，再加 --confirm 上传。',
-    '3. 不能跑命令就把页面源码本身交上来：upload_screen_mockup 传 html（HTML 或 JSX/TSX）。平台只解析、不渲染；',
+    '3. 不能跑命令就把界面转成 HTML 交上来（任何技术栈都一样：upload_screen_mockup 传 html）。平台只解析、不渲染；',
     '   文案要落到 key 上就给元素加 data-key，否则标记会以文案本身为 key。',
     '4. 调 get_project 确认 sourceLocale 与 platforms；草图的 locale 用 sourceLocale，platform 用页面所属的端，',
     '   分表的项目还要给 namespace（iOS 的 Localizable / InfoPlist）。',

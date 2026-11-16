@@ -1342,6 +1342,47 @@ namespace（空的 `web` 行已删），`platform=web` 查询返回 0 条。
 那张页面——调用方给的多半是壳：Tailwind 需要那份 CSS、组件是 import 的、内容是 hydration 之后才有的。
 所以这条路是「解析成元素树 + 平台自己画」，要真像素级，让调用方本地截图、自己量坐标传 `image_base64` + `markers`。
 
+### 1.41 统一入口：不管什么技术栈都转成 HTML，补齐移动端的语汇
+
+用户要求：「无论代码是 iOS、安卓、Web 或者其他语言，都需要把界面转成 HTML 上传上来，这个更统一，查看、操作空间也好」。
+
+这是上一轮 `html` 输入的收口：把它从「三种输入里最省事的那种」变成**所有技术栈的统一入口**。敢统一的前提要说清楚——
+**平台存的不是调用方的 HTML**，而是它自己按元素树画出的 SVG 与标记坐标，所以画法、主题、组件语汇都能在平台侧继续
+演进，调用方不用重传；HTML 只是「怎么把界面说清楚」的一种写法，而且是一种谁都会写的写法。
+
+**先补语汇：移动端截图里最显眼的几样东西以前画不出来。**
+
+| 新增 | 画成 | 从源码里怎么认出来 |
+| --- | --- | --- |
+| `tabbar` | **贴屏幕底部的**标签栏（顶边一条细线，项目横向铺满） | `TabBar` / `UITabBar` / `BottomNavigationView` / `.tabbar` / `.bottom-bar` |
+| `switch` | 开关（实心轨道 + 白色圆钮） | `Switch` / `Toggle` / `<input type="checkbox">` |
+| `slider` | 滑块（轨道 + 已填充段 + 圆钮） | `Slider` / `SeekBar` / `<input type="range">` |
+
+`tabbar` 的关键不是形状而是**位置**：它属于屏幕底边，不属于内容流。此前的排版把它当成普通子节点，于是每一屏内容
+比视口长（也就是几乎每一屏）它都会被挤到折叠线以下——排版因此分两段：先把内容排完定出画布高度，再把贴底的栏放到
+`画布高 - 栏高`，图与标记仍然出自同一趟。
+
+**组件名现在两种写法都认。** 以前只有**标签名**参与分类，所以 `<div class="card">` 只会是一个 `section`（只是背景色像卡片），
+`<div class="tabbar">` 更是完全认不出。现在分类先看组件名——标签名或类名任一处出现 `card`/`btn`/`badge`/`tabbar`/`switch`/`slider`/
+`Field`… 都算——只有剩下的才按标签归类（`div` 是分组、`li` 是行）。`<input>` 是唯一的例外，它先看 `type`：`range` 是滑块、
+`checkbox` 是开关，不能因为标签叫 input 就当文本框。
+
+**顺带修掉的一个「画不出来的控件」**：`pick()` 会丢掉既没有文案也没有子节点的元素（本意是清理空壳），于是
+`<input type="checkbox">` 这类**没有文案的控件**被整棵剪掉——一页设置项画出来只有标签、旁边没有开关。现在
+`switch`/`slider`/`image`/`icon`/`divider`/`input` 即使没有文案也保留：它们自己会画出东西。同一处还补上了
+`image` 的 `alt` 与 `icon` 的文字标记（`<img alt="院徽">` 的 `alt` 是界面上唯一的名字，理应有个标记）。
+
+**教程给了每种栈的对照表**（`localehub://screen-sketch-guide`）：`NavigationStack`/`TopAppBar` → `<nav>`、
+`TabView`/`BottomNavigationView` → `<div class="tabbar">`、`UISwitch`/`SwitchMaterial` → `<input type="checkbox">`、
+`UISlider`/`SeekBar` → `<input type="range">`、`List`/`RecyclerView`/`FlatList` 的行 → `<ul><li>`、`Card`/`MaterialCardView`
+→ `<div class="card">`、`TextField`/`TextInputLayout` → `<input placeholder>`、`Image`/`AsyncImage` → `<img alt>`、
+分段控件 → `<div class="tabs">`，以及三个必须一次定对的字段（`platform` 决定画布、`namespace` 决定字符串表、
+`data-key` 决定文案挂在哪个 key 上）。`instructions` 与 `upload-screen-sketch` 提示词也改成同一句话：
+不管什么栈，先转成 HTML。
+
+**验证**：382 单元（contracts 167，新增 5 条原生控件、3 条类名组件、3 条 `input[type]`）+ 168 集成测试；
+7 个真实页面的「每个字符串都有标记」性质仍成立。叠放次序、贴底栏位置、开关与滑块都各有用例钉住。
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |
@@ -1454,6 +1495,9 @@ docker buildx build --network host -f docker/web.Dockerfile -t localehub-web .
 | 浏览器端硬编码 API 主机                                                  | 反向代理部署下前端打不到 API                       | 未配置 `NEXT_PUBLIC_API_BASE_URL` 时回退到同源 `/api/v1`                       |
 | MCP 的写入不写审计（`audit_logs` 对 Agent 全盲）                         | 审计页看不到任何 MCP 操作，无法追溯、无法撤销对应 Token | 抽 `packages/domain/src/audit.ts`，六个写工具补审计 + 8 单元 / 2 集成测试（见 §1.28） |
 | 容器（卡片、面板）画在自己的子元素之上，草图是一张空卡片 | 位置全对但画面里什么都没有，几何测试看不见 | 渲染改成「先所有面（按深度）再所有内容」+ 2 条叠放次序测试（见 §1.40） |
+| 组件名写在 class 里就不认识（`<div class="card">`、`<div class="tabbar">`） | 卡片只是「有背景的分组」，标签栏完全画不出 | 分类先看组件名（标签或类名任一处），只有剩下的按标签归类（见 §1.41） |
+| 没有文案的控件被清理逻辑整棵剪掉（`<input type="checkbox">`） | 设置页只有标签、旁边没有开关 | `switch`/`slider`/`image`/`icon`/`divider`/`input` 即使无文案也保留（见 §1.41） |
+| 贴底的标签栏被当成普通子节点，排在内容之后 | 内容一长它就被挤到折叠线以下 | 排版分两段：定出画布高度后再把贴底栏放到 `画布高 - 栏高`（见 §1.41） |
 | 单个英文单词的文案被 `looksLikeUiText` 判成类名丢掉（`Checkout`/`Cancel`/`Settings`） | 页面标题只有一个词的页面留下没有标记的空洞 | 标点判 id/类/路径、全小写带连字符或数字判工具类，其余当文案（见 §1.40） |
 | `aria-label={label}` 这类表达式属性被读成文案 | 草图里多出「label」这种变量名标记 | 属性值的字面量与表达式分开，表达式不读（见 §1.40） |
 | `<script>` / `<style>` 的内容被当成界面文案 | 内联脚本产生文字为 `const x = 1` 的标记，样式表产生 CSS 标记 | 解析前剥掉脚本与注释，样式只读颜色（见 §1.40） |
