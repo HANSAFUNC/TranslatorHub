@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_UI_NODES,
   layoutUiSpec,
+  uiNodeSchema,
   uiStyleSchema,
   measureText,
   renderUiSketch,
@@ -420,5 +421,68 @@ describe('native controls', () => {
   it('gives an image whose alt is its only name a marker', () => {
     const layout = layoutUiSpec(spec({ type: 'screen', children: [{ type: 'image', text: '院徽', width: 80, height: 80 }] }));
     expect(layout.markers.map((marker) => marker.key)).toEqual(['院徽']);
+  });
+});
+
+/**
+ * Looking like the app, when the screen itself says nothing.
+ *
+ * A screen transcribed by hand carries semantic class names and no colours at all, and an `<img>`
+ * whose picture never arrived. Both used to end as grey: the sketch fell back to one monochrome
+ * palette, and every image was a placeholder. These pin the two ways out — a theme the caller can
+ * state, and a picture the caller can carry.
+ */
+describe('theme and pictures', () => {
+  const plain = spec({ type: 'screen', children: [{ type: 'button', text: '查看详情' }, { type: 'switch', text: '推送通知' }] });
+
+  it('uses the platform’s own accent when the page has none', () => {
+    expect(layoutUiSpec({ ...plain, platform: 'ios' }).theme.accent).toBe('#0a84ff');
+    expect(layoutUiSpec({ ...plain, platform: 'android' }).theme.accent).toBe('#1a73e8');
+    expect(layoutUiSpec({ ...plain, platform: 'web' }).theme.accent).toBe('#18181b');
+  });
+
+  it('lets the caller state the brand colour, and draws the controls with it', () => {
+    const sketch = renderUiSketch({ ...plain, theme: { accent: '#c8102e', background: '#f7f7f9' } });
+    expect(sketch.svg).toContain('#c8102e');
+    expect(sketch.svg).toContain('#f7f7f9');
+    // The button's label stays readable on it.
+    expect(sketch.svg).toContain('fill="#ffffff"');
+  });
+
+  it('lets a node’s own colour win over the theme', () => {
+    const sketch = renderUiSketch(
+      spec({ type: 'screen', children: [{ type: 'button', text: '取消', style: { background: '#f4f4f5', color: '#18181b' } }] }),
+    );
+    expect(sketch.svg).toContain('#f4f4f5');
+    expect(sketch.svg).not.toContain('#18181b" width='); // the fill is the node's, not the accent
+  });
+
+  it('draws a picture the caller carried with it, clipped to the frame', () => {
+    const picture = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const sketch = renderUiSketch(spec({ type: 'screen', children: [{ type: 'image', src: picture, width: 80, height: 80 }] }));
+    expect(sketch.svg).toContain(`<image href="${picture}"`);
+    expect(sketch.svg).toContain('<clipPath');
+    // And it is still a picture the platform will accept: the upload gate runs over generated output.
+    expect(unsafeSvgReasons(sketch.svg)).toEqual([]);
+  });
+
+  it('refuses a src that is not an inline picture, so a caller cannot make the browser fetch one', () => {
+    expect(uiNodeSchema.safeParse({ type: 'image', src: 'https://example.com/x.png' }).success).toBe(false);
+    expect(uiNodeSchema.safeParse({ type: 'image', src: 'data:text/html;base64,PHNjcmlwdD4=' }).success).toBe(false);
+    expect(uiNodeSchema.safeParse({ type: 'image', src: 'data:image/svg+xml;base64,PHN2Zy8+' }).success).toBe(false);
+  });
+
+  it('refuses a payload whose pictures together would not fit in a sketch', () => {
+    const picture = 'data:image/png;base64,' + 'A'.repeat(300_000);
+    const heavy = spec({ type: 'screen', children: Array.from({ length: 5 }, () => ({ type: 'image' as const, src: picture })) });
+    expect(uiSpecIssues(heavy).join(' ')).toContain('内联了');
+  });
+
+  it('marks the current tab, so a bar reads as a bar with something chosen', () => {
+    const layout = layoutUiSpec(
+      spec({ type: 'screen', children: [{ type: 'tabs', children: [{ type: 'text', text: '全部' }, { type: 'text', text: '未读' }] }] }),
+    );
+    const selected = layout.boxes.filter((box) => box.selected).map((box) => box.node.text);
+    expect(selected).toEqual(['全部']);
   });
 });

@@ -3751,6 +3751,22 @@
                         "minimum": 64,
                         "maximum": 8192
                       },
+                      "theme": {
+                        "type": "object",
+                        "properties": {
+                          "accent": {
+                            "type": "string",
+                            "maxLength": 40,
+                            "pattern": "^(#[0-9a-f]{3}|#[0-9a-f]{6}|#[0-9a-f]{8}|rgba?\\(\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*(?:,\\s*(?:0|1|0?\\.\\d+)\\s*)?\\)|transparent|currentColor|black|white|silver|gr[ae]y|red|maroon|yellow|olive|lime|green|aqua|cyan|teal|blue|navy|fuchsia|magenta|purple|orange|pink|brown)$"
+                          },
+                          "background": {
+                            "type": "string",
+                            "maxLength": 40,
+                            "pattern": "^(#[0-9a-f]{3}|#[0-9a-f]{6}|#[0-9a-f]{8}|rgba?\\(\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*(?:,\\s*(?:0|1|0?\\.\\d+)\\s*)?\\)|transparent|currentColor|black|white|silver|gr[ae]y|red|maroon|yellow|olive|lime|green|aqua|cyan|teal|blue|navy|fuchsia|magenta|purple|orange|pink|brown)$"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
                       "root": {
                         "type": "object",
                         "properties": {
@@ -3814,6 +3830,11 @@
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 6
+                          },
+                          "src": {
+                            "type": "string",
+                            "maxLength": 400000,
+                            "pattern": "^data:image\\/(png|jpe?g|gif|webp|avif);base64,[A-Za-z0-9+/]+=*$"
                           },
                           "style": {
                             "type": "object",
@@ -3911,6 +3932,26 @@
                   "namespace": {
                     "type": "string",
                     "maxLength": 255
+                  },
+                  "css": {
+                    "type": "string",
+                    "maxLength": 1000000
+                  },
+                  "theme": {
+                    "type": "object",
+                    "properties": {
+                      "accent": {
+                        "type": "string",
+                        "maxLength": 40,
+                        "pattern": "^(#[0-9a-f]{3}|#[0-9a-f]{6}|#[0-9a-f]{8}|rgba?\\(\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*(?:,\\s*(?:0|1|0?\\.\\d+)\\s*)?\\)|transparent|currentColor|black|white|silver|gr[ae]y|red|maroon|yellow|olive|lime|green|aqua|cyan|teal|blue|navy|fuchsia|magenta|purple|orange|pink|brown)$"
+                      },
+                      "background": {
+                        "type": "string",
+                        "maxLength": 40,
+                        "pattern": "^(#[0-9a-f]{3}|#[0-9a-f]{6}|#[0-9a-f]{8}|rgba?\\(\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*(?:,\\s*(?:0|1|0?\\.\\d+)\\s*)?\\)|transparent|currentColor|black|white|silver|gr[ae]y|red|maroon|yellow|olive|lime|green|aqua|cyan|teal|blue|navy|fuchsia|magenta|purple|orange|pink|brown)$"
+                      }
+                    },
+                    "additionalProperties": false
                   },
                   "imageBase64": {
                     "type": "string",

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { McpScope } from './roles';
 import { localeTagSchema, platformSchema } from './schemas';
 import { MAX_MARKERS_PER_MOCKUP, MAX_MOCKUP_BYTES, MAX_MOCKUP_REQUEST_BYTES, markerSchema } from './mockup';
-import { MAX_UI_HTML_CHARS, uiSpecSchema } from './ui-spec';
+import { MAX_UI_HTML_CHARS, uiSpecSchema, uiThemeSchema } from './ui-spec';
 
 /**
  * Canonical registry of the Remote MCP's tools. Shared by the server, the API's discovery
@@ -327,6 +327,20 @@ export const remoteToolSchemas = {
       .max(255)
       .optional()
       .describe('传 html 时的默认命名空间，整棵树继承（等于 ui.root.namespace）。iOS 分表导入时必填。'),
+    css: z
+      .string()
+      .max(MAX_UI_HTML_CHARS)
+      .optional()
+      .describe(
+        '页面自己的样式表（globals.css / 设计系统的主题文件）：页面里常常只有类名，颜色在另一个文件里定义，' +
+          '不给这一份就只能用平台默认配色（看起来会偏灰）。规则先于页面内的 <style> 生效。',
+      ),
+    theme: uiThemeSchema
+      .optional()
+      .describe(
+        '品牌色：accent 用在按钮、开关、滑块、选中的那个页签上，background 是页面底色。' +
+          '默认按 platform：ios 是系统蓝，android 是 Material 蓝，web 是近黑。页面自己带颜色时以页面为准。',
+      ),
     ui: uiSpecSchema.optional().describe(
       '界面描述（推荐）：按元素描述页面，平台据此画出草图并自动计算每个标记的位置与大小——不需要你量坐标。' +
         'root 是一个树：screen 里放 text / button / input / card / row / image 等节点，节点上的 text 就是界面上显示的文字，' +

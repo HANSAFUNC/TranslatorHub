@@ -30,7 +30,7 @@ import { globToRegExp } from '@localehub/contracts';
 import type { ApplyPlan } from '@localehub/sync-engine';
 import { executeApply, planApply, toApplyReportPayload } from './apply';
 import { scanAndCollect, type ScanSummary } from './scan';
-import { readPageFile } from './ui-extract';
+import { inlineLocalImages, readPageFile } from './ui-extract';
 import { StateStore } from './state';
 
 export interface ServiceContext {
@@ -446,6 +446,10 @@ export class LocalSyncServices {
     locale?: string;
     namespace?: string;
     keys?: Record<string, string>;
+    /** A stylesheet that lives outside the page, read through the workspace guard. */
+    cssFile?: string;
+    /** Brand colours the page itself does not carry. */
+    theme?: { accent?: string; background?: string };
     width?: number;
     height?: number;
     confirm?: boolean;
@@ -453,10 +457,18 @@ export class LocalSyncServices {
   }): Promise<OperationResult> {
     const config = this.config().config;
     const guard = this.workspace();
-    const { source, fileName } = readPageFile(guard, input.page);
+    const read = readPageFile(guard, input.page);
+    // The page's pictures come along, base64'd, so the sketch shows them instead of a grey frame.
+    const pictures = inlineLocalImages(guard, read.source, read.fileName);
+    const source = pictures.source;
+    const fileName = read.fileName;
     const name = input.name ?? fileName.split('/').pop()!.replace(/\.[^.]+$/, '');
     const locale = input.locale ?? config.project.sourceLocale;
     const platform = input.platform ?? config.project.platforms?.[0] ?? 'web';
+
+    // The page's colours often live in a stylesheet next to it (a globals.css, a theme file): read
+    // it so the sketch can use them instead of falling back to the platform's palette.
+    const providedCss = input.cssFile ? readFileSync(guard.absolute(guard.assertReadable(input.cssFile)), 'utf8') : undefined;
 
     const { spec, strings, warnings } = buildUiSpec(source, fileName, {
       name,
@@ -464,6 +476,8 @@ export class LocalSyncServices {
       locale,
       ...(input.namespace ? { namespace: input.namespace } : {}),
       ...(input.keys ? { keys: input.keys } : {}),
+      ...(providedCss ? { css: providedCss } : {}),
+      ...(input.theme ? { theme: input.theme } : {}),
       ...(input.width ? { width: input.width } : {}),
       ...(input.height ? { height: input.height } : {}),
     });
@@ -485,7 +499,12 @@ export class LocalSyncServices {
       markers: sketch.markers.length,
       keys: strings.slice(0, 5).map((entry) => entry.key),
       svgPath: relative(guard.root, svgPath),
-      warnings,
+      inlinedImages: pictures.inlined.length,
+      skippedImages: pictures.skipped,
+      warnings: [
+        ...warnings,
+        ...pictures.skipped.map((entry) => `没有内联 ${entry.ref}：${entry.why}（草图里会是占位框）`),
+      ],
       uploaded: false as boolean,
       requiresConfirmation: !input.confirm,
     };

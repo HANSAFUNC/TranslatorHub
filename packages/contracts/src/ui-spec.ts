@@ -50,6 +50,20 @@ export type UiTextRole = (typeof UI_TEXT_ROLES)[number];
 export const UI_FONT_WEIGHTS = ['regular', 'medium', 'semibold', 'bold'] as const;
 export type UiFontWeight = (typeof UI_FONT_WEIGHTS)[number];
 
+/**
+ * An inline picture: `data:image/png;base64,…`.
+ *
+ * The platform never fetches anything, so a sketch can only show an image the caller brought with it.
+ * That is what this is for — a logo, a hero, a product photo, base64'd into the payload. A URL is
+ * refused rather than drawn as a broken frame, and anything oversized falls back to the placeholder.
+ */
+export const UI_IMAGE_DATA_PATTERN = /^data:image\/(png|jpe?g|gif|webp|avif);base64,[A-Za-z0-9+/]+=*$/;
+
+/** One picture, ~300 KB of bytes once decoded. Beyond this the payload stops being a payload. */
+export const MAX_INLINE_IMAGE_CHARS = 400_000;
+/** All of them together: the stored sketch has its own 2 MB ceiling to stay under. */
+export const MAX_INLINE_IMAGE_TOTAL_CHARS = 1_200_000;
+
 const WEIGHT_VALUE: Record<UiFontWeight, number> = { regular: 400, medium: 500, semibold: 600, bold: 700 };
 
 /**
@@ -158,6 +172,8 @@ export interface UiNode {
   height?: number;
   /** Equal-width columns for a `row` (`grid-cols-3`). */
   columns?: number;
+  /** The picture itself, as a base64 data URL. `image` and `icon` nodes only. */
+  src?: string;
   /** How it looks. Omitted means "however this kind of element looks by default". */
   style?: UiStyle;
   children?: UiNode[];
@@ -174,6 +190,11 @@ export const uiNodeSchema: z.ZodType<UiNode> = z.lazy(() =>
     width: z.number().positive().max(8192).optional(),
     height: z.number().positive().max(8192).optional(),
     columns: z.number().int().min(1).max(6).optional(),
+    src: z
+      .string()
+      .max(MAX_INLINE_IMAGE_CHARS)
+      .regex(UI_IMAGE_DATA_PATTERN, 'src 只接受 data:image/...;base64 形式的内联图片（平台不联网取图）')
+      .optional(),
     style: uiStyleSchema.optional(),
     children: z.array(uiNodeSchema).max(400).optional(),
   }),
@@ -191,6 +212,38 @@ export const MAX_UI_NODES = 600;
 /** A page's source is smaller than a picture of it; this is the cap on the `html` input. */
 export const MAX_UI_HTML_CHARS = 1_000_000;
 
+/**
+ * The colours a sketch falls back to.
+ *
+ * A screen transcribed by hand — semantic class names, no colour utilities — carries no palette at
+ * all, and a wireframe drawn in greys is both ugly and hard to place. So the platform has a default
+ * per platform (an iPhone app is blue, a web app in this codebase is near-black), and a caller that
+ * knows its brand can say so once instead of colouring every node.
+ */
+export interface UiTheme {
+  /** Buttons, switches, the filled part of a slider, the selected tab. */
+  accent?: string;
+  /** The page behind everything. */
+  background?: string;
+}
+
+export const uiThemeSchema = z.object({
+  accent: uiColorSchema.optional(),
+  background: uiColorSchema.optional(),
+});
+
+/** What an uncoloured screen is drawn with, by platform. */
+export function defaultTheme(platform: string | undefined): Required<UiTheme> {
+  switch (platform) {
+    case 'ios':
+      return { accent: '#0a84ff', background: '#f2f2f7' };
+    case 'android':
+      return { accent: '#1a73e8', background: '#ffffff' };
+    default:
+      return { accent: '#18181b', background: '#ffffff' };
+  }
+}
+
 export const uiSpecSchema = z.object({
   /**
    * Optional, and ignored by both upload surfaces — the screen's identity is the `name` of the
@@ -207,6 +260,8 @@ export const uiSpecSchema = z.object({
   /** Canvas size. The caller picks it because it decides how the wireframe is laid out. */
   width: z.number().int().min(64).max(8192).optional(),
   height: z.number().int().min(64).max(8192).optional(),
+  /** Brand colours, when the caller knows them and the page does not say. */
+  theme: uiThemeSchema.optional(),
   root: uiNodeSchema,
 });
 
@@ -243,6 +298,18 @@ export function uiSpecIssues(spec: UiSpec): string[] {
   };
   walk(spec.root, 1);
 
+  let inline = 0;
+  const weigh = (node: UiNode): void => {
+    inline += node.src?.length ?? 0;
+    for (const child of node.children ?? []) weigh(child);
+  };
+  weigh(spec.root);
+  if (inline > MAX_INLINE_IMAGE_TOTAL_CHARS) {
+    issues.push(
+      `ui 里内联了约 ${Math.round(inline / 1024)} KB 的图片，上限 ${Math.round(MAX_INLINE_IMAGE_TOTAL_CHARS / 1024)} KB——外链图片请自己在本地截图后用 image_base64 上传`,
+    );
+  }
+
   if (deepest > MAX_UI_DEPTH) issues.push(`ui 的嵌套层级是 ${deepest}，上限 ${MAX_UI_DEPTH}`);
   if (nodes > MAX_UI_NODES) issues.push(`ui 有 ${nodes} 个元素，上限 ${MAX_UI_NODES}`);
   if (!spec.root.text && !(spec.root.children ?? []).length) {
@@ -277,6 +344,14 @@ export interface UiBox {
   content: UiRect;
   /** The box the marker should cover, when the node carries a translatable string. */
   marker: boolean;
+  /**
+   * The first item of a `tabs` or `tabbar`: the one a screen shows as current.
+   *
+   * A segmented control with nothing selected reads as three loose words, and a tab bar with nothing
+   * highlighted reads as a footer. The first item is the default in both, and a caller that means a
+   * different one gives that item its own colour.
+   */
+  selected?: boolean;
 }
 
 const rect = (x: number, y: number, width: number, height: number): UiRect => ({ x, y, width, height });
@@ -412,6 +487,11 @@ export function wrapText(text: string, fontSize: number, maxWidth: number): stri
     lines.push(current.trimEnd());
   }
   return lines.length ? lines : [''];
+}
+
+/** Everything the first item of a bar drew is the selected one. */
+function markSelected(state: LayoutState, from: number): void {
+  for (let index = from; index < state.boxes.length; index += 1) state.boxes[index]!.selected = true;
 }
 
 interface LayoutState {
@@ -552,7 +632,9 @@ function layoutNode(node: UiNode, x: number, y: number, width: number, state: La
       const items = node.children ?? [];
       const each = Math.max(1, width / Math.max(1, items.length));
       items.forEach((item, index) => {
+        const before = state.boxes.length;
         layoutNode(item, x + index * each, y + 8, each, state, depth + 1);
+        if (index === 0) markSelected(state, before);
       });
       return push(height, false, width, x, y, { x: 0, y: 0 });
     }
@@ -587,7 +669,9 @@ function layoutNode(node: UiNode, x: number, y: number, width: number, state: La
         const available = Math.max(1, width - padding.x * 2);
         const each = available / items.length;
         items.forEach((item, index) => {
+          const before = state.boxes.length;
           layoutNode(item, x + padding.x + index * each, y + padding.y, each, state, depth + 1);
+          if (index === 0) markSelected(state, before);
         });
       }
       return push(height, false, width, x, y, { x: padding.x, y: padding.y });
@@ -678,6 +762,8 @@ export interface UiLayout {
   boxes: UiBox[];
   /** One per node that carries a string, in reading order. */
   markers: MarkerGeometry[];
+  /** The accent and page colour the drawing falls back to. */
+  theme: Required<UiTheme>;
   truncated: boolean;
 }
 
@@ -754,7 +840,16 @@ export function layoutUiSpec(spec: UiSpec): UiLayout {
     });
   }
 
-  return { width, height, boxes, markers, truncated: state.truncated };
+  const theme = { ...defaultTheme(spec.platform), ...stripUndefined(spec.theme) };
+  return { width, height, boxes, markers, theme, truncated: state.truncated };
+}
+
+/** Only the fields the caller actually set; anything else keeps the platform's default. */
+function stripUndefined(theme: UiTheme | undefined): UiTheme {
+  return {
+    ...(theme?.accent ? { accent: theme.accent } : {}),
+    ...(theme?.background ? { background: theme.background } : {}),
+  };
 }
 
 /** Copy a namespace down the tree, leaving any node that names its own alone. */
@@ -818,8 +913,11 @@ export function renderUiSvg(layout: UiLayout, fontFamily = 'system-ui, -apple-sy
   parts.push(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" font-family="${escapeXml(fontFamily)}">`,
   );
+  const accent = layout.theme.accent;
   const screen = layout.boxes.find((box) => box.node.type === 'screen');
-  parts.push(`<rect x="0" y="0" width="${layout.width}" height="${layout.height}" fill="${escapeXml(screen?.node.style?.background ?? COLORS.page)}"/>`);
+  parts.push(
+    `<rect x="0" y="0" width="${layout.width}" height="${layout.height}" fill="${escapeXml(screen?.node.style?.background ?? layout.theme.background)}"/>`,
+  );
 
   /**
    * Two passes, and the order matters: every surface first, then everything drawn on top of one.
@@ -832,6 +930,8 @@ export function renderUiSvg(layout: UiLayout, fontFamily = 'system-ui, -apple-sy
    */
   const surfaces: string[] = [];
   const contents: string[] = [];
+  const defs: string[] = [];
+  let pictures = 0;
 
   // A parent's surface has to be under its children's, and `layout.boxes` is in post-order for
   // containers — a card's box only exists once its children are measured. Depth is what recovers the
@@ -905,7 +1005,7 @@ export function renderUiSvg(layout: UiLayout, fontFamily = 'system-ui, -apple-sy
       }
       case 'switch': {
         // On, and drawn as on: a switch whose state is ambiguous is worse than no switch.
-        const fill = style.background ?? COLORS.button;
+        const fill = style.background ?? accent;
         surfaces.push(panel(fill, style.border, style.radius ?? height / 2));
         const knob = height / 2 - 3;
         contents.push(
@@ -916,7 +1016,7 @@ export function renderUiSvg(layout: UiLayout, fontFamily = 'system-ui, -apple-sy
       case 'slider': {
         const track = Math.max(4, height * 0.18);
         const trackY = y + (height - track) / 2;
-        const fill = style.background ?? COLORS.button;
+        const fill = style.background ?? accent;
         surfaces.push(
           `<rect x="${round(x)}" y="${round(trackY)}" width="${round(width)}" height="${round(track)}" rx="${round(track / 2)}" fill="${escapeXml(COLORS.track)}"/>`,
         );
@@ -934,7 +1034,21 @@ export function renderUiSvg(layout: UiLayout, fontFamily = 'system-ui, -apple-sy
         );
         break;
       case 'image': {
-        surfaces.push(panel(style.background ?? COLORS.image, style.border ?? COLORS.border, style.radius ?? 8));
+        const radius = style.radius ?? 8;
+        surfaces.push(panel(style.background ?? COLORS.image, style.border ?? COLORS.border, radius));
+        if (node.src) {
+          // Clipped to the frame, so a rounded corner stays rounded with a photo in it. The id is the
+          // picture's index: unique within the document, and identical on every render.
+          const clip = `img${pictures}`;
+          pictures += 1;
+          defs.push(
+            `<clipPath id="${clip}"><rect x="${round(x)}" y="${round(y)}" width="${round(width)}" height="${round(height)}" rx="${round(radius)}"/></clipPath>`,
+          );
+          contents.push(
+            `<image href="${node.src}" x="${round(x)}" y="${round(y)}" width="${round(width)}" height="${round(height)}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clip})"/>`,
+          );
+          break;
+        }
         // A picture mark, drawn from the box's own geometry: enough to read as an image at any size.
         const mark = Math.min(width, height) * 0.22;
         const cx = x + width / 2;
@@ -959,7 +1073,7 @@ export function renderUiSvg(layout: UiLayout, fontFamily = 'system-ui, -apple-sy
         break;
       }
       case 'button': {
-        const fill = style.background ?? COLORS.button;
+        const fill = style.background ?? accent;
         surfaces.push(panel(fill, style.border, style.radius ?? 10));
         if (node.text) contents.push(centred(node.text, style.color ?? readableOn(fill), style.align ?? 'center'));
         break;
@@ -979,6 +1093,18 @@ export function renderUiSvg(layout: UiLayout, fontFamily = 'system-ui, -apple-sy
       }
       case 'text': {
         const align = style.align ?? 'left';
+        if (box.selected && !style.background) {
+          // The current tab or segment: a filled pill behind the label, which is what makes a bar read
+          // as a bar with something chosen.
+          surfaces.push(
+            `<rect x="${round(content.x - 8)}" y="${round(y + 4)}" width="${round(content.width + 16)}" height="${round(height - 8)}" rx="${round((height - 8) / 2)}" fill="${escapeXml(style.color ?? accent)}"/>`,
+          );
+          const lines = [node.text ?? ''];
+          lines.forEach((text) => {
+            contents.push(line(text, content, 'center', readableOn(style.color ?? accent), content.height / 2 + fontSize * 0.36));
+          });
+          break;
+        }
         const fill = style.color ?? COLORS[node.role ?? 'body'];
         const lines = wrapStyled(node.text ?? '', fontSize, content.width, weight);
         lines.forEach((text, index) => {
@@ -991,7 +1117,7 @@ export function renderUiSvg(layout: UiLayout, fontFamily = 'system-ui, -apple-sy
     }
   }
 
-  parts.push(...surfaces, ...contents);
+  parts.push(...defs, ...surfaces, ...contents);
   parts.push('</svg>');
   return parts.join('');
 }

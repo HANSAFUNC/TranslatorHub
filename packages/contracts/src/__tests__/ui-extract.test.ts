@@ -303,3 +303,49 @@ describe('components named in classes', () => {
     expect(card.children![0]!.type).toBe('badge');
   });
 });
+
+/**
+ * The two things a transcribed screen usually lacks.
+ *
+ * A page that names its colours in a stylesheet file, and a picture that lives on disk. The first is
+ * what `css` is for; the second only travels if the caller carries it, since the platform never
+ * fetches anything.
+ */
+describe('colours from elsewhere, pictures from the payload', () => {
+  const page = `<div class="primary-button">查看详情</div>`;
+
+  it('falls back to its own palette when nothing says what the colours are', () => {
+    const { root } = extractUiSpec(page, 'page.html', {});
+    expect(root.children![0]!.style).toBeUndefined();
+  });
+
+  it('reads a stylesheet the caller brought along', () => {
+    const { root } = extractUiSpec(page, 'page.html', {
+      css: '.primary-button { background: #c8102e; color: #ffffff; border-radius: 10px }',
+    });
+    expect(root.children![0]!.style).toMatchObject({ background: '#c8102e', color: '#ffffff', radius: 10 });
+  });
+
+  it('lets the page’s own rule win over the stylesheet that came with it', () => {
+    const { root } = extractUiSpec(
+      `<style>.primary-button { background: #0a84ff }</style>${page}`,
+      'page.html',
+      { css: '.primary-button { background: #c8102e }' },
+    );
+    expect(root.children![0]!.style?.background).toBe('#0a84ff');
+  });
+
+  it('carries an inline picture onto the node, and leaves a URL behind', () => {
+    const picture = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const { root } = extractUiSpec(
+      `<div><img src="${picture}" alt="院徽"><img src="/assets/hero.png" alt="保障计划"></div>`,
+      'page.html',
+      {},
+    );
+    const images = root.children![0]!.children!.filter((node) => node.type === 'image');
+    expect(images[0]!.src).toBe(picture);
+    expect(images[1]!.src).toBeUndefined();
+    // Both still name themselves, so both get a marker.
+    expect(images.map((node) => node.text)).toEqual(['院徽', '保障计划']);
+  });
+});

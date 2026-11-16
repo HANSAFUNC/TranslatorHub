@@ -895,6 +895,10 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       html?: string;
       /** Default namespace for an `html` upload. */
       namespace?: string;
+      /** The page's stylesheet, when its colours live in another file. */
+      css?: string;
+      /** Brand colours, for a screen whose own source carries none. */
+      theme?: { accent?: string; background?: string };
       image_base64?: string;
       mime_type?: string;
       width?: number;
@@ -927,6 +931,8 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
         ui: input.ui ?? null,
         html: input.html ?? null,
         namespace: input.namespace ?? null,
+        css: input.css ?? null,
+        theme: input.theme ?? null,
         // The canvas size follows the screen's platform when the description does not name one.
         platform: input.platform ?? 'web',
       });

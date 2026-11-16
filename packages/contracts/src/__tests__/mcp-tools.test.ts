@@ -56,6 +56,7 @@ describe('the Remote MCP tool registry', () => {
     };
 
     expect(Object.keys(schema.properties).sort()).toEqual([
+      'css',
       'height',
       'html',
       'image_base64',
@@ -67,6 +68,7 @@ describe('the Remote MCP tool registry', () => {
       'platform',
       'project_id',
       'replace',
+      'theme',
       'ui',
       'width',
     ]);
@@ -76,6 +78,10 @@ describe('the Remote MCP tool registry', () => {
     expect(schema.properties.html!.description).toContain('只解析');
     expect(schema.properties.html!.description).toContain('三选一');
     expect(schema.properties.namespace!.description).toContain('ui.root.namespace');
+    // The two fields that decide whether a transcribed screen looks like the app or like a grey
+    // wireframe: the stylesheet its colours live in, and the brand colour it does not carry.
+    expect(schema.properties.css!.description).toContain('globals.css');
+    expect(schema.properties.theme!.description).toContain('accent');
 
     // Markers are fractions of the image, and a caller that assumes pixels produces a sketch whose
     // markers all sit in one corner. The description is the only place it can learn otherwise.

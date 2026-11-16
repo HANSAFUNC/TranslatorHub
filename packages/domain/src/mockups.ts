@@ -17,6 +17,7 @@ import {
   type PlatformName,
   type ReviewStatus,
   type UiSpec,
+  type UiTheme,
   uiSpecIssues,
   unsafeSvgReasons,
 } from '@localehub/contracts';
@@ -259,6 +260,10 @@ export function resolveMockupInput(input: {
   html?: string | null;
   /** Default namespace for an `html` upload; the same thing as `ui.root.namespace`. */
   namespace?: string | null;
+  /** The page's stylesheet, when its colours live in another file. */
+  css?: string | null;
+  /** Brand colours, for a screen whose source says nothing about them. */
+  theme?: UiTheme | null;
   /**
    * The screen's platform, used only to pick the canvas size when the `ui` description does not
    * carry one of its own.
@@ -287,9 +292,11 @@ export function resolveMockupInput(input: {
     // disagree. Nothing here renders the markup or runs anything it contains.
     const { root } = extractUiSpec(input.html!, sourceNameFor(input.html!), {
       ...(input.namespace ? { namespace: input.namespace } : {}),
+      ...(input.css ? { css: input.css } : {}),
     });
     const spec: UiSpec = {
       ...(input.platform ? { platform: input.platform } : {}),
+      ...(input.theme ? { theme: input.theme } : {}),
       root,
     };
     const rendered = renderMockupSpec(spec);
@@ -299,7 +306,11 @@ export function resolveMockupInput(input: {
   if (hasUi) {
     // `ui.platform` wins when the caller did set it (a caller describing a different device than the
     // screen is filed under meant it), otherwise the call's platform decides the canvas.
-    const spec: UiSpec = { ...input.ui!, platform: input.ui!.platform ?? input.platform ?? undefined };
+    const spec: UiSpec = {
+      ...input.ui!,
+      platform: input.ui!.platform ?? input.platform ?? undefined,
+      ...(input.theme && !input.ui!.theme ? { theme: input.theme } : {}),
+    };
     const rendered = renderMockupSpec(spec);
     return { image: rendered.image, markers: rendered.markers };
   }

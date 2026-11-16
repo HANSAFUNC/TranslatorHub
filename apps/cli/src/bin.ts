@@ -49,7 +49,8 @@ const HELP = `localehub <command>
       Local state + remote sync status + open conflicts.
 
   mockup --page <file> [--name <screen>] [--platform web] [--locale zh-CN]
-         [--namespace <ns>] [--keys <json-file>] [--width <px>] [--height <px>] [--confirm]
+         [--namespace <ns>] [--keys <json-file>] [--css <file>] [--accent <color>]
+         [--background <color>] [--width <px>] [--height <px>] [--confirm]
       Generate a screen sketch from a page's code — every string on the page becomes a marker at the
       position the layout gives it — and, with --confirm, upload it so translators see it next to the
       translations. Without --confirm it writes the sketch to .localehub/mockups/ and uploads nothing.
@@ -148,6 +149,9 @@ async function main(): Promise<void> {
         process.exitCode = 2;
         return;
       }
+      const cssFile = flags.css as string | undefined;
+      const accent = flags.accent as string | undefined;
+      const background = flags.background as string | undefined;
       const keysFile = flags.keys as string | undefined;
       let keys: Record<string, string> | undefined;
       if (keysFile) {
@@ -156,6 +160,8 @@ async function main(): Promise<void> {
       }
       const result = await services.generateScreenMockup({
         page,
+        ...(cssFile ? { cssFile } : {}),
+        ...(accent || background ? { theme: { ...(accent ? { accent } : {}), ...(background ? { background } : {}) } } : {}),
         name: flags.name as string | undefined,
         platform: flags.platform as string | undefined,
         locale: flags.locale as string | undefined,

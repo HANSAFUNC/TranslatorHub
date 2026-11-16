@@ -9,6 +9,7 @@ import {
   platformSchema,
   MAX_UI_HTML_CHARS,
   uiSpecSchema,
+  uiThemeSchema,
 } from '@localehub/contracts';
 import { z } from 'zod';
 import { Actor, RequireRole, RequireScopes, type ActorContext } from '../../common/auth';
@@ -50,6 +51,10 @@ const uploadSchema = z.object({
   html: z.string().min(1).max(MAX_UI_HTML_CHARS).optional(),
   /** Default namespace for an `html` upload; the same thing as `ui.root.namespace`. */
   namespace: z.string().max(255).optional(),
+  /** The page's stylesheet when it lives in another file; see the MCP tool for why it matters. */
+  css: z.string().max(MAX_UI_HTML_CHARS).optional(),
+  /** Brand colours, for a screen whose own source does not carry any. */
+  theme: uiThemeSchema.optional(),
   imageBase64: z.string().min(1).optional(),
   /**
    * Advisory: the format is read from the bytes, and a wrong claim cannot change the stored one. The

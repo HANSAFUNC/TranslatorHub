@@ -1,5 +1,12 @@
 import { ErrorCode, LocaleHubError } from './errors';
-import { MAX_UI_NODES, type UiNode, type UiSpec } from './ui-spec';
+import {
+  MAX_INLINE_IMAGE_CHARS,
+  MAX_UI_NODES,
+  UI_IMAGE_DATA_PATTERN,
+  type UiNode,
+  type UiSpec,
+  type UiTheme,
+} from './ui-spec';
 import { mergeStyles, parseStyleSheet, styleForElement, type StyleSheet } from './ui-style';
 
 /**
@@ -36,6 +43,15 @@ export interface ExtractOptions {
   maxNodes?: number;
   /** The page's own `<style>` rules, when it has any. Read by `extractUiSpec` when omitted. */
   styleSheet?: StyleSheet;
+  /**
+   * A stylesheet that lives somewhere else — a `globals.css`, a design system's theme file.
+   *
+   * Most pages do not carry their colours in the file that lays them out: they carry class names that
+   * a stylesheet elsewhere defines. Without that file the sketch can only fall back to its own
+   * palette, which is how a screen ends up grey. Rules from here apply first, so the page's own
+   * `<style>` and inline styles still win.
+   */
+  css?: string;
 }
 
 export interface ExtractResult {
@@ -660,9 +676,15 @@ function toNode(
   const leaf = kind === 'input' || kind === 'image' || kind === 'icon' || kind === 'divider';
   const isLeaf = leaf && children.length === 0;
   if (isLeaf) {
+    // A picture the page carries with it (`<img src="data:image/png;base64,…">`) is drawn; a URL or a
+    // path is not, because the platform never fetches anything. Oversized ones fall back too.
+    const src = element.attributes.src;
+    const inline =
+      kind === 'image' && src && src.length <= MAX_INLINE_IMAGE_CHARS && UI_IMAGE_DATA_PATTERN.test(src) ? src : undefined;
     return styled({
       type: kind as UiNode['type'],
       ...(text ? { text } : {}),
+      ...(inline ? { src: inline } : {}),
       ...(text && explicitKey ? { key: explicitKey } : {}),
       ...(namespace ? { namespace } : {}),
     });
@@ -806,8 +828,14 @@ export function extractUiSpec(source: string, fileName: string, options: Extract
 
   // The stylesheets are read for colour, not applied: every rule that survives becomes one of the
   // properties the renderer draws, and nothing in a stylesheet is ever interpreted as CSS.
-  const css = [...withoutCode.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((match) => match[1] ?? '').join('\n');
-  const styleSheet = options.styleSheet ?? (css.trim() ? parseStyleSheet(css) : { rules: [], variables: {} });
+  const inlineCss = [...withoutCode.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((match) => match[1] ?? '').join('\n');
+  const provided = options.css ? parseStyleSheet(options.css) : { rules: [], variables: {} };
+  const own = inlineCss.trim() ? parseStyleSheet(inlineCss) : { rules: [], variables: {} };
+  // The page's own rules come after the provided stylesheet, so they win where both say something.
+  const styleSheet = options.styleSheet ?? {
+    rules: [...provided.rules, ...own.rules],
+    variables: { ...provided.variables, ...own.variables },
+  };
   const withSheet: ExtractOptions = { ...options, styleSheet };
 
   const markup = withoutCode.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '');
@@ -874,13 +902,21 @@ export function extractUiSpec(source: string, fileName: string, options: Extract
 export function buildUiSpec(
   source: string,
   fileName: string,
-  options: ExtractOptions & { name: string; platform?: string; locale?: string; width?: number; height?: number },
+  options: ExtractOptions & {
+    name: string;
+    platform?: string;
+    locale?: string;
+    width?: number;
+    height?: number;
+    theme?: UiTheme;
+  },
 ): { spec: UiSpec; strings: { text: string; key: string }[]; warnings: string[] } {
   const extracted = extractUiSpec(source, fileName, options);
   const spec: UiSpec = {
     name: options.name,
     ...(options.platform ? { platform: options.platform } : {}),
     ...(options.locale ? { locale: options.locale } : {}),
+    ...(options.theme ? { theme: options.theme } : {}),
     ...(options.width ? { width: options.width } : {}),
     ...(options.height ? { height: options.height } : {}),
     root: extracted.root,
