@@ -18,7 +18,14 @@ import { uiSpecSchema } from './ui-spec';
  * Listed here so the discovery endpoint and the server cannot disagree: the endpoint used to
  * advertise six `localehub://projects/...` resources that neither server ever registered.
  */
-export const REMOTE_MCP_RESOURCES = ['localehub://qa-rules', 'localehub://import-guide'] as const;
+export const REMOTE_MCP_RESOURCES = [
+  'localehub://qa-rules',
+  'localehub://import-guide',
+  // The sketch flow is a separate guide rather than a section of the import guide: an agent
+  // asked to put a screen in front of the translators is not importing anything, and the rules
+  // it needs (the `ui` element tree, the screen's identity) share nothing with `.strings` parsing.
+  'localehub://screen-sketch-guide',
+] as const;
 
 /**
  * Hand-written prompts the Remote MCP registers.
@@ -26,7 +33,12 @@ export const REMOTE_MCP_RESOURCES = ['localehub://qa-rules', 'localehub://import
  * The per-skill prompts (`skill-<slug>`) are generated from what an organization has published, so
  * they are not listed here — read `localehub://skills` for those.
  */
-export const REMOTE_MCP_PROMPTS = ['review-localization-changes', 'fix-translation-issues', 'import-localization-files'] as const;
+export const REMOTE_MCP_PROMPTS = [
+  'review-localization-changes',
+  'fix-translation-issues',
+  'import-localization-files',
+  'upload-screen-sketch',
+] as const;
 
 export const REMOTE_MCP_TOOLS = [
   'create_project',

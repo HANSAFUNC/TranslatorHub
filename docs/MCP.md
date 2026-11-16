@@ -291,7 +291,9 @@ Token 推得上去、落不下来——这正是规格要的分离。
 | --- | --- | --- |
 | `instructions` | 两个方向别搞反、三条事后难改的规则、分批上限、dry-run 默认 | 客户端在调用任何工具前放进上下文 |
 | `localehub://import-guide` | 完整上传教程：调用形状、逐条规则、实测边界、推荐顺序、`.strings` 解析坑 | Agent 按需读取 |
+| `localehub://screen-sketch-guide` | 界面草图教程：`ui` 元素树与节点表、key/namespace 从哪来、上限、两件不可逆的事、CLI 从源码生成的做法 | Agent 按需读取 |
 | `import-localization-files` 提示词 | 七步流程，供人在客户端里直接唤起 | 人（斜杠命令） |
+| `upload-screen-sketch` 提示词 | 六步流程：生成 `ui` 描述 → 报出标记 → `upload_screen_mockup` | 人（斜杠命令） |
 | 工具与字段的 `description` | 每个字段在什么情况下会出错（如 `platform` 默认 `web`，iOS 必须显式传） | 随 `tools/list` 一起下发 |
 
 关键一条：**字段描述随 schema 走，所以默认值也能被解释**。`platform` 的 schema 现在是
@@ -365,6 +367,12 @@ CLI 的 `localehub scan` 输出（`expanded` 字段直接给中文说明）。�
 }
 ```
 
+这套流程对 Agent 也是**教过的**，不只是 schema 里写着：`instructions` 直接说「传 `ui` 即可，不用你画图、不用你量坐标」
+并给出 CLI 那条捷径；完整规则在资源 `localehub://screen-sketch-guide`（节点表、key/namespace 的来源、上限、
+`name` 与 `platform` 这两件不可逆的事），`upload-screen-sketch` 提示词供人在客户端里一键唤起。
+此前只有工具与字段的 `description` 提到 `ui`，而 `instructions`、上传教程、提示词三处都还在教「画一张草图 + 量坐标」——
+Agent 读完仍然会去手画。
+
 **首选：把界面描述成数据，让平台画。** 手画一张 SVG 再逐个量坐标，是这套流程里最容易错、也最容易
 过时的一步——页面改一行文案，坐标就全废了。所以 `upload_screen_mockup` 还接受另一种输入：
 
@@ -375,7 +383,6 @@ CLI 的 `localehub scan` 输出（`expanded` 字段直接给中文说明）。�
   "platform": "ios",
   "locale": "zh-CN",
   "ui": {
-    "name": "练习页", "platform": "ios",
     "root": { "type": "screen", "children": [
       { "type": "text", "text": "亲爱的", "role": "heading" },
       { "type": "text", "text": "先练习" },

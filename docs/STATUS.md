@@ -1193,6 +1193,49 @@ unmatched。全量 308 单元 + 157 集成测试通过。
 （默认禁用）→ 输入错误名字仍禁用 → 输入正确名字变为可用 → 点击 → 跳转 `/projects`、项目 404、控制台
 无错误。用例创建并删除自己的数据，不碰演示项目。
 
+### 1.38 MCP 里的草图教程：教的是「传 ui」，而且照抄就能跑
+
+用户问：「mcp 里有教程让 agent 怎么使用上传代码生成的交互页吗」。查下来是**只有一半**：工具的
+`description` 与 `ui` 字段的 `description` 已经改成推荐 `ui`，但 Agent 真正先读到的那几层还在教旧做法——
+
+- `instructions`（客户端在调用任何工具前放进上下文的那段）写着「上传一张界面草图与若干标记……坐标是相对图片
+  的比例（0~1），不是像素」，**完全没提 `ui`**；
+- `localehub://import-guide` 的 §6 让人「把界面画下来」，示例是 `image_base64` + `markers`；
+- 没有任何提示词覆盖这条流程（三个提示词分别是审核、修 QA、导入）。
+
+也就是说：一个 Agent 连上来、读完它能读到的全部内容，会得出「得自己画一张图、自己量坐标」的结论——正是
+本轮刚做完的 `ui` 输入要消灭的那一步。工具 schema 教了，教程没教。
+
+**补齐三处，并新增一份教程资源：**
+
+| 层 | 改动 |
+| --- | --- |
+| `instructions` | 草图那段改成「传 `ui` 即可：平台自己排版、画图，并算出每个标记的坐标，不用你画图，也不用你量坐标」，并给出 CLI 捷径与指南 URI |
+| `localehub://screen-sketch-guide`（新增） | 完整教程：调用形状、节点表（11 种 type 分别画成什么、哪些生成标记）、key/namespace 从哪来、两件不可逆的事、上限、以及「用 CLI 从页面源码生成这份描述」 |
+| `upload-screen-sketch`（新增提示词） | 六步流程，供人在客户端里一键唤起；和导入提示词一样，把规则指向教程而不是复述，避免两处漂移 |
+| `localehub://import-guide` §6 | 收缩成一段指路，避免同一件事有两份权威说明 |
+| `/mcp` 教程页 | 日常提示词加一条「把某个页面做成界面草图传上来」，另加一段「让译者看到界面」说明 |
+
+**顺着这条线发现并修掉两个真问题**（都是「照教程做会失败」这一类）：
+
+1. **教程里的示例被工具拒收。** 指南写「`ui` 里只需要 `root`」，而 `uiSpecSchema` 的 `name` 是**必填**——
+   第一个照抄示例的调用方拿到的是 `Required at ui.name`。平台自己也从不读 `spec.name`（屏幕的身份来自
+   调用参数），所以这是纯粹的陷阱：`ui` 里要么被迫编第二个名字，要么两个名字写岔了也无人告知哪个生效。
+   现在 `ui.name` / `ui.platform` / `ui.locale` 都是可选且被忽略（CLI 本地渲染仍会传）。新增回归测试：
+   **把教程里的那段 JSON 抠出来、用工具 schema 校验并真的渲染一遍**——教程里的例子不可执行的 bug
+   只有这种测试能挡住。
+2. **调用参数里的 `platform` 到不了渲染器。** 画布尺寸取的是 `ui.platform`，而指南让人别写 `ui.platform`，
+   于是 iOS 屏幕被画在 1280×800 的 web 画布上。`resolveMockupInput` 现在多收一个 `platform` 作为
+   画布回退（`ui.platform` 显式写了就仍以它为准），MCP 工具与 REST 两个入口都传。单元测试钉住
+   `ios → 390×844`、`ui.platform=android` 覆盖调用参数。
+
+**实测（真实容器栈 + 真实 MCP 客户端）**：`scripts/check-mcp-sketch-guide.mjs`（新增，可重复执行、自建
+临时项目与 Token 并自行清理）从容器里的 MCP 读 `instructions` / 资源 / 提示词 / 工具描述，再与
+`GET /mcp/tools` 对照，五处都对得上；把指南 §1 的示例原样传进 `upload_screen_mockup`，得到 4 个标记、4 个如实报
+`KEY_NOT_IMPORTED`、画布 390×844、图能取回且其中没有可执行内容（临时项目用完即删）。浏览器里
+`/mcp` 页渲染出新示例与说明，「Resources & Prompts」页签列出新资源与新提示词，无控制台错误。
+验证：319 单元 + 162 集成测试通过。
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |
@@ -1304,4 +1347,7 @@ docker buildx build --network host -f docker/web.Dockerfile -t localehub-web .
 | `/mcp/tools` 声明了 6 条未实现的 resource 与 1 个已删除 Server 的 prompt | 发现接口高估能力                                   | 资源/prompt 清单进契约，集成测试断言「声明 == 实际注册」                       |
 | 浏览器端硬编码 API 主机                                                  | 反向代理部署下前端打不到 API                       | 未配置 `NEXT_PUBLIC_API_BASE_URL` 时回退到同源 `/api/v1`                       |
 | MCP 的写入不写审计（`audit_logs` 对 Agent 全盲）                         | 审计页看不到任何 MCP 操作，无法追溯、无法撤销对应 Token | 抽 `packages/domain/src/audit.ts`，六个写工具补审计 + 8 单元 / 2 集成测试（见 §1.28） |
+| MCP 教程只教手画草图（`instructions` / 导入指南 / 提示词都没提 `ui`）                | 照教程做的 Agent 会去画图量坐标，`ui` 输入形同不存在 | 改 `instructions`、新增 `localehub://screen-sketch-guide` 与 `upload-screen-sketch` 提示词（见 §1.38） |
+| 指南与文档让 `ui` 只传 `root`，schema 却把 `ui.name` 设成必填                          | 照抄教程的第一个调用方被 `Required at ui.name` 拒收   | `ui.name` 改可选且忽略（平台从不读它）+ 回归测试校验教程里的示例（见 §1.38）                       |
+| `ui` 渲染忽略调用参数里的 `platform`，画布固定按 web 尺寸                              | iOS 屏幕被画在 1280×800 画布上                        | `resolveMockupInput` 增加画布回退参数，两个入口都传（见 §1.38）                                    |
 | MCP 完全不校验 Token scope（只有 `project.read` 也能写库）               | 规格 §2.2 的 scope 分离在唯一依赖它的入口上失效，默认 Token 能把平台变更标记为已落地 | 契约里声明 `REMOTE_MCP_TOOL_SCOPES`，`define` 包装层统一断言 + 5 单元 / 1 集成测试（见 §1.29） |

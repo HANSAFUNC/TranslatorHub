@@ -31,9 +31,11 @@ export const REMOTE_MCP_INSTRUCTIONS = [
   '· platform 默认是 web，iOS 必须显式传 ios，且要与仓库配置里的 platform 一致；项目没有这个端也会自动加上；',
   '· 一次调用只放 300~400 条，整个导入在一个 5 秒的事务里（实测 400 条通过、1000 条超时），超时会整批回滚。',
   '',
-  '顺手（可选）：upload_screen_mockup 上传一张界面草图与若干标记，标出每个 key 的文字在界面上的位置——',
-  '译者在编辑器里就能对着界面看译文。坐标是相对图片的比例（0~1），不是像素；key 还没导入也能标，之后导入会自动对上。',
-  '注意 upload_screen_mockup 没有 dry run：同名再传是整体替换（旧图与旧标记不再保留），所以别拿它「先试一下」。',
+  '顺手（可选，但很值）：upload_screen_mockup 把译文放回界面里——编辑器的「界面草图」并排显示图与译文，点标记跳到译文。',
+  '传 ui（元素树：text/button/input/row…）即可：平台自己排版、画图，并算出每个标记的坐标，不用你画图，也不用你量坐标。',
+  '节点的 text 默认就是 key（可用 key 覆盖）；指向还没导入的 key 不算错，会在 markers.unmatched 里报告，导入后自动对上。',
+  '有 shell 权限时更省事：localehub mockup --page <页面文件> --confirm 按页面源码生成同一份描述并上传。',
+  '注意没有 dry run：同名屏幕再传一次是整体替换（旧图与旧标记不再保留），别拿它「先试一下」。细节见 localehub://screen-sketch-guide。',
   '',
   '先看不写这件事只有两个工具提供：import_translations 用 confirm=true 才落库，mark_applied 用 dry_run=true 只看结果。',
   '其余写工具（translate_entries、review_translation_entries、update_translation_draft、create_project、upload_screen_mockup）一调即写，没有预演。',
@@ -137,34 +139,16 @@ MCP 的导入每次都是一次**部分上传**：它只说「这几个文件是
 一次调用的开销只和**这一批的条数**有关，和项目已经有多大无关。（早先不是这样：计划里会为项目已有的每一条
 都生成一个条目，于是往一个有几千条的项目里导入 1 个 key 也会超时。已修。）
 
-## 6. 顺手把界面草图传上来（可选，但很值）
+## 6. 界面草图（可选，但很值）
 
-译文缺的从来不是词，是**位置**。\`checkout.pay_now\` 这三个词到了译者手上没有按钮。把界面画下来、
-标出每个 key 的文字在哪，编辑器的「界面草图」按钮就会把图与译文并排显示，点标记跳到译文、选译文点亮标记。
+译文缺的从来不是词，是**位置**：\`checkout.pay_now\` 到了译者手上没有按钮。\`upload_screen_mockup\` 把界面和译文
+并排显示在编辑器的「界面草图」里，点标记跳到译文、选译文点亮标记。
 
-\`\`\`jsonc
-{
-  "project_id": "<uuid>",
-  "name": "checkout",            // 屏幕的身份：同名再传一次 = 整体替换
-  "platform": "ios",             // 这张图的端；同名 key 在多个端都有时优先取该端那条
-  // replace 默认 true：同名再传=整体替换，没有 dry run，也没有历史版本
-  "locale": "en-US",             // 图里文字的语言，通常就是 sourceLocale
-  "image_base64": "<base64>",    // SVG / PNG / JPEG，解码后 ≤ 2 MB；SVG 最省事
-  "markers": [
-    { "key": "checkout.title", "x": 0.08, "y": 0.06, "width": 0.4, "height": 0.05, "text": "Checkout" }
-  ],
-  "replace": true
-}
-\`\`\`
+上游只有一条路值得走：**传 \`ui\`**——把页面描述成元素树，平台自己排版、画图，并算出每个标记的坐标。
+手画一张图再逐个量坐标（\`image_base64\` + \`markers\`）留给设计稿与截图：它是最容易过时的一步，页面改一行文案坐标就全废了。
 
-三条要点：
-
-1. **坐标是比例，不是像素。** \`x\`/\`y\` 是左/上边缘占图片宽高的比例（0~1），\`width\`/\`height\` 可选。
-   比例坐标让同一张图在任何尺寸下都对齐，换 2x 导出也不用重标。
-2. **可以比导入先做。** 指向尚未导入的 key 不会失败，返回值里以 \`markers.unmatched\` 报告；
-   之后 \`import_translations\` 把这些 key 导进来，标记自动对上译文，不用重传草图。
-3. **SVG 里不要放 \`<script>\`、事件属性（\`onload\`）或 \`<foreignObject>\`。** 会被直接拒绝并告诉你删哪个——
-   草图只需要图形和文字。
+完整教程见 \`localehub://screen-sketch-guide\`：节点表、key 与 namespace 从哪来、上限、两件不可逆的事，
+以及「让 CLI 从页面源码直接生成这份描述」（\`localehub mockup --page <页面文件> --confirm\`）。
 
 ## 7. 解析本地文件
 
@@ -172,6 +156,138 @@ MCP 的导入每次都是一次**部分上传**：它只说「这几个文件是
 解析错一位，平台存下的 \`contentHash\` 就是错的，之后每次同步都会冒出假 diff。
 平台的解析器（\`packages/format-adapters/src/adapters/ios-strings.ts\` 的 \`parseAppleStrings\`）可以作为行为参照。
 `;
+
+/**
+ * The screen-sketch guide, served as `localehub://screen-sketch-guide`.
+ *
+ * Split out of the import guide rather than appended to it: the two flows share nothing but the
+ * project id, and an agent asked to "show the translators where this text lives" should not have to
+ * read a `.strings` parsing tutorial to learn that it does not have to draw anything.
+ */
+export const REMOTE_MCP_SKETCH_GUIDE = `# 把界面草图传上来：让每句译文有地方站
+
+## 0. 一句话
+
+\`upload_screen_mockup\` 传 **\`ui\`**：把页面描述成一棵元素树，平台按它排版、画图，并**自己算出每个标记的位置与大小**。
+不需要画图，不需要量坐标，不需要开浏览器截图。自己画图那条路（\`image_base64\` + \`markers\`）留给设计稿与截图。
+
+理由很直接：页面改一行文案，手量的坐标就全废了；元素树是从页面源码读出来的，改一行只需要重新生成一次。
+
+## 1. 调用形状
+
+\`\`\`jsonc
+{
+  "project_id": "<uuid>",
+  "name": "练习页",              // 屏幕的身份：同名再传 = 整体替换
+  "platform": "ios",            // 这张草图的端，默认 web
+  "locale": "zh-CN",            // 图里文字的语言，通常就是 sourceLocale
+  "ui": {
+    "root": {
+      "type": "screen",
+      "children": [
+        { "type": "text", "text": "亲爱的", "role": "heading" },
+        { "type": "input", "text": "搜索课程" },
+        { "type": "row", "columns": 2, "children": [
+          { "type": "button", "text": "再想想" },
+          { "type": "button", "text": "下一步" }
+        ]}
+      ]
+    }
+  }
+}
+\`\`\`
+
+**外层参数说了算。** \`name\` / \`platform\` / \`locale\` 是屏幕的身份，取的是这次调用的参数。\`ui\` 里**只需要 \`root\`**
+（\`width\` / \`height\` 可选，不给就按 platform 的常见屏宽：web 1280×800、ios 390×844、android 412×915）。
+\`ui.name\` / \`ui.platform\` / \`ui.locale\` 收下但不作数——不要重复写一遍，写岔了也没人告诉你哪份生效。
+
+\`ui\` 与 \`image_base64\` 二选一，同时传会被拒。传 \`ui\` 时不要再传 \`markers\`：坐标由平台算，传了也不采用。
+
+## 2. 节点表
+
+| type | 画成什么 | 带 \`text\` 时 |
+| --- | --- | --- |
+| \`screen\` | 根节点，一整屏 | — |
+| \`section\` | 分组 | — |
+| \`card\` | 卡片（\`bordered\` 可加边框） | — |
+| \`row\` | 栅格，\`columns\` 决定等宽列数（1~6，默认 1） | — |
+| \`text\` | 文字，\`role\` 取 heading / subheading / body / label / caption | **一个标记** |
+| \`button\` | 按钮 | **一个标记** |
+| \`input\` | 输入框、搜索框（\`text\` 当占位符） | **一个标记** |
+| \`badge\` | 标签、药丸 | **一个标记** |
+| \`image\` | 图片占位 | — |
+| \`icon\` | 图标占位 | — |
+| \`divider\` | 分隔线 | — |
+
+**页面上能看到多少字符串，树里就要有多少个**，一个不漏——漏掉的句子在编辑器里没有位置，译者看不出它属于哪儿。
+这就是「草图对应那个页面的所有 UI」的字面意思。列表里的每一行都要有节点：\`.map()\` 渲染出来的行是同一个模板，
+按一行的文字建成一个节点就够，不要为 50 行数据画 50 个节点。
+
+列宽交给 \`columns\`，不要用 \`width\` 手调：\`width\` 是固定像素，换个屏幕宽就错位。
+
+## 3. 标记的 key 与 namespace 从哪来
+
+- 节点上的 \`text\` **默认就是 key**——项目按源文命名时正是这样。
+- 节点上写 \`key\` 覆盖它：项目用 \`checkout.pay_now\` 这类命名时这么做。
+- \`namespace\` 写在根节点上，整棵树继承；分表的项目（iOS 的 \`Localizable\` / \`InfoPlist\`）必须写。
+- 指向**尚未导入**的 key 不算错：返回值里以 \`markers.unmatched\` 报告，对应语言文件导入后标记自动对上，不用重传草图。
+- 表现上：返回值的 \`markers.matchedKeys\` 是已经在平台上找到 key 的标记数。
+
+## 4. 两件不可逆的事
+
+1. **\`name\` 是屏幕的身份。** 同名再传一次是**整体替换**（图片与全部标记），\`replace\` 默认 \`true\`；没有 dry run，
+   也没有历史版本。所以 \`name\` 用页面名（\`checkout\`、\`登录页\`），不要用 \`checkout-v2\`、\`登录页-final\` 这类会堆版本的名字。
+2. **\`platform\` 默认 \`web\`。** 要与 \`.localehub/config.yaml\` 里映射的 platform 一致；同名 key 在多个端都有时，标记优先取
+   这个端的那一条，取到别的端编辑器会标出来（「Key 在 web，不在 ios」）。
+
+上限（超过会被拒，而不是截断）：一个屏幕 400 个标记、600 个节点、24 层嵌套，生成的 SVG 不超过 2 MB。
+元素太多时拆成几个屏幕，别硬塞。
+
+## 5. 最省事的做法：从页面源码生成
+
+如果这个仓库你能跑命令，\`ui\` 描述不必手写——CLI 可以直接读页面源码：
+
+\`\`\`bash
+localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表            # 只生成，写 .localehub/mockups/*.svg
+localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表 --confirm  # 生成并上传
+\`\`\`
+
+它扫 JSX/TSX/HTML，把页面上的每一段文字取出来做成元素树（\`t("checkout.pay", "Pay now")\` 会同时拿到 key 与文案），
+并打印「哪些字符串变成了标记」。不加 \`--confirm\` 不上传，正好用来先给我看一眼。
+\`--platform\` / \`--locale\` / \`--namespace\` / \`--width\` / \`--height\` 与工具参数同义，\`--keys <json>\` 覆盖 key 映射。
+
+**MCP 服务器看不到你的磁盘**（这是设计：平台永远读不到开发者的机器），所以这一步要么你用 CLI 跑，要么你自己读页面
+源码、按 §2 的节点表把文字抄成树——每一个字符串都必须落在某个带 \`text\` 的节点上。
+
+## 6. 与导入的先后
+
+两个方向都行：先传草图、key 还没导入（\`unmatched\` 会列出来）可以，导入后自动对上；先导入再传草图也可以，
+这时 \`matchedKeys\` 直接就是全部。草图不是导入的前置条件。
+`;
+
+/**
+ * The prompt body for the sketch flow, registered as `upload-screen-sketch`.
+ *
+ * Same contract as `remoteImportPrompt`: it sends the agent to the guide for the rules instead of
+ * restating them, so the two cannot drift.
+ */
+export function remoteSketchPrompt(args: { projectId?: string; page?: string } = {}): string {
+  const project = args.projectId ? `project_id=${args.projectId}` : '先调 list_projects 拿到 project_id';
+  const page = args.page ?? '要画的那个页面';
+  return [
+    `把 ${page} 的界面草图传到 LocaleHub（${project}），让译者在编辑器里对着界面看译文。`,
+    '',
+    '按这个顺序做，不要跳步：',
+    '1. 读 localehub://screen-sketch-guide，它是这个流程的权威说明。',
+    '2. 能跑命令就用：localehub mockup --page <页面文件> --name <屏幕名> 先生成预览，把「哪些字符串变成了标记」报给我确认，再加 --confirm 上传。',
+    '3. 不能跑命令就自己读页面源码，按教程 §2 的节点表把界面上的每一段文字都放进元素树——一个字符串都不能漏。',
+    '4. 调 get_project 确认 sourceLocale 与 platforms；草图的 locale 用 sourceLocale，platform 用页面所属的端。',
+    '5. 调 upload_screen_mockup：传 ui，不要传 markers；name 用页面名，不要用版本号。',
+    '6. 把返回值里的 markers.total / markers.matchedKeys / markers.unmatched 报给我：unmatched 说明这些 key 还没导入，先传草图没问题，导入后会自动对上。',
+    '',
+    '注意：upload_screen_mockup 没有 dry run，同名屏幕会被整体替换（含旧标记），上传前把屏幕名与端再确认一遍。',
+  ].join('\n');
+}
 
 /**
  * The prompt body for the upload flow. Registered as a prompt so a person can invoke it from their

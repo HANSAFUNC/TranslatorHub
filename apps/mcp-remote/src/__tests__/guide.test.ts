@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { PrismaClient, TenantPrisma } from '@localehub/database';
-import { REMOTE_MCP_TOOLS, Role } from '@localehub/contracts';
+import { REMOTE_MCP_SKETCH_GUIDE, REMOTE_MCP_TOOLS, Role, remoteToolSchemas } from '@localehub/contracts';
+import { resolveMockupInput } from '@localehub/domain';
 import type { ActorContext } from '@localehub/permissions';
 
 import { buildRemoteMcpServer } from '../server';
@@ -81,6 +82,26 @@ describe('server instructions', () => {
       expect(instructions).toContain('localehub://import-guide');
       // The dry-run default is the difference between "risky write" and "safe question".
       expect(instructions).toContain('dry run');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('teaches the sketch flow as a description, not a drawing', async () => {
+    const client = await connect();
+    try {
+      const instructions = client.getInstructions() ?? '';
+      // The whole point of `ui` is that the caller does not hand-measure anything, and an agent that
+      // reads only this paragraph has to come away knowing that — it is the surface every client
+      // puts in front of the model.
+      expect(instructions).toContain('ui');
+      expect(instructions).toContain('不用你量坐标');
+      expect(instructions).toContain('markers.unmatched');
+      // The shortcut for an agent with a shell, and the guide for the rules.
+      expect(instructions).toContain('localehub mockup --page');
+      expect(instructions).toContain('localehub://screen-sketch-guide');
+      // The write it cannot preview.
+      expect(instructions).toContain('没有 dry run');
     } finally {
       await client.close();
     }
@@ -180,6 +201,140 @@ describe('the upload prompt', () => {
     try {
       const names = (await client.listPrompts()).prompts.map((row) => row.name);
       expect(names.filter((name) => name === 'import-localization-files')).toHaveLength(1);
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+/**
+ * The sketch flow used to be taught only by the tool's own field descriptions: the instructions
+ * still described a caller that "画一张草图" and measured coordinates, and the only guide resource
+ * was the import guide, which says nothing about `ui`. An agent that read them both would conclude
+ * the picture had to be drawn by hand — the exact step the `ui` input exists to remove. These
+ * pin the three surfaces that now teach it: the instructions (above), the guide, and the prompt.
+ */
+describe('the screen sketch guide', () => {
+  it('is served as markdown under a stable URI', async () => {
+    const client = await connect();
+    try {
+      const listed = (await client.listResources()).resources.map((resource) => resource.uri);
+      expect(listed).toContain('localehub://screen-sketch-guide');
+
+      const guide = await client.readResource({ uri: 'localehub://screen-sketch-guide' });
+      expect(guide.contents[0]?.mimeType).toBe('text/markdown');
+      expect(textOf(guide).length).toBeGreaterThan(1000);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('leads with the ui tree and says the platform computes the coordinates', async () => {
+    const client = await connect();
+    try {
+      const text = textOf(await client.readResource({ uri: 'localehub://screen-sketch-guide' }));
+      expect(text).toContain('"ui"');
+      expect(text).toContain('root');
+      expect(text).toContain('不需要量坐标');
+      // Where a marker's key comes from is the one thing a caller cannot see in the schema.
+      expect(text).toContain('namespace');
+      expect(text).toContain('markers.unmatched');
+      expect(text).toContain('markers.matchedKeys');
+      // Every node type the renderer accepts, so the table cannot fall behind the schema.
+      for (const type of ['screen', 'section', 'card', 'row', 'text', 'button', 'input', 'image', 'icon', 'divider', 'badge']) {
+        expect(text, type).toContain(`\`${type}\``);
+      }
+      expect(text).toContain('columns');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('states the two things that cannot be undone', async () => {
+    const client = await connect();
+    try {
+      const text = textOf(await client.readResource({ uri: 'localehub://screen-sketch-guide' }));
+      // A second upload of the same name replaces the screen wholesale, with no dry run and no
+      // history — the reason the tool's destructiveHint is true.
+      expect(text).toContain('整体替换');
+      expect(text).toContain('replace');
+      expect(text).toContain('默认');
+      expect(text).toContain('web');
+      // And the shortcut for a caller that has the repository on disk.
+      expect(text).toContain('localehub mockup --page');
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+/**
+ * The guide's example, run for real.
+ *
+ * A tutorial whose excerpt does not execute is worse than no tutorial, and this one gets copied
+ * verbatim by an agent that has never uploaded a screen. It was already wrong once: the JSONC block
+ * showed only `root` while the schema still required `ui.name`, so the first caller to paste it was
+ * refused with "Required at ui.name" — and the platform's own docs said the same thing, so there was
+ * nothing to compare against. Both are fixed; this is what keeps them fixed.
+ */
+describe('the example in the sketch guide', () => {
+  /** The first ```jsonc block of the guide, comments removed — a caller pastes it into a tool call. */
+  function exampleFromGuide(): Record<string, unknown> {
+    const match = /```jsonc\n([\s\S]*?)```/.exec(REMOTE_MCP_SKETCH_GUIDE);
+    expect(match, 'the guide carries a JSON example').toBeTruthy();
+    const withoutComments = match![1]!
+      .split('\n')
+      .map((line) => {
+        // `//` inside a string is part of the value (`"https://…"`), so the scan skips strings.
+        let quote = false;
+        for (let index = 0; index < line.length; index += 1) {
+          const character = line[index];
+          if (character === '"' && line[index - 1] !== '\\') quote = !quote;
+          if (!quote && character === '/' && line[index + 1] === '/') return line.slice(0, index);
+        }
+        return line;
+      })
+      .join('\n');
+    return JSON.parse(withoutComments) as Record<string, unknown>;
+  }
+
+  it('is accepted by the tool schema, which is what a caller pastes it into', () => {
+    const example = exampleFromGuide();
+    const parsed = remoteToolSchemas.upload_screen_mockup.safeParse(example);
+    expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error?.issues)).toBe(true);
+  });
+
+  it('produces the sketch it promises: one marker per string, on the named screen', () => {
+    const example = exampleFromGuide() as { ui: Parameters<typeof resolveMockupInput>[0]['ui']; platform: string };
+    const { image, markers } = resolveMockupInput({ ui: example.ui, platform: example.platform });
+    // Four strings in the example's tree — a heading, a search field and two buttons.
+    expect(markers.map((marker) => marker.key)).toEqual(['亲爱的', '搜索课程', '再想想', '下一步']);
+    // And an iPhone-shaped canvas, which is the property the guide states in prose.
+    expect(image.width).toBe(390);
+    expect(image.height).toBe(844);
+  });
+});
+
+describe('the sketch prompt', () => {
+  it('is registered with its arguments and renders them', async () => {
+    const client = await connect();
+    try {
+      const prompt = (await client.listPrompts()).prompts.find((row) => row.name === 'upload-screen-sketch');
+      expect(prompt).toBeTruthy();
+      expect((prompt?.arguments ?? []).map((arg) => arg.name).sort()).toEqual(['page', 'projectId']);
+
+      const rendered = await client.getPrompt({
+        name: 'upload-screen-sketch',
+        arguments: { projectId: 'project-42', page: 'src/app/checkout/page.tsx' },
+      });
+      const text = String((rendered.messages[0]?.content as { text?: string }).text ?? '');
+      expect(text).toContain('project_id=project-42');
+      expect(text).toContain('src/app/checkout/page.tsx');
+      // Same rule as the import prompt: send the agent to the guide rather than restate it.
+      expect(text).toContain('localehub://screen-sketch-guide');
+      // The two ways to get this wrong: hand-rolled markers, and a version-suffixed screen name.
+      expect(text).toContain('不要传 markers');
+      expect(text).toContain('不要用版本号');
     } finally {
       await client.close();
     }

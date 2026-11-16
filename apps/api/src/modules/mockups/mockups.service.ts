@@ -183,6 +183,8 @@ export class MockupsService {
       height: body.height ?? null,
       markers: body.markers,
       ui: body.ui ?? null,
+      // Same as the MCP tool: the canvas size follows the screen's platform when `ui` omits one.
+      platform: body.platform ?? 'web',
     });
 
     const result = await this.prisma.tenant.withOrganization(actor.organizationId, (tx) =>

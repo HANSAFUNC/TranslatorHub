@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { LocaleHubError, MAX_MOCKUP_BYTES, MAX_MOCKUP_DIMENSION } from '@localehub/contracts';
 
-import { assertMockupDimensions, decodeMockupImage } from '../mockups';
+import { assertMockupDimensions, decodeMockupImage, resolveMockupInput } from '../mockups';
 
 /**
  * Fixtures built from the formats' own specifications rather than checked in.
@@ -133,5 +133,44 @@ describe('decodeMockupImage', () => {
   it('tolerates line breaks, which some clients insert every 76 characters', () => {
     const wrapped = base64(png(6, 6)).replace(/(.{4})/g, '$1\n');
     expect(decodeMockupImage({ imageBase64: wrapped }).mimeType).toBe('image/png');
+  });
+});
+/**
+ * The other input shape: a description instead of a picture.
+ *
+ * `resolveMockupInput` is the single place both surfaces (the MCP tool and `POST /mockups`) go
+ * through, so it is where "the platform draws it" has to behave identically for both — including
+ * the one thing a caller cannot see: which platform decides the canvas.
+ */
+describe('resolveMockupInput', () => {
+  const page = { root: { type: 'screen' as const, children: [{ type: 'text' as const, text: '下一步' }] } };
+
+  it('draws a screen from a description and computes its markers', () => {
+    const { image, markers } = resolveMockupInput({ ui: page });
+    expect(image.mimeType).toBe('image/svg+xml');
+    expect(markers).toHaveLength(1);
+    expect(markers[0]!.key).toBe('下一步');
+  });
+
+  it('takes the canvas size from the call’s platform when the description omits one', () => {
+    // The sketch guide tells a caller to send only `root`, because the screen's identity — name,
+    // platform, locale — comes from the call. Before this, that advice produced an iOS screen laid
+    // out on a 1280×800 web canvas.
+    const { image } = resolveMockupInput({ ui: page, platform: 'ios' });
+    expect(image.width).toBe(390);
+    expect(image.height).toBe(844);
+
+    const web = resolveMockupInput({ ui: page, platform: 'web' });
+    expect(web.image.width).toBe(1280);
+  });
+
+  it('lets the description’s own platform win, since saying it twice means meaning it', () => {
+    const { image } = resolveMockupInput({ ui: { ...page, platform: 'android' }, platform: 'ios' });
+    expect(image.width).toBe(412);
+  });
+
+  it('refuses both inputs, and neither, with a sentence that names the alternative', () => {
+    expect(() => resolveMockupInput({ ui: page, imageBase64: base64(png(4, 4)) })).toThrow(/不要同时传/);
+    expect(() => resolveMockupInput({})).toThrow(/推荐用 ui/);
   });
 });

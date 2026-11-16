@@ -30,8 +30,10 @@ import {
   type DeliveredSkill,
   REMOTE_MCP_INSTRUCTIONS,
   REMOTE_MCP_IMPORT_GUIDE,
+  REMOTE_MCP_SKETCH_GUIDE,
   REMOTE_MCP_TOOL_SCOPES,
   remoteImportPrompt,
+  remoteSketchPrompt,
   resolveLocaleTag,
   type RemoteMcpTool,
 } from '@localehub/contracts';
@@ -876,7 +878,8 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       '两种输入二选一——**推荐传 ui**：按元素描述页面（text/button/input/row…），平台自己排版、画图、算出每个标记的坐标，' +
       '你不需要画图也不需要量坐标；或者传 image_base64（SVG/PNG/JPEG，自己画的图）＋ markers。' +
       '传 ui 时，节点上的 text 就是界面上显示的文字，默认作为 key（可用 key 覆盖）；key 还没导入也照存，' +
-      '会在返回值里以 markers.unmatched 报告，而不是拒绝。同名屏幕再传一次是整体替换（没有 dry run）。',
+      '会在返回值里以 markers.unmatched 报告，而不是拒绝。同名屏幕再传一次是整体替换（没有 dry run）。' +
+      '节点表、key/namespace 的来源、上限，以及「让 CLI 从页面源码生成这份描述」见资源 localehub://screen-sketch-guide。',
     async (input: {
       project_id: string;
       name: string;
@@ -913,6 +916,8 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
         height: input.height ?? null,
         markers: input.markers,
         ui: input.ui ?? null,
+        // The canvas size follows the screen's platform when the description does not name one.
+        platform: input.platform ?? 'web',
       });
 
       const result = await tenant.withOrganization(actor.organizationId, (tx) =>
@@ -1021,6 +1026,20 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
     }),
   );
 
+  server.registerResource(
+    'screen-sketch-guide',
+    'localehub://screen-sketch-guide',
+    {
+      title: 'Screen sketch guide',
+      description:
+        'How to give a translation a place on screen: the `ui` element tree, where keys and namespaces come from, the limits, and the two things that cannot be undone',
+      mimeType: 'text/markdown',
+    },
+    async (uri) => ({
+      contents: [{ uri: uri.href, mimeType: 'text/markdown', text: REMOTE_MCP_SKETCH_GUIDE }],
+    }),
+  );
+
   /* -------------------------------------------------------------------- prompts */
 
   registerPrompt(
@@ -1067,6 +1086,22 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
     },
     (args: { focus?: string; projectId?: string; localesDir?: string }) => ({
       messages: [{ role: 'user', content: { type: 'text', text: remoteImportPrompt(args ?? {}) } }],
+    }),
+  );
+
+  registerPrompt(
+    'upload-screen-sketch',
+    {
+      title: 'Upload a screen sketch',
+      description:
+        '把一个页面的界面草图传到 LocaleHub（从页面源码生成 ui 描述 → 预览 → 上传），让译者在编辑器里对着界面看译文',
+      argsSchema: {
+        projectId: z.string().optional().describe('目标项目 id；省略则先调 list_projects'),
+        page: z.string().optional().describe('要画的那个页面，例如 apps/web/src/app/projects/page.tsx'),
+      },
+    },
+    (args: { projectId?: string; page?: string }) => ({
+      messages: [{ role: 'user', content: { type: 'text', text: remoteSketchPrompt(args ?? {}) } }],
     }),
   );
 

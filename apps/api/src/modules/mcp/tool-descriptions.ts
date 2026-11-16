@@ -16,5 +16,6 @@ export const REMOTE_TOOL_DESCRIPTIONS: Record<string, string> = {
   get_project_sync_status: '读取仓库同步状态',
   get_pending_platform_changes: '读取待拉取的平台变更',
   validate_release: '发布前校验',
-  upload_screen_mockup: '上传界面草图＋标记，让译者在译文旁边看到界面（可选）',
+  upload_screen_mockup: '把界面草图与每个 key 的位置传给平台（传 ui 元素树，平台自己画图并算坐标；可选，但很值）',
+  mark_applied: '回报已审核译文已写进仓库，平台据此停止再次下发（需 translation.apply）',
 };

@@ -85,7 +85,16 @@ export const MAX_UI_DEPTH = 24;
 export const MAX_UI_NODES = 600;
 
 export const uiSpecSchema = z.object({
-  name: z.string().min(1).max(120),
+  /**
+   * Optional, and ignored by both upload surfaces — the screen's identity is the `name` of the
+   * `upload_screen_mockup` call (or the REST body), and only one of the two can decide it.
+   *
+   * It used to be required, which is the worst of both: a caller that only wants to describe a
+   * screen had to invent a second name, and a caller that filled in both could set them to
+   * different values and never be told which one won. The CLI still passes it when rendering a
+   * sketch locally.
+   */
+  name: z.string().min(1).max(120).optional(),
   platform: z.string().max(40).optional(),
   locale: z.string().max(40).optional(),
   /** Canvas size. The caller picks it because it decides how the wireframe is laid out. */

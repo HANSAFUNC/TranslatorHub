@@ -225,6 +225,7 @@ function McpOnboarding({ snippets, remoteUrl }: { snippets?: McpClientSnippets; 
             `用 project_id=${first?.id ?? '<project_id>'} 搜索待审核的译文，逐条给出审核建议。`,
             `用 project_id=${first?.id ?? '<project_id>'} 读取 QA 问题，给出修复后的译文并写入草稿。`,
             `用 project_id=${first?.id ?? '<project_id>'} 列出平台已审核的变更，先给我看，不要写任何东西。`,
+            `用 project_id=${first?.id ?? '<project_id>'} 把 src/app/page.tsx 做成界面草图传上来（先读 localehub://screen-sketch-guide），让译者对着界面看译文。`,
           ].join('\n')}
         />
         <Alert variant="warning">
@@ -273,6 +274,11 @@ function McpOnboarding({ snippets, remoteUrl }: { snippets?: McpClientSnippets; 
             ：MCP 不做这件事，它够不到你的磁盘。用 CLI：
             <code className="bg-muted ml-1 rounded px-1 font-mono text-xs">localehub scan / sync preview / apply --confirm</code>
             ，受 <code className="font-mono text-xs">.localehub/config.yaml</code> 的 workspace 白名单约束。
+          </p>
+          <p>
+            <span className="font-medium">让译者看到界面</span>：在上面的日常提示词里加一句即可——传{' '}
+            <code className="bg-muted rounded px-1 font-mono text-xs">ui</code> 元素树，图与标记由平台生成，Agent 不需要画图。
+            仓库里有页面源码时更省事：<code className="bg-muted ml-1 rounded px-1 font-mono text-xs">localehub mockup --page &lt;文件&gt; --confirm</code>。
           </p>
           <p>
             <span className="font-medium">让 Agent 直接调用 Skill</span>

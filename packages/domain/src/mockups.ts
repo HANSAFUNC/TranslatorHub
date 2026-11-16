@@ -238,6 +238,15 @@ export function resolveMockupInput(input: {
   /** Required with `imageBase64`; ignored with `ui`, where the platform derives them. */
   markers?: readonly (Omit<MockupMarkerInput, 'namespace'> & { namespace?: string })[] | null;
   ui?: UiSpec | null;
+  /**
+   * The screen's platform, used only to pick the canvas size when the `ui` description does not
+   * carry one of its own.
+   *
+   * Without this the platform of the *call* never reached the renderer, so an `ios` screen whose
+   * description omitted `platform` was laid out on a 1280×800 canvas — and omitting it is exactly
+   * what the sketch guide tells a caller to do, because the screen's identity comes from the call.
+   */
+  platform?: string | null;
 }): { image: DecodedMockupImage; markers: MockupMarkerInput[] } {
   const hasImage = Boolean(input.imageBase64);
   const hasUi = Boolean(input.ui);
@@ -251,7 +260,10 @@ export function resolveMockupInput(input: {
   }
 
   if (hasUi) {
-    const rendered = renderMockupSpec(input.ui!);
+    // `ui.platform` wins when the caller did set it (a caller describing a different device than the
+    // screen is filed under meant it), otherwise the call's platform decides the canvas.
+    const spec: UiSpec = { ...input.ui!, platform: input.ui!.platform ?? input.platform ?? undefined };
+    const rendered = renderMockupSpec(spec);
     return { image: rendered.image, markers: rendered.markers };
   }
 
