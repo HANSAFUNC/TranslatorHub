@@ -183,6 +183,8 @@ export class MockupsService {
       height: body.height ?? null,
       markers: body.markers,
       ui: body.ui ?? null,
+      html: body.html ?? null,
+      namespace: body.namespace ?? null,
       // Same as the MCP tool: the canvas size follows the screen's platform when `ui` omits one.
       platform: body.platform ?? 'web',
     });

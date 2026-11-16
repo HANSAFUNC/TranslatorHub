@@ -373,7 +373,16 @@ CLI 的 `localehub scan` 输出（`expanded` 字段直接给中文说明）。�
 此前只有工具与字段的 `description` 提到 `ui`，而 `instructions`、上传教程、提示词三处都还在教「画一张草图 + 量坐标」——
 Agent 读完仍然会去手画。
 
-**首选：把界面描述成数据，让平台画。** 手画一张 SVG 再逐个量坐标，是这套流程里最容易错、也最容易
+**首选：把页面的源码交上来。** `html` 是第三种输入（与 `ui`、`image_base64` 三选一）：平台解析出元素树，
+自己排版画图、自己算坐标，**颜色与组件外观也一起还原**——读它的 class（含 Tailwind 全套调色板）、inline style
+与 `<style>` 规则（含 `:root` 变量），所以一眼能认出是哪个页面。灰线框给得出位置，给不出「这是哪一屏」。
+
+**只解析，不渲染**：不跑浏览器、不执行 `<script>`、不联网取任何资源；`<script>`、`<style>`、注释里的文字都不会
+被当成文案；样式只认渲染器画得出来的属性（颜色、圆角、字号字重、间距、阴影、对齐），`hsl()`、`@media`、伪类忽略。
+结尾给元素加 `data-key="checkout.pay"`（或 i18next 的 `data-i18n-key`）就能把文案对到 key 上——HTML 没有
+`t('…')` 那样的调用，不写就以文案本身为 key。
+
+**第二种：把界面描述成数据，让平台画。** 手画一张 SVG 再逐个量坐标，是这套流程里最容易错、也最容易
 过时的一步——页面改一行文案，坐标就全废了。所以 `upload_screen_mockup` 还接受另一种输入：
 
 ```jsonc
@@ -396,10 +405,12 @@ Agent 读完仍然会去手画。
 ```
 
 平台按这棵树排版、画图，并**自己算出每个标记的位置与大小**——`markers` 不用传，传了也不采用。
+节点还能带 `style`（`color`/`background`/`border`/`radius`/`fontSize`/`fontWeight`/`align`/`paddingX`/`paddingY`/`gap`/`shadow`），
+颜色只接受 `#rgb`、`#rrggbb`、`#rrggbbaa`、`rgb()`/`rgba()` 与常见颜色名；不写就是这套元素本该有的样子。
 节点上的 `text` 就是界面上显示的文字，它同时是标记的默认 key（项目按 key 命名时，用 `key` 覆盖；
-`namespace` 可以写在根节点上，整棵树继承）。可用的节点类型：`screen`、`section`、`card`、`row`、
-`text`（`role`: heading/subheading/body/label/caption）、`button`、`input`、`image`、`icon`、
-`badge`、`divider`。
+`namespace` 可以写在根节点上，整棵树继承）。可用的节点类型：`screen`、`nav`（顶栏，`text` 是标题、
+`children` 是右侧动作）、`section`、`card`、`row`、`tabs`、`text`（`role`: heading/subheading/body/label/caption）、
+`button`、`input`、`image`、`icon`、`badge`、`divider`。
 
 **本仓库的 CLI 能直接从页面源码生成这份描述**——这是「草稿对应那个页面的所有UI」最省事的做法：
 

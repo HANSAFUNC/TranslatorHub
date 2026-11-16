@@ -879,8 +879,9 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
   define(
     'upload_screen_mockup',
     '给一个界面加上「这些文字在屏幕的什么位置」：平台的翻译编辑器会把界面和译文并排显示，点标记跳到对应译文。' +
-      '两种输入二选一——**推荐传 ui**：按元素描述页面（text/button/input/row…），平台自己排版、画图、算出每个标记的坐标，' +
-      '你不需要画图也不需要量坐标；或者传 image_base64（SVG/PNG/JPEG，自己画的图）＋ markers。' +
+      '三种输入选一种——**传 html 最省事**：把页面的 HTML（或 JSX/TSX）源码交上来，平台解析出元素树、自己排版画图并算出坐标，' +
+      '颜色与组件外观按 class（含 Tailwind）/ inline style / <style> 规则还原（只解析，不渲染、不执行、不联网）；' +
+      '也可以传 ui（按元素描述页面，text/button/input/row…）；或者传 image_base64（SVG/PNG/JPEG，自己画的图）＋ markers。' +
       '传 ui 时，节点上的 text 就是界面上显示的文字，默认作为 key（可用 key 覆盖）；key 还没导入也照存，' +
       '会在返回值里以 markers.unmatched 报告，而不是拒绝。同名屏幕再传一次是整体替换（没有 dry run）。' +
       '节点表、key/namespace 的来源、上限，以及「让 CLI 从页面源码生成这份描述」见资源 localehub://screen-sketch-guide。',
@@ -890,6 +891,10 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       platform?: string;
       locale: string;
       ui?: UiSpec;
+      /** The page's own source, parsed into the same element tree `ui` describes. */
+      html?: string;
+      /** Default namespace for an `html` upload. */
+      namespace?: string;
       image_base64?: string;
       mime_type?: string;
       width?: number;
@@ -920,6 +925,8 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
         height: input.height ?? null,
         markers: input.markers,
         ui: input.ui ?? null,
+        html: input.html ?? null,
+        namespace: input.namespace ?? null,
         // The canvas size follows the screen's platform when the description does not name one.
         platform: input.platform ?? 'web',
       });
@@ -957,9 +964,10 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
           // purpose: a caller that keeps declaring the wrong type is worth noticing.
           detectedMimeType: result.image.mimeType,
           declaredMimeType: image.declaredMimeType,
-          // How the screen got here: drawn by the caller, or rendered from a description. Recorded so
-          // "which callers still hand-measure coordinates" is answerable from the audit trail.
-          source: input.ui ? 'ui' : 'image',
+          // How the screen got here: drawn by the caller, rendered from a description, or read out of
+          // the page's own source. Recorded so "which callers still hand-measure coordinates" stays
+          // answerable from the audit trail.
+          source: input.ui ? 'ui' : input.html ? 'html' : 'image',
         },
       });
 

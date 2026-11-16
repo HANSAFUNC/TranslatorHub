@@ -409,6 +409,63 @@ describe('screen mockups', () => {
     expect(list.body.data!.filter((row) => row.name === 'checkout')).toHaveLength(1);
   }, 60_000);
 
+  it('accepts the page’s own HTML and draws it, without running anything in it', async () => {
+    // The third input: an agent that has the page's markup hands it over, and the platform reads it
+    // into an element tree — layout, colours and markers all from that one pass.
+    // `data-key` is how markup names the key its text belongs to — HTML has no `t('…')` call, and
+    // without it a marker's key is the raw text, which only matches a project keyed by source string.
+    const html = `<style>.card { background: #f8fafc; border-radius: 12px; padding: 16px }</style>
+      <body><div class="card">
+        <h1 class="text-xl font-bold" data-key="checkout.title">Checkout</h1>
+        <p class="text-sm text-zinc-500" data-key="checkout.empty">Your cart is empty</p>
+        <button class="bg-blue-600 text-white rounded-lg px-4 py-2" data-key="checkout.pay">Pay now</button>
+        <script>window.tracked = true</script>
+      </div></body>`;
+    const response = await call<UploadResult>(`/projects/${projectId}/mockups`, {
+      method: 'POST',
+      token: session.token,
+      body: { name: 'checkout-html', platform: 'web', locale: 'en-US', html, replace: true },
+    });
+    expect(response.status, JSON.stringify(response.body.error)).toBe(201);
+    // Three visible strings became three markers, matched by the keys the markup named.
+    expect(response.body.data!.markers.total).toBe(3);
+    expect(response.body.data!.markers.matchedKeys).toBe(3);
+    expect(response.body.data!.markers.unmatched).toEqual([]);
+    expect(response.body.data!.image.mimeType).toBe('image/svg+xml');
+
+    const detail = await call<{ markers: { key: string; text: string }[] }>(
+      `/projects/${projectId}/mockups/${response.body.data!.mockupId}`,
+      { token: session.token },
+    );
+    expect(detail.body.data!.markers.map((marker) => marker.text)).toEqual(['Checkout', 'Your cart is empty', 'Pay now']);
+
+    const image = await fetch(`${API_BASE}${response.body.data!.imagePath}`, {
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    const svg = await image.text();
+    expect(svg).toContain('#2563eb'); // the button's colour, from the page's own class
+    expect(svg).not.toContain('window.tracked');
+    expect(svg).not.toContain('<script');
+  }, 60_000);
+
+  it('refuses two input shapes at once, naming all three', async () => {
+    const response = await call<unknown>(`/projects/${projectId}/mockups`, {
+      method: 'POST',
+      token: session.token,
+      body: {
+        name: 'both',
+        platform: 'web',
+        locale: 'en-US',
+        html: '<div><p>Checkout</p></div>',
+        imageBase64: base64(SKETCH),
+        markers: [{ key: 'checkout.title', x: 0.1, y: 0.2 }],
+        replace: true,
+      },
+    });
+    expect(response.status).toBe(422);
+    expect(JSON.stringify(response.body.error)).toContain('三种输入选一种');
+  }, 60_000);
+
   it('accepts a realistic payload over REST, which the default 100 kB body limit would not', async () => {
     // A wireframe that carries its own detail is a few hundred kilobytes, and a base64 image is ~4/3
     // its bytes — over Express's default `json` limit of 100 kB. The padded comment keeps the SVG a

@@ -7,6 +7,8 @@ export * from './locale';
 export * from './locale-catalog';
 export * from './mockup';
 export * from './ui-spec';
+export * from './ui-extract';
+export * from './ui-style';
 export * from './placeholders';
 export * from './keys';
 export * from './schemas';

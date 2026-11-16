@@ -32,9 +32,10 @@ export const REMOTE_MCP_INSTRUCTIONS = [
   '· 一次调用只放 300~400 条，整个导入在一个 5 秒的事务里（实测 400 条通过、1000 条超时），超时会整批回滚。',
   '',
   '顺手（可选，但很值）：upload_screen_mockup 把译文放回界面里——编辑器的「界面草图」并排显示图与译文，点标记跳到译文。',
-  '传 ui（元素树：text/button/input/row…）即可：平台自己排版、画图，并算出每个标记的坐标，不用你画图，也不用你量坐标。',
+  '把页面的源码传进来（html，JSX/TSX 也行）：平台解析出元素树，自己排版、画图，并算出每个标记的坐标，',
+  '颜色与组件外观按 class / inline style / <style> 规则还原——不用你画图，也不用你量坐标。也可以传 ui（自己写元素树）。',
   '节点的 text 默认就是 key（可用 key 覆盖）；指向还没导入的 key 不算错，会在 markers.unmatched 里报告，导入后自动对上。',
-  '有 shell 权限时更省事：localehub mockup --page <页面文件> --confirm 按页面源码生成同一份描述并上传。',
+  '有 shell 权限时更省事：localehub mockup --page <页面文件> --confirm 读同一个页面的源码并直接上传。',
   '注意没有 dry run：同名屏幕再传一次是整体替换（旧图与旧标记不再保留），别拿它「先试一下」。细节见 localehub://screen-sketch-guide。',
   '',
   '先看不写这件事只有两个工具提供：import_translations 用 confirm=true 才落库，mark_applied 用 dry_run=true 只看结果。',
@@ -170,12 +171,16 @@ export const REMOTE_MCP_SKETCH_GUIDE = `# 把界面草图传上来：让每句�
 
 ## 0. 一句话
 
-\`upload_screen_mockup\` 传 **\`ui\`**：把页面描述成一棵元素树，平台按它排版、画图，并**自己算出每个标记的位置与大小**。
-不需要画图，不需要量坐标，不需要开浏览器截图。自己画图那条路（\`image_base64\` + \`markers\`）留给设计稿与截图。
+\`upload_screen_mockup\` 有三种输入，**首选传页面的源码 \`html\`**：平台解析出元素树、自己排版画图、
+自己算出每个标记的位置与大小——**颜色和组件外观也一起还原**（读它的 class、inline style 与 \`<style>\` 规则）。
+不需要画图，不需要量坐标，不需要开浏览器截图。
 
-理由很直接：页面改一行文案，手量的坐标就全废了；元素树是从页面源码读出来的，改一行只需要重新生成一次。
+不想给源码时：\`ui\` 是自己写元素树（同样的排版与出图），\`image_base64\` + \`markers\` 是自己画图、
+自己量坐标，留给设计稿和截图。
 
-## 1. 调用形状
+理由很直接：页面改一行文案，手量的坐标就全废了；源码里读出来的东西，改一行只需要重新生成一次。
+
+## 1. 调用形状（html）
 
 \`\`\`jsonc
 {
@@ -183,6 +188,26 @@ export const REMOTE_MCP_SKETCH_GUIDE = `# 把界面草图传上来：让每句�
   "name": "练习页",              // 屏幕的身份：同名再传 = 整体替换
   "platform": "ios",            // 这张草图的端，默认 web
   "locale": "zh-CN",            // 图里文字的语言，通常就是 sourceLocale
+  "namespace": "Localizable",   // 可选；分表的项目必填，整棵树继承
+  "html": "<div class='card'><h1>练习</h1><button data-key='exam.next'>下一步</button></div>"
+}
+\`\`\`
+
+\`html\` 可以是整页（带 \`<!doctype>\` / \`<body>\`）也可以是一段片段，JSX/TSX 源码同样认（平台自己判断用哪个读取器）。
+**只解析，不渲染、不执行脚本、不联网取资源**：\`<script>\` 与注释里的内容不会被当成文案；样式只认颜色、圆角、字号、
+间距、阴影、对齐这些渲染器画得出来的属性，\`hsl()\`、\`@media\`、伪类一律忽略。
+
+**HTML 里的文案怎么对上 key**：给元素加 \`data-key="checkout.pay"\`（或 i18next 的 \`data-i18n-key\`）——HTML 没有
+\`t('…')\` 这样的调用，不写的话标记就以文案本身为 key，只有按源文命名的项目才对得上。
+
+### 也可以自己描述（\`ui\`）
+
+\`\`\`jsonc
+{
+  "project_id": "<uuid>",
+  "name": "练习页",
+  "platform": "ios",
+  "locale": "zh-CN",
   "ui": {
     "root": {
       "type": "screen",
@@ -210,6 +235,8 @@ export const REMOTE_MCP_SKETCH_GUIDE = `# 把界面草图传上来：让每句�
 | type | 画成什么 | 带 \`text\` 时 |
 | --- | --- | --- |
 | \`screen\` | 根节点，一整屏 | — |
+| \`nav\` | 顶部栏（\`text\` 是标题，\`children\` 是右侧动作） | **一个标记** |
+| \`tabs\` | 分段控件 | — |
 | \`section\` | 分组 | — |
 | \`card\` | 卡片（\`bordered\` 可加边框） | — |
 | \`row\` | 栅格，\`columns\` 决定等宽列数（1~6，默认 1） | — |
@@ -224,6 +251,11 @@ export const REMOTE_MCP_SKETCH_GUIDE = `# 把界面草图传上来：让每句�
 **页面上能看到多少字符串，树里就要有多少个**，一个不漏——漏掉的句子在编辑器里没有位置，译者看不出它属于哪儿。
 这就是「草图对应那个页面的所有 UI」的字面意思。列表里的每一行都要有节点：\`.map()\` 渲染出来的行是同一个模板，
 按一行的文字建成一个节点就够，不要为 50 行数据画 50 个节点。
+
+**样式**：每个节点都可以带 \`style\`，取 \`color\` / \`background\` / \`border\` / \`borderWidth\` /
+\`radius\` / \`fontSize\` / \`fontWeight\` / \`align\` / \`paddingX\` / \`paddingY\` /
+\`gap\` / \`shadow\`。颜色只接受 \`#rgb\`、\`#rrggbb\`、\`#rrggbbaa\`、\`rgb()\`/\`rgba()\`
+与常见颜色名；不写就是这套元素本该有的样子（按钮是实心控件、卡片是描边面板），不会画成一堆灰框。
 
 列宽交给 \`columns\`，不要用 \`width\` 手调：\`width\` 是固定像素，换个屏幕宽就错位。
 
@@ -255,7 +287,7 @@ localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表 -
 \`\`\`
 
 它扫 JSX/TSX/HTML，把页面上的每一段文字取出来做成元素树（\`t("checkout.pay", "Pay now")\` 会同时拿到 key 与文案），
-并打印「哪些字符串变成了标记」。不加 \`--confirm\` 不上传，正好用来先给我看一眼。
+把 class 与 \`<style>\` 读成颜色与字号，并打印「哪些字符串变成了标记」。不加 \`--confirm\` 不上传，正好用来先给我看一眼。
 \`--platform\` / \`--locale\` / \`--namespace\` / \`--width\` / \`--height\` 与工具参数同义，\`--keys <json>\` 覆盖 key 映射。
 
 **MCP 服务器看不到你的磁盘**（这是设计：平台永远读不到开发者的机器），所以这一步要么你用 CLI 跑，要么你自己读页面
@@ -281,10 +313,12 @@ export function remoteSketchPrompt(args: { projectId?: string; page?: string } =
     '',
     '按这个顺序做，不要跳步：',
     '1. 读 localehub://screen-sketch-guide，它是这个流程的权威说明。',
-    '2. 能跑命令就用：localehub mockup --page <页面文件> --name <屏幕名> 先生成预览，把「哪些字符串变成了标记」报给我确认，再加 --confirm 上传。',
-    '3. 不能跑命令就自己读页面源码，按教程 §2 的节点表把界面上的每一段文字都放进元素树——一个字符串都不能漏。',
-    '4. 调 get_project 确认 sourceLocale 与 platforms；草图的 locale 用 sourceLocale，platform 用页面所属的端。',
-    '5. 调 upload_screen_mockup：传 ui，不要传 markers；name 用页面名，不要用版本号。',
+    '2. 能跑命令就用：localehub mockup --page <页面文件> --name <屏幕名> 先生成预览，把「哪些字符串变成了标记、用了哪些颜色」报给我确认，再加 --confirm 上传。',
+    '3. 不能跑命令就把页面源码本身交上来：upload_screen_mockup 传 html（HTML 或 JSX/TSX）。平台只解析、不渲染；',
+    '   文案要落到 key 上就给元素加 data-key，否则标记会以文案本身为 key。',
+    '4. 调 get_project 确认 sourceLocale 与 platforms；草图的 locale 用 sourceLocale，platform 用页面所属的端，',
+    '   分表的项目还要给 namespace（iOS 的 Localizable / InfoPlist）。',
+    '5. 调 upload_screen_mockup：三种输入选一种（html / ui / image_base64+markers），不要传 markers 配 html 或 ui；name 用页面名，不要用版本号。',
     '6. 把返回值里的 markers.total / markers.matchedKeys / markers.unmatched 报给我：unmatched 说明这些 key 还没导入，先传草图没问题，导入后会自动对上。',
     '',
     '注意：upload_screen_mockup 没有 dry run，同名屏幕会被整体替换（含旧标记），上传前把屏幕名与端再确认一遍。',

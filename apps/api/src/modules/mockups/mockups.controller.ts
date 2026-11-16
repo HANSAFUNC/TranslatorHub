@@ -7,6 +7,7 @@ import {
   localeTagSchema,
   markerSchema,
   platformSchema,
+  MAX_UI_HTML_CHARS,
   uiSpecSchema,
 } from '@localehub/contracts';
 import { z } from 'zod';
@@ -42,6 +43,13 @@ const uploadSchema = z.object({
    * required, and `resolveMockupInput` is what decides that, so this route and the MCP tool agree.
    */
   ui: uiSpecSchema.optional(),
+  /**
+   * The page's own source. Parsed, never rendered — the same scanner the CLI runs on a checkout, so
+   * a page uploaded here and a page uploaded by `localehub mockup --page` produce the same picture.
+   */
+  html: z.string().min(1).max(MAX_UI_HTML_CHARS).optional(),
+  /** Default namespace for an `html` upload; the same thing as `ui.root.namespace`. */
+  namespace: z.string().max(255).optional(),
   imageBase64: z.string().min(1).optional(),
   /**
    * Advisory: the format is read from the bytes, and a wrong claim cannot change the stored one. The

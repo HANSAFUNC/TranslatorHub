@@ -57,17 +57,25 @@ describe('the Remote MCP tool registry', () => {
 
     expect(Object.keys(schema.properties).sort()).toEqual([
       'height',
+      'html',
       'image_base64',
       'locale',
       'markers',
       'mime_type',
       'name',
+      'namespace',
       'platform',
       'project_id',
       'replace',
       'ui',
       'width',
     ]);
+
+    // The three inputs, and the sentence that says they are exclusive. A caller that sends two of
+    // them gets a 422 whose wording is identical on the REST route, so it is worth pinning here.
+    expect(schema.properties.html!.description).toContain('只解析');
+    expect(schema.properties.html!.description).toContain('三选一');
+    expect(schema.properties.namespace!.description).toContain('ui.root.namespace');
 
     // Markers are fractions of the image, and a caller that assumes pixels produces a sketch whose
     // markers all sit in one corner. The description is the only place it can learn otherwise.

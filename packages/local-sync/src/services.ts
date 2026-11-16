@@ -3,15 +3,16 @@ import { join, relative } from 'node:path';
 import {
   ErrorCode,
   LocaleHubError,
-  contentHash,
+  buildUiSpec,
   comparePlaceholders,
+  contentHash,
+  renderUiSketch,
   type ApplyReportRequest,
   type ConflictRecord,
   type ConflictResolution,
   type PlatformChange,
   type ProjectShapeExpansion,
   type PushResult,
-  renderUiSketch,
 } from '@localehub/contracts';
 import { ApiClient, type SyncPreviewResponse } from '@localehub/api-client';
 import {
@@ -29,7 +30,7 @@ import { globToRegExp } from '@localehub/contracts';
 import type { ApplyPlan } from '@localehub/sync-engine';
 import { executeApply, planApply, toApplyReportPayload } from './apply';
 import { scanAndCollect, type ScanSummary } from './scan';
-import { buildUiSpec, readPageFile } from './ui-extract';
+import { readPageFile } from './ui-extract';
 import { StateStore } from './state';
 
 export interface ServiceContext {

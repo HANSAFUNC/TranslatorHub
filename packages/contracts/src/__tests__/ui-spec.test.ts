@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_UI_NODES,
   layoutUiSpec,
+  uiStyleSchema,
   measureText,
   renderUiSketch,
   uiSpecIssues,
@@ -186,5 +187,179 @@ describe('rendered SVG', () => {
     expect(sketch.svg).toContain('亲爱的');
     expect(sketch.svg).toContain('下一步');
     expect(sketch.svg.match(/<rect /g)!.length).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * Styling.
+ *
+ * A grey wireframe is not recognisable, and "which page is this?" is the question a sketch exists to
+ * answer. What matters here is that a colour a caller states is *drawn* — and that the picture stays
+ * inside the same guarantees as before: deterministic, inside the canvas, and every marker where the
+ * text actually is.
+ */
+describe('styled drawing', () => {
+  it('fills a control with the colour it was given, and keeps its label readable', () => {
+    const sketch = renderUiSketch(
+      spec({
+        type: 'screen',
+        children: [
+          { type: 'button', text: '保存', style: { background: '#2563eb', color: '#ffffff' } },
+          { type: 'button', text: '取消', style: { background: '#ffffff' } },
+        ],
+      }),
+    );
+    expect(sketch.svg).toContain('fill="#2563eb"');
+    expect(sketch.svg).toContain('fill="#ffffff"');
+    // The second button asked for a white fill and named no text colour: dark ink, or the label
+    // would be white on white.
+    expect(sketch.svg).toContain('fill="#09090b"');
+  });
+
+  it('honours size, weight, alignment and radius', () => {
+    const sketch = renderUiSketch(
+      spec({
+        type: 'screen',
+        children: [
+          { type: 'text', text: '标题', style: { fontSize: 30, fontWeight: 'bold', align: 'center' } },
+          { type: 'card', style: { radius: 20, shadow: true, background: '#fafafa', border: '#e4e4e7' } },
+        ],
+      }),
+    );
+    expect(sketch.svg).toContain('font-size="30"');
+    expect(sketch.svg).toContain('font-weight="700"');
+    expect(sketch.svg).toContain('text-anchor="middle"');
+    expect(sketch.svg).toContain('rx="20"');
+    expect(sketch.svg).toContain('opacity="0.06"');
+  });
+
+  it('points a padded control’s marker at its text, not at its frame', () => {
+    const padded = layoutUiSpec(
+      spec({ type: 'screen', children: [{ type: 'button', text: '下一步', style: { paddingX: 40, paddingY: 20 } }] }),
+    );
+    const plain = layoutUiSpec(spec({ type: 'screen', children: [{ type: 'button', text: '下一步' }] }));
+    const paddedBox = padded.boxes.find((box) => box.node.type === 'button')!;
+    const plainBox = plain.boxes.find((box) => box.node.type === 'button')!;
+    expect(paddedBox.width).toBeGreaterThan(plainBox.width);
+    // The marker covers the content box; the frame is wider than that.
+    const marker = padded.markers[0]!;
+    expect(marker.x).toBeGreaterThan(0);
+    expect(marker.width * padded.width).toBeLessThan(paddedBox.width);
+  });
+
+  it('draws a nav as a bar whose marker is its title', () => {
+    const layout = layoutUiSpec(
+      spec({
+        type: 'screen',
+        children: [{ type: 'nav', text: '课程详情', children: [{ type: 'icon', width: 20, height: 20 }] }],
+      }),
+    );
+    const nav = layout.boxes.find((box) => box.node.type === 'nav')!;
+    expect(nav.height).toBe(52);
+    expect(layout.markers.map((marker) => marker.text)).toEqual(['课程详情']);
+    // The title starts inside the bar's padding and does not run under the action on the right.
+    expect(layout.markers[0]!.width).toBeLessThan(1);
+    // A header spans the screen rather than sitting inside the page's content padding.
+    expect(nav.width).toBe(layout.width);
+  });
+
+  it('lays tabs out side by side and keeps every label', () => {
+    const layout = layoutUiSpec(
+      spec({
+        type: 'screen',
+        children: [
+          {
+            type: 'tabs',
+            children: [
+              { type: 'text', text: '全部' },
+              { type: 'text', text: '进行中' },
+              { type: 'text', text: '已完成' },
+            ],
+          },
+        ],
+      }),
+    );
+    const labels = layout.markers.filter((marker) => ['全部', '进行中', '已完成'].includes(marker.text));
+    expect(labels).toHaveLength(3);
+    expect(labels[0]!.y).toBe(labels[1]!.y);
+    expect(labels[0]!.x).toBeLessThan(labels[1]!.x);
+    expect(labels[1]!.x).toBeLessThan(labels[2]!.x);
+  });
+
+  it('refuses a colour that is not a colour, at the schema rather than the renderer', () => {
+    // Colors end up in SVG attributes, so they are validated where every other input is: a value
+    // that is not a color never reaches the drawing at all.
+    expect(uiStyleSchema.safeParse({ color: '#2563eb' }).success).toBe(true);
+    expect(uiStyleSchema.safeParse({ color: 'blue' }).success).toBe(true);
+    expect(uiStyleSchema.safeParse({ color: 'red; }' }).success).toBe(false);
+    expect(uiStyleSchema.safeParse({ color: 'url(#x)' }).success).toBe(false);
+    expect(uiStyleSchema.safeParse({ color: '" onload="alert(1)' }).success).toBe(false);
+    expect(uiStyleSchema.safeParse({ fontSize: 900 }).success).toBe(false);
+  });
+
+  it('still passes the platform’s own SVG gate', () => {
+    const sketch = renderUiSketch(
+      spec({
+        type: 'screen',
+        children: [
+          { type: 'nav', text: '<script>alert(1)</script>' },
+          { type: 'button', text: '保存', style: { background: '#2563eb' } },
+        ],
+      }),
+    );
+    expect(unsafeSvgReasons(sketch.svg)).toEqual([]);
+    expect(sketch.svg).not.toContain('<script>');
+    expect(svgDimensions(sketch.svg)).toEqual({ width: sketch.width, height: sketch.height });
+  });
+});
+
+/**
+ * Paint order.
+ *
+ * Layout records a container's box *after* its children's — its height is only known once they are
+ * measured — and drawing in that order put a card's opaque background on top of everything inside it.
+ * The picture was an empty card while every marker still pointed at the right place, so no geometry
+ * test could see it: the check has to be about what is drawn over what.
+ */
+describe('what is drawn over what', () => {
+  const nested = renderUiSketch(
+    spec({
+      type: 'screen',
+      children: [
+        {
+          type: 'card',
+          style: { background: '#f8fafc', border: '#e4e4e7' },
+          children: [{ type: 'button', text: '保存', style: { background: '#2563eb' } }],
+        },
+      ],
+    }),
+  );
+
+  it('paints a container before the things inside it', () => {
+    const card = nested.svg.indexOf('#f8fafc');
+    const button = nested.svg.indexOf('#2563eb');
+    const label = nested.svg.indexOf('保存');
+    expect(card).toBeGreaterThan(-1);
+    expect(button).toBeGreaterThan(card);
+    expect(label).toBeGreaterThan(button);
+  });
+
+  it('keeps every surface before every label, however deep the nesting goes', () => {
+    const deep = renderUiSketch(
+      spec({
+        type: 'screen',
+        children: [
+          {
+            type: 'card',
+            style: { background: '#111111' },
+            children: [
+              { type: 'section', style: { background: '#222222' }, children: [{ type: 'button', text: '深层按钮', style: { background: '#333333' } }] },
+            ],
+          },
+        ],
+      }),
+    );
+    const lastSurface = Math.max(deep.svg.indexOf('#111111'), deep.svg.indexOf('#222222'), deep.svg.indexOf('#333333'));
+    expect(deep.svg.indexOf('深层按钮')).toBeGreaterThan(lastSurface);
   });
 });

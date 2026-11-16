@@ -7,17 +7,18 @@ import {
   MAX_MOCKUP_DIMENSION,
   canonicalizeLocaleTag,
   detectImageType,
+  extractUiSpec,
   imageDimensions,
   isValidLocaleTag,
   normalizeMarker,
   renderUiSketch,
-  uiSpecIssues,
-  unsafeSvgReasons,
   type MockupImageType,
   type MockupMarkerInput,
   type PlatformName,
   type ReviewStatus,
   type UiSpec,
+  uiSpecIssues,
+  unsafeSvgReasons,
 } from '@localehub/contracts';
 import { createHash } from 'node:crypto';
 
@@ -230,6 +231,17 @@ export function renderMockupSpec(spec: UiSpec): { image: DecodedMockupImage; mar
  * surfaces from disagreeing about what is required — a caller that sends neither, or both, gets the
  * same sentence whichever door it came through.
  */
+/**
+ * Which scanner to read a page's source with.
+ *
+ * Both are tolerant and both handle the other's input, so this only has to be right about the
+ * obvious cases: a document that says it is HTML is parsed as HTML, and anything else — a component
+ * file, a fragment — goes through the JSX reader, which understands embedded expressions.
+ */
+function sourceNameFor(source: string): string {
+  return /<!doctype\s+html|<html[\s>]|<body[\s>]|<head[\s>]/i.test(source) ? 'page.html' : 'page.tsx';
+}
+
 export function resolveMockupInput(input: {
   imageBase64?: string | null;
   mimeType?: string | null;
@@ -238,6 +250,15 @@ export function resolveMockupInput(input: {
   /** Required with `imageBase64`; ignored with `ui`, where the platform derives them. */
   markers?: readonly (Omit<MockupMarkerInput, 'namespace'> & { namespace?: string })[] | null;
   ui?: UiSpec | null;
+  /**
+   * The page's own source (HTML or JSX/TSX), for a caller that has the markup rather than a picture
+   * or a description. Parsed with the same scanner the CLI uses — the page's colours and component
+   * shapes come out of its classes, inline styles and `<style>` rules — and then drawn exactly like
+   * a `ui` description, because that is what it becomes.
+   */
+  html?: string | null;
+  /** Default namespace for an `html` upload; the same thing as `ui.root.namespace`. */
+  namespace?: string | null;
   /**
    * The screen's platform, used only to pick the canvas size when the `ui` description does not
    * carry one of its own.
@@ -250,13 +271,29 @@ export function resolveMockupInput(input: {
 }): { image: DecodedMockupImage; markers: MockupMarkerInput[] } {
   const hasImage = Boolean(input.imageBase64);
   const hasUi = Boolean(input.ui);
+  const hasHtml = Boolean(input.html);
 
-  if (hasUi && hasImage) {
+  if ([hasImage, hasUi, hasHtml].filter(Boolean).length > 1) {
     throw new LocaleHubError(
       ErrorCode.VALIDATION_ERROR,
-      '要么传 image_base64（自己画的图）+ markers，要么传 ui（让平台按描述画），不要同时传。',
+      '三种输入选一种：ui（界面描述）、html（页面源码）、image_base64（自己画的图，配 markers）。不要同时传。',
       422,
     );
+  }
+
+  if (hasHtml) {
+    // The source is read into a spec, and from there it takes the same path a `ui` upload does: one
+    // pass lays the page out, draws it and reports the markers, so picture and coordinates cannot
+    // disagree. Nothing here renders the markup or runs anything it contains.
+    const { root } = extractUiSpec(input.html!, sourceNameFor(input.html!), {
+      ...(input.namespace ? { namespace: input.namespace } : {}),
+    });
+    const spec: UiSpec = {
+      ...(input.platform ? { platform: input.platform } : {}),
+      root,
+    };
+    const rendered = renderMockupSpec(spec);
+    return { image: rendered.image, markers: rendered.markers };
   }
 
   if (hasUi) {
@@ -270,7 +307,7 @@ export function resolveMockupInput(input: {
   if (!hasImage) {
     throw new LocaleHubError(
       ErrorCode.VALIDATION_ERROR,
-      '缺少草图：传 image_base64 + markers，或者传 ui 让平台按界面描述生成（推荐用 ui，省去手算坐标）。',
+      '缺少草图：传 ui（界面描述）、html（页面源码），或者 image_base64 + markers（自己画的图，坐标要自己量）。',
       422,
     );
   }

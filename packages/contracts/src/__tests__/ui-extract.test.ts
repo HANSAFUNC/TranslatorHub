@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { layoutUiSpec } from '@localehub/contracts';
-
+import { layoutUiSpec } from '../ui-spec';
 import { buildUiSpec, extractUiSpec, looksLikeUiText, parseJsx } from '../ui-extract';
 
 /**
@@ -22,6 +21,11 @@ describe('what counts as UI copy', () => {
     ['下一步', true],
     ['Save changes', true],
     ['已选 155 学分', true],
+    // A single word is copy, not a token. The earlier rule dropped every space-less string, so a
+    // page whose title is one word lost its heading — the sketch showed a gap with no marker on it.
+    ['Checkout', true],
+    ['Cancel', true],
+    ['设置', true],
     ['text-sm', false],
     ['flex-1', false],
     ['./components/button', false],
@@ -31,6 +35,11 @@ describe('what counts as UI copy', () => {
     ['24px', false],
     ['·', false],
     ['a', false],
+    ['aboutme_logo', false],
+    ['bg-blue-600', false],
+    // ...but an asset name or a utility chain still is not copy, which is what the punctuation and
+    // lower-case-chain rules are for.
+    ['logo', true],
   ])('%s → %s', (value, expected) => {
     expect(looksLikeUiText(value)).toBe(expected);
   });
@@ -117,6 +126,18 @@ describe('extraction', () => {
     expect(strings.map((entry) => entry.text)).toEqual(['搜索代码、语言名或英文名']);
   });
 
+  it('does not read an attribute whose value is decided at runtime', () => {
+    // `aria-label={label}` names a variable; only the variable's *name* is in the file, and reading it
+    // put the word "label" in the sketch as if it were a translation.
+    const { strings } = extractUiSpec('<button aria-label={label}>复制</button>', 'x.tsx', {});
+    expect(strings.map((entry) => entry.text)).toEqual(['复制']);
+  });
+
+  it('does not read a style or class list written as an expression', () => {
+    const { root } = extractUiSpec('<div className={cx("a", active && "b")} style={styles.card}>内容</div>', 'x.tsx', {});
+    expect(root.children![0]!.style).toBeUndefined();
+  });
+
   it('refuses a source with no elements, and says what this reader can read', () => {
     expect(() => extractUiSpec('const x = 1;', 'x.tsx', {})).toThrow(/没有找到任何界面元素/);
   });
@@ -167,5 +188,78 @@ describe('every string on a real page becomes a marker', () => {
       expect(marker.x + marker.width).toBeLessThanOrEqual(1.0001);
       expect(marker.y + marker.height).toBeLessThanOrEqual(1.0001);
     }
+  });
+});
+
+/**
+ * The page's colours.
+ *
+ * A sketch that is grey is a sketch nobody recognises. The page already says what its colours are —
+ * in its classes, its inline styles, its stylesheet — and reading them is what makes the picture
+ * answer "which page is this?" instead of only "what does the text say?".
+ */
+describe('styling comes from the page', () => {
+  it('reads Tailwind classes into the tree', () => {
+    const { root } = extractUiSpec(
+      `<div class="rounded-xl bg-white p-4"><h2 class="text-2xl font-bold text-zinc-900">账户设置</h2>
+       <button class="bg-blue-600 text-white rounded-lg px-4 py-2">保存</button></div>`,
+      'page.html',
+      {},
+    );
+    const card = root.children![0]!;
+    expect(card.style).toMatchObject({ background: '#ffffff', radius: 12, paddingX: 16 });
+    const heading = card.children!.find((child) => child.text === '账户设置')!;
+    expect(heading.style).toMatchObject({ fontSize: 24, fontWeight: 'bold', color: '#18181b' });
+    const button = card.children!.find((child) => child.text === '保存')!;
+    expect(button.style).toMatchObject({ background: '#2563eb', color: '#ffffff', radius: 8, paddingX: 16, paddingY: 8 });
+  });
+
+  it('reads a stylesheet, including the variables it defines', () => {
+    const { root } = extractUiSpec(
+      `<style>:root { --brand: #2563eb } .btn { background: var(--brand); color: white; border-radius: 10px }</style>
+       <button class="btn">下一步</button>`,
+      'page.html',
+      {},
+    );
+    const button = root.children!.find((child) => child.text === '下一步')!;
+    expect(button.style).toMatchObject({ background: '#2563eb', color: '#ffffff', radius: 10 });
+  });
+
+  it('reads an inline style, which wins over the class', () => {
+    const { root } = extractUiSpec(`<span class="text-zinc-500" style="color: #e11d48; font-weight: 700">已过期</span>`, 'page.html', {});
+    expect(root.children![0]!.style).toMatchObject({ color: '#e11d48', fontWeight: 'bold' });
+  });
+
+  it('passes a nav through as a nav, not as a paragraph', () => {
+    const { root } = extractUiSpec(
+      `<nav class="bg-white border-b"><h1 class="text-lg font-semibold">课程详情</h1></nav>`,
+      'page.html',
+      {},
+    );
+    const nav = root.children![0]!;
+    expect(nav.type).toBe('nav');
+    expect(nav.text).toBe('课程详情');
+  });
+});
+
+/**
+ * The bug this pins: a `<script>` body and a `<style>` body are text to a scanner, and both were
+ * being read as UI copy — a page with one inline script produced a marker whose text was
+ * `const x = 1`, and a page with a stylesheet produced markers for its CSS.
+ */
+describe('program code is not copy', () => {
+  it('never turns a script body into a string', () => {
+    const { strings } = extractUiSpec(`<div><script>const label = '不是文案';</script><p>真的文案</p></div>`, 'page.html', {});
+    expect(strings.map((entry) => entry.text)).toEqual(['真的文案']);
+  });
+
+  it('never turns a stylesheet into a string', () => {
+    const { strings } = extractUiSpec(`<style>.a { color: red } /* 注释也不该出现 */</style><p>真的文案</p>`, 'page.html', {});
+    expect(strings.map((entry) => entry.text)).toEqual(['真的文案']);
+  });
+
+  it('never turns an HTML comment into a string', () => {
+    const { strings } = extractUiSpec(`<div><!-- TODO: 改文案 --><p>真的文案</p></div>`, 'page.html', {});
+    expect(strings.map((entry) => entry.text)).toEqual(['真的文案']);
   });
 });

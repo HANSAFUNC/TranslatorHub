@@ -146,8 +146,14 @@ if (uploaded.isError) throw new Error(`the guide's example was refused: ${upload
 const result = uploaded.structuredContent ?? JSON.parse(uploaded.content[0].text);
 console.log('the guide\'s example, uploaded:');
 console.log(JSON.stringify({ markers: result.markers, image: result.image }, null, 1));
-check(result.markers?.total === 4, 'the four strings in the example became four markers', String(result.markers?.total));
-check(result.markers?.unmatched?.length === 4, 'none matched a key yet, reported rather than rejected');
+// The example is the `html` shape: two strings, one of them naming its key through `data-key`.
+check(result.markers?.total === 2, 'the two strings in the example became two markers', String(result.markers?.total));
+check(result.markers?.unmatched?.length === 2, 'none matched a key yet, reported rather than rejected');
+check(
+  result.markers?.unmatched?.some((row) => row.key === 'exam.next' && row.namespace === 'Localizable'),
+  'the button kept the key the markup named, under the namespace the call set',
+  JSON.stringify(result.markers?.unmatched),
+);
 check(result.image?.width === 390 && result.image?.height === 844, 'the named screen decided the canvas', `${result.image?.width}×${result.image?.height}`);
 check(result.image?.mimeType === 'image/svg+xml', 'the platform drew an SVG');
 

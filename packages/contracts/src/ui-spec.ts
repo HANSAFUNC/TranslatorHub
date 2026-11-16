@@ -23,8 +23,10 @@ import { z } from 'zod';
  */
 export const UI_NODE_TYPES = [
   'screen',
+  'nav',
   'section',
   'row',
+  'tabs',
   'card',
   'text',
   'button',
@@ -41,6 +43,103 @@ export type UiNodeType = (typeof UI_NODE_TYPES)[number];
 export const UI_TEXT_ROLES = ['heading', 'subheading', 'body', 'label', 'caption'] as const;
 export type UiTextRole = (typeof UI_TEXT_ROLES)[number];
 
+/** Font weights as words, so a caller cannot invent 437. */
+export const UI_FONT_WEIGHTS = ['regular', 'medium', 'semibold', 'bold'] as const;
+export type UiFontWeight = (typeof UI_FONT_WEIGHTS)[number];
+
+const WEIGHT_VALUE: Record<UiFontWeight, number> = { regular: 400, medium: 500, semibold: 600, bold: 700 };
+
+/**
+ * A colour the sketch will accept.
+ *
+ * A wireframe that is grey is not recognisable: the whole point of a sketch is that a translator
+ * looks at it and knows which page they are on, and a page is its colours as much as its words. So
+ * nodes carry colours — but only in the forms a sketch needs, checked here rather than trusted:
+ * these strings end up inside SVG attributes, and an attribute is not a place to put arbitrary text.
+ */
+/**
+ * The named colours a sketch understands, at their CSS values.
+ *
+ * A short list rather than the whole of `named_colors`: a page that says `color: red` means a red
+ * that every reader agrees on, and mapping the common names is what keeps hand-written CSS from
+ * losing its colour. Anything outside this list is dropped rather than guessed at.
+ */
+export const UI_NAMED_COLORS: Record<string, string> = {
+  black: '#000000',
+  white: '#ffffff',
+  silver: '#c0c0c0',
+  gray: '#808080',
+  grey: '#808080',
+  red: '#ff0000',
+  maroon: '#800000',
+  yellow: '#ffff00',
+  olive: '#808000',
+  lime: '#00ff00',
+  green: '#008000',
+  aqua: '#00ffff',
+  cyan: '#00ffff',
+  teal: '#008080',
+  blue: '#0000ff',
+  navy: '#000080',
+  fuchsia: '#ff00ff',
+  magenta: '#ff00ff',
+  purple: '#800080',
+  orange: '#ffa500',
+  pink: '#ffc0cb',
+  brown: '#a52a2a',
+};
+
+export const UI_COLOR_PATTERN =
+  /^(#[0-9a-f]{3}|#[0-9a-f]{6}|#[0-9a-f]{8}|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(?:,\s*(?:0|1|0?\.\d+)\s*)?\)|transparent|currentColor|black|white|silver|gr[ae]y|red|maroon|yellow|olive|lime|green|aqua|cyan|teal|blue|navy|fuchsia|magenta|purple|orange|pink|brown)$/i;
+
+export const uiColorSchema = z.string().max(40).regex(UI_COLOR_PATTERN, '颜色只接受 #rgb / #rrggbb / #rrggbbaa / rgb() / rgba()');
+
+/**
+ * How a node looks.
+ *
+ * Deliberately a small, closed set of properties rather than CSS: a sketch is drawn by the
+ * platform's own renderer, so every property here is one the renderer knows how to draw — and one
+ * a caller cannot use to smuggle in something that is not a drawing instruction. Where a node has no
+ * style, its type supplies a sensible default (a button is a filled control, a card is a bordered
+ * panel), so an unstyled tree still looks like an interface instead of a pile of grey boxes.
+ */
+export interface UiStyle {
+  /** Text colour. */
+  color?: string;
+  /** Fill behind the node. */
+  background?: string;
+  /** Border colour; `borderWidth` defaults to 1 when a border colour is given. */
+  border?: string;
+  borderWidth?: number;
+  radius?: number;
+  /** Overrides the size the node's type or role would use. */
+  fontSize?: number;
+  fontWeight?: UiFontWeight;
+  align?: 'left' | 'center' | 'right';
+  /** Space between the node's edge and its content. */
+  paddingX?: number;
+  paddingY?: number;
+  /** Space between a container's children. */
+  gap?: number;
+  /** A soft drop shadow, for cards and sheets. */
+  shadow?: boolean;
+}
+
+export const uiStyleSchema = z.object({
+  color: uiColorSchema.optional(),
+  background: uiColorSchema.optional(),
+  border: uiColorSchema.optional(),
+  borderWidth: z.number().min(0).max(8).optional(),
+  radius: z.number().min(0).max(64).optional(),
+  fontSize: z.number().min(8).max(72).optional(),
+  fontWeight: z.enum(UI_FONT_WEIGHTS).optional(),
+  align: z.enum(['left', 'center', 'right']).optional(),
+  paddingX: z.number().min(0).max(64).optional(),
+  paddingY: z.number().min(0).max(64).optional(),
+  gap: z.number().min(0).max(64).optional(),
+  shadow: z.boolean().optional(),
+});
+
 export interface UiNode {
   type: UiNodeType;
   /** The string shown on screen. For a `text`/`button`/`badge` node this is what gets a marker. */
@@ -56,6 +155,8 @@ export interface UiNode {
   height?: number;
   /** Equal-width columns for a `row` (`grid-cols-3`). */
   columns?: number;
+  /** How it looks. Omitted means "however this kind of element looks by default". */
+  style?: UiStyle;
   children?: UiNode[];
 }
 
@@ -70,6 +171,7 @@ export const uiNodeSchema: z.ZodType<UiNode> = z.lazy(() =>
     width: z.number().positive().max(8192).optional(),
     height: z.number().positive().max(8192).optional(),
     columns: z.number().int().min(1).max(6).optional(),
+    style: uiStyleSchema.optional(),
     children: z.array(uiNodeSchema).max(400).optional(),
   }),
 );
@@ -83,6 +185,8 @@ export const uiNodeSchema: z.ZodType<UiNode> = z.lazy(() =>
  */
 export const MAX_UI_DEPTH = 24;
 export const MAX_UI_NODES = 600;
+/** A page's source is smaller than a picture of it; this is the cap on the `html` input. */
+export const MAX_UI_HTML_CHARS = 1_000_000;
 
 export const uiSpecSchema = z.object({
   /**
@@ -146,15 +250,33 @@ export function uiSpecIssues(spec: UiSpec): string[] {
 
 /* ------------------------------------------------------------------ geometry */
 
+export interface UiRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface UiBox {
   node: UiNode;
   x: number;
   y: number;
   width: number;
   height: number;
+  /** How deep the node sits, root = 1. Surfaces are painted in this order, parents first. */
+  depth: number;
+  /**
+   * Where the node's own content sits, once its padding is taken off.
+   *
+   * Markers cover this rather than the whole box: a button's marker should sit on its label, not on
+   * the frame around it, and the text is what a translator is being pointed at.
+   */
+  content: UiRect;
   /** The box the marker should cover, when the node carries a translatable string. */
   marker: boolean;
 }
+
+const rect = (x: number, y: number, width: number, height: number): UiRect => ({ x, y, width, height });
 
 export interface MarkerGeometry {
   key: string;
@@ -171,6 +293,65 @@ const PAGE_PADDING = 20;
 const GAP = 10;
 const FONT_SIZE: Record<UiTextRole, number> = { heading: 22, subheading: 17, body: 14, label: 13, caption: 12 };
 const LINE_HEIGHT = 1.45;
+/** Bar heights for the two structural elements, so a nav looks like a nav and not like a paragraph. */
+const NAV_HEIGHT = 52;
+const TABS_HEIGHT = 34;
+
+/** The size a node's text is drawn at: its own if it says so, otherwise whatever its kind uses. */
+function fontSizeOf(node: UiNode): number {
+  if (node.style?.fontSize) return node.style.fontSize;
+  switch (node.type) {
+    case 'text':
+      return FONT_SIZE[node.role ?? 'body'];
+    case 'badge':
+      return FONT_SIZE.caption;
+    case 'nav':
+      return FONT_SIZE.subheading;
+    case 'tabs':
+      return FONT_SIZE.label;
+    default:
+      return FONT_SIZE.body;
+  }
+}
+
+function weightOf(node: UiNode): number {
+  if (node.style?.fontWeight) return WEIGHT_VALUE[node.style.fontWeight];
+  if (node.type === 'nav') return WEIGHT_VALUE.semibold;
+  if (node.type === 'text' && node.role === 'heading') return WEIGHT_VALUE.semibold;
+  return WEIGHT_VALUE.regular;
+}
+
+/** Bold text is wider. Not by much, but a label that runs past its box is a label that got cut. */
+function weightScale(weight: number): number {
+  return weight >= 700 ? 1.06 : weight >= 600 ? 1.04 : weight >= 500 ? 1.02 : 1;
+}
+
+function measureStyled(text: string, fontSize: number, weight: number): number {
+  return measureText(text, fontSize) * weightScale(weight);
+}
+
+function wrapStyled(text: string, fontSize: number, maxWidth: number, weight: number): string[] {
+  return wrapText(text, fontSize, maxWidth / weightScale(weight));
+}
+
+/** The padding a node has: its own, or the one its kind is drawn with. */
+function paddingOf(node: UiNode): { x: number; y: number } {
+  const fallback: Record<string, { x: number; y: number }> = {
+    button: { x: 18, y: 9 },
+    badge: { x: 12, y: 2 },
+    input: { x: 12, y: 0 },
+    card: { x: 14, y: 14 },
+    nav: { x: 16, y: 0 },
+    tabs: { x: 4, y: 4 },
+    screen: { x: PAGE_PADDING, y: PAGE_PADDING },
+  };
+  const base = fallback[node.type] ?? { x: 0, y: 0 };
+  return { x: node.style?.paddingX ?? base.x, y: node.style?.paddingY ?? base.y };
+}
+
+function gapOf(node: UiNode): number {
+  return node.style?.gap ?? GAP;
+}
 /** Rough advance width per character. CJK is full-width; Latin is a bit over half. */
 function charWidth(char: string, fontSize: number): number {
   const code = char.codePointAt(0) ?? 0;
@@ -246,103 +427,158 @@ function layoutNode(node: UiNode, x: number, y: number, width: number, state: La
   }
   state.nodes += 1;
 
-  const push = (height: number, marker: boolean, boxWidth = width, boxX = x, boxY = y): number => {
-    state.boxes.push({ node, x: boxX, y: boxY, width: boxWidth, height, marker });
+  const padding = paddingOf(node);
+  const push = (height: number, marker: boolean, boxWidth = width, boxX = x, boxY = y, pad = padding): number => {
+    state.boxes.push({
+      node,
+      depth,
+      x: boxX,
+      y: boxY,
+      width: boxWidth,
+      height,
+      content: rect(
+        boxX + pad.x,
+        boxY + pad.y,
+        Math.max(0, boxWidth - pad.x * 2),
+        Math.max(0, height - pad.y * 2),
+      ),
+      marker,
+    });
     return height;
   };
 
   switch (node.type) {
     case 'text': {
-      const role = node.role ?? 'body';
-      const fontSize = FONT_SIZE[role];
-      const lines = wrapText(node.text ?? '', fontSize, width);
-      const height = Math.max(node.height ?? 0, lines.length * fontSize * LINE_HEIGHT);
-      state.boxes.push({ node, x, y, width, height, marker: Boolean(node.text) });
-      return height;
+      const fontSize = fontSizeOf(node);
+      const lines = wrapStyled(node.text ?? '', fontSize, Math.max(1, width - padding.x * 2), weightOf(node));
+      const height = Math.max(node.height ?? 0, lines.length * fontSize * LINE_HEIGHT + padding.y * 2);
+      return push(height, Boolean(node.text));
     }
     case 'button':
     case 'badge': {
-      const fontSize = node.type === 'button' ? FONT_SIZE.body : FONT_SIZE.caption;
-      const padding = node.type === 'button' ? 20 : 12;
+      const fontSize = fontSizeOf(node);
+      const weight = weightOf(node);
       const inner = node.children ?? [];
       // A button with children is compound (`<Button><Icon/><span>Save</span></Button>`): the frame is
       // sized around them and they are drawn inside it, left to right. Without this the children had
       // markers but no ink — the label sat on an empty box.
       if (inner.length) {
-        const laid: number[] = [];
-        let cursor = x + padding;
-        const available = Math.max(1, width - padding * 2);
+        let cursor = x + padding.x;
+        const available = Math.max(1, width - padding.x * 2);
         const each = Math.max(1, available / inner.length);
-        const height = node.height ?? (node.type === 'button' ? 38 : 24);
-        state.boxes.push({ node, x, y, width: Math.min(width, each * inner.length + padding * 2), height, marker: false });
+        // Tall enough for its own text, or for whatever the children need, whichever is more.
+        const height = node.height ?? Math.max(node.type === 'button' ? 38 : 24, fontSize * LINE_HEIGHT + padding.y * 2);
         for (const child of inner) {
           const before = state.boxes.length;
-          const used = layoutNode(child, cursor, y + (height - Math.min(height, 20)) / 2, each, state, depth + 1);
+          layoutNode(child, cursor, y + Math.max(0, (height - Math.min(height, 22)) / 2), each, state, depth + 1);
           if (state.boxes.length > before) cursor += each;
-          laid.push(used);
         }
-        return height;
+        return push(height, false, Math.min(width, each * inner.length + padding.x * 2));
       }
-      const textWidth = measureText(node.text ?? '', fontSize) + padding * 2;
+      const textWidth = measureStyled(node.text ?? '', fontSize, weight) + padding.x * 2;
       const boxWidth = Math.min(width, Math.max(node.width ?? 0, textWidth));
-      const height = node.height ?? (node.type === 'button' ? 38 : 22);
-      state.boxes.push({ node, x, y, width: boxWidth, height, marker: Boolean(node.text) });
-      return height;
+      const height = node.height ?? Math.max(node.type === 'button' ? 38 : 22, fontSize * LINE_HEIGHT + padding.y * 2);
+      return push(height, Boolean(node.text), boxWidth);
     }
     case 'input': {
-      const height = node.height ?? 38;
-      state.boxes.push({ node, x, y, width, height, marker: Boolean(node.text) });
-      return height;
+      const height = node.height ?? Math.max(38, fontSizeOf(node) * LINE_HEIGHT + padding.y * 2);
+      return push(height, Boolean(node.text));
     }
     case 'image': {
       const height = node.height ?? 120;
       const boxWidth = Math.min(width, node.width ?? width);
-      state.boxes.push({ node, x, y, width: boxWidth, height, marker: false });
-      return height;
+      return push(height, false, boxWidth, x, y, { x: 0, y: 0 });
     }
     case 'icon':
-      state.boxes.push({ node, x, y, width: node.width ?? 20, height: node.height ?? 20, marker: false });
-      return node.height ?? 20;
-    case 'divider': {
-      state.boxes.push({ node, x, y, width, height: node.height ?? 1, marker: false });
-      return node.height ?? 1;
+      // An icon with a radius is a rounded square (an app icon, a tile); without one it is a circle.
+      return push(node.height ?? 20, false, node.width ?? 20, x, y, { x: 0, y: 0 });
+    case 'divider':
+      return push(node.height ?? 1, false, width, x, y, { x: 0, y: 0 });
+    case 'nav': {
+      const height = node.height ?? NAV_HEIGHT;
+      const actions = node.children ?? [];
+      const titleSpace = { x: padding.x, y: Math.max(0, (height - fontSizeOf(node) * LINE_HEIGHT) / 2) };
+      if (!node.text) {
+        // No title of its own, so the bar's contents are its contents: side by side, in flow. Laying
+        // them out as right-hand actions would squeeze them into half the bar for no reason.
+        const each = Math.max(1, (width - padding.x * 2) / Math.max(1, actions.length));
+        actions.forEach((action, index) => {
+          layoutNode(action, x + padding.x + index * each, y + (height - 24) / 2, each, state, depth + 1);
+        });
+        return push(height, false, width, x, y, titleSpace);
+      }
+      // Actions sit against the right edge, as they do in a real bar; the title keeps the rest.
+      const actionWidth = actions.length ? Math.min(width * 0.5, actions.length * 44) : 0;
+      let cursor = x + width - padding.x - actionWidth;
+      for (const action of actions) {
+        layoutNode(action, cursor, y + (height - 24) / 2, actionWidth / actions.length, state, depth + 1);
+        cursor += actionWidth / actions.length;
+      }
+      // The marker is the title, not the bar: it points at a string, and it is drawn at the same
+      // place the renderer draws it.
+      return push(height, Boolean(node.text), width, x, y, titleSpace);
+    }
+    case 'tabs': {
+      const items = node.children ?? [];
+      const height = node.height ?? TABS_HEIGHT;
+      if (items.length) {
+        const available = Math.max(1, width - padding.x * 2);
+        const each = available / items.length;
+        items.forEach((item, index) => {
+          layoutNode(item, x + padding.x + index * each, y + padding.y, each, state, depth + 1);
+        });
+      }
+      return push(height, false, width, x, y, { x: padding.x, y: padding.y });
     }
     case 'row': {
       const children = node.children ?? [];
       if (!children.length) return 0;
+      const gap = gapOf(node);
       const columns = Math.max(1, Math.min(6, node.columns ?? children.length));
-      const cellWidth = Math.max(1, (width - GAP * (columns - 1)) / columns);
+      const cellWidth = Math.max(1, (width - padding.x * 2 - gap * (columns - 1)) / columns);
       // Row heights first, on a scratch layout, so a wrapped line in one cell pushes the next row
       // down for every column. Placing as we go would make each cell's height depend on how many
       // cells had already been laid out, which is the kind of order-dependence that turns a
       // reproducible sketch into a one-off.
       const heights = rowHeights(children, columns, cellWidth);
-      let cursor = y;
+      let cursor = y + padding.y;
       for (let index = 0; index < children.length; index += 1) {
         const row = Math.floor(index / columns);
         const column = index % columns;
-        if (column === 0 && row > 0) cursor += heights[row - 1]! + GAP;
-        layoutNode(children[index]!, x + column * (cellWidth + GAP), cursor, cellWidth, state, depth + 1);
+        if (column === 0 && row > 0) cursor += heights[row - 1]! + gap;
+        layoutNode(children[index]!, x + padding.x + column * (cellWidth + gap), cursor, cellWidth, state, depth + 1);
       }
       const lastRow = Math.ceil(children.length / columns) - 1;
-      return heights.reduce((sum, height) => sum + height, 0) + GAP * Math.max(0, lastRow);
+      return (
+        heights.reduce((sum, height) => sum + height, 0) +
+        gap * Math.max(0, lastRow) +
+        padding.y * 2
+      );
     }
     case 'screen':
     case 'section':
     case 'card': {
-      const padding = node.type === 'card' ? 14 : node.type === 'screen' ? PAGE_PADDING : 0;
-      const innerWidth = Math.max(1, width - padding * 2);
-      let cursor = y + padding;
-      for (const child of node.children ?? []) {
+      const gap = gapOf(node);
+      const children = node.children ?? [];
+      const innerWidth = Math.max(1, width - padding.x * 2);
+      let cursor = y + padding.y;
+      let bottom = y;
+      for (const child of children) {
+        // A nav spans the screen: a page's header is not inset like its content, and drawing it inset
+        // is the difference between "a phone screen" and "a box in a box".
+        const bleeds = node.type === 'screen' && child.type === 'nav';
+        const childY = bleeds && cursor === y + padding.y ? y : cursor;
         const before = state.boxes.length;
-        const height = layoutNode(child, x + padding, cursor, innerWidth, state, depth + 1);
-        if (state.boxes.length === before ) continue;
-        cursor += height + GAP;
+        const height = layoutNode(child, bleeds ? x : x + padding.x, childY, bleeds ? width : innerWidth, state, depth + 1);
+        if (state.boxes.length === before) continue;
+        cursor = childY + height + gap;
+        bottom = Math.max(bottom, childY + height);
       }
-      const contentHeight = cursor - y - padding - ((node.children ?? []).length ? GAP : 0);
-      const height = Math.max(node.height ?? 0, contentHeight + padding * 2);
-      push(height, false);
-      return height;
+      // The top padding is already inside `bottom`; the bottom one is added unless there is nothing
+      // to pad around.
+      const contentHeight = children.length ? bottom - y : 0;
+      const height = Math.max(node.height ?? 0, contentHeight + padding.y * (children.length ? 1 : 2));
+      return push(height, false);
     }
     default:
       return 0;
@@ -399,7 +635,17 @@ export function layoutUiSpec(spec: UiSpec): UiLayout {
 
   const state: LayoutState = { boxes: [], nodes: 0, truncated: false };
   const contentHeight = layoutNode(root, 0, 0, width, state, 0);
-  let height = Math.max(spec.height ?? viewport.height, contentHeight);
+  /**
+   * The canvas covers everything that was drawn into it.
+   *
+   * A container's height is the sum of its children's *reported* heights, and a node may draw
+   * outside the box it reports — a fixed-height bar holding taller content, say. An upload requires
+   * every marker to be a fraction of the image, so the image is grown to fit rather than left with
+   * markers hanging off the bottom: the guarantee holds by construction instead of by every node
+   * type being careful.
+   */
+  const drawnBottom = state.boxes.reduce((lowest, box) => Math.max(lowest, box.y + box.height), 0);
+  let height = Math.max(spec.height ?? viewport.height, contentHeight, drawnBottom);
 
   let boxes = state.boxes;
   const scale = height > maxHeight ? maxHeight / height : 1;
@@ -424,10 +670,12 @@ export function layoutUiSpec(spec: UiSpec): UiLayout {
       key,
       namespace: box.node.namespace ?? '',
       text,
-      x: clamp01(box.x / width),
-      y: clamp01(box.y / height),
-      width: clamp01(box.width / width),
-      height: clamp01(box.height / height),
+      // The content rect, not the whole box: markers point at text, and a padded control's text is
+      // inset inside it.
+      x: clamp01(box.content.x / width),
+      y: clamp01(box.content.y / height),
+      width: clamp01(box.content.width / width),
+      height: clamp01(box.content.height / height),
     });
   }
 
@@ -451,6 +699,7 @@ function clamp01(value: number): number {
 
 /* ------------------------------------------------------------------ rendering */
 
+/** The default look, used wherever a node carries no style of its own. */
 const COLORS = {
   page: '#ffffff',
   heading: '#09090b',
@@ -458,8 +707,9 @@ const COLORS = {
   body: '#3f3f46',
   label: '#52525b',
   caption: '#71717a',
-  border: '#d4d4d8',
-  panel: '#fafafa',
+  border: '#e4e4e7',
+  panel: '#ffffff',
+  track: '#f4f4f5',
   button: '#18181b',
   buttonText: '#fafafa',
   badge: '#f4f4f5',
@@ -493,66 +743,139 @@ export function renderUiSvg(layout: UiLayout, fontFamily = 'system-ui, -apple-sy
   parts.push(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" font-family="${escapeXml(fontFamily)}">`,
   );
-  parts.push(`<rect x="0" y="0" width="${layout.width}" height="${layout.height}" fill="${COLORS.page}"/>`);
+  const screen = layout.boxes.find((box) => box.node.type === 'screen');
+  parts.push(`<rect x="0" y="0" width="${layout.width}" height="${layout.height}" fill="${escapeXml(screen?.node.style?.background ?? COLORS.page)}"/>`);
 
-  for (const box of layout.boxes) {
-    const { node, x, y, width, height } = box;
-    const rect = (fill: string, stroke?: string, radius = 6): string =>
-      `<rect x="${round(x)}" y="${round(y)}" width="${round(width)}" height="${round(height)}" rx="${radius}" fill="${fill}"${
-        stroke ? ` stroke="${stroke}" stroke-width="1"` : ''
+  /**
+   * Two passes, and the order matters: every surface first, then everything drawn on top of one.
+   *
+   * Boxes are recorded in layout order, which is *post-order* for containers — a card's box comes
+   * after its children's, because its height is only known once they are laid out. Painting in that
+   * order drew the card's opaque background over the text and buttons inside it: the picture was an
+   * empty card, and every marker still pointed at a hole. Nothing in the geometry was wrong, which is
+   * why only reading the drawn pixels caught it.
+   */
+  const surfaces: string[] = [];
+  const contents: string[] = [];
+
+  // A parent's surface has to be under its children's, and `layout.boxes` is in post-order for
+  // containers — a card's box only exists once its children are measured. Depth is what recovers the
+  // nesting: shallower first, and layout order within a depth (a stable sort keeps it).
+  const painting = [...layout.boxes].sort((a, b) => a.depth - b.depth);
+
+  for (const box of painting) {
+    const { node, x, y, width, height, content } = box;
+    const style = node.style ?? {};
+    const fontSize = fontSizeOf(node);
+    const weight = weightOf(node);
+
+    const panel = (fill: string, stroke: string | undefined, radius: number, inset = 0): string =>
+      `<rect x="${round(x + inset)}" y="${round(y + inset)}" width="${round(Math.max(0, width - inset * 2))}" height="${round(Math.max(0, height - inset * 2))}" rx="${round(radius)}" fill="${escapeXml(fill)}"${
+        stroke ? ` stroke="${escapeXml(stroke)}" stroke-width="${style.borderWidth ?? 1}"` : ''
       }/>`;
-    const label = (text: string, fontSize: number, fill: string, dy: number, anchor = 'start'): string => {
-      const tx = anchor === 'middle' ? round(x + width / 2) : round(x + (node.type === 'button' || node.type === 'badge' ? 10 : 0));
-      return `<text x="${tx}" y="${round(y + dy)}" font-size="${fontSize}" fill="${fill}"${anchor === 'middle' ? ' text-anchor="middle"' : ''}>${escapeXml(text)}</text>`;
+    const line = (text: string, where: UiRect, align: 'left' | 'center' | 'right', fill: string, dy: number): string => {
+      const anchor = align === 'center' ? 'middle' : align === 'right' ? 'end' : 'start';
+      const tx = align === 'center' ? where.x + where.width / 2 : align === 'right' ? where.x + where.width : where.x;
+      return `<text x="${round(tx)}" y="${round(where.y + dy)}" font-size="${round(fontSize)}" fill="${escapeXml(fill)}"${
+        weight !== WEIGHT_VALUE.regular ? ` font-weight="${weight}"` : ''
+      }${anchor === 'start' ? '' : ` text-anchor="${anchor}"`}>${escapeXml(text)}</text>`;
     };
+    /** A control's label sits in the middle of its content box, wherever its padding put that. */
+    const centred = (text: string, fill: string, align: 'left' | 'center' | 'right'): string =>
+      line(text, content, align, fill, content.height / 2 + fontSize * 0.36);
 
     switch (node.type) {
       case 'screen':
         break;
+      case 'nav': {
+        const fill = style.background ?? COLORS.page;
+        surfaces.push(panel(fill, style.border, style.radius ?? 0));
+        contents.push(
+          `<line x1="${round(x)}" y1="${round(y + height)}" x2="${round(x + width)}" y2="${round(y + height)}" stroke="${escapeXml(style.border ?? COLORS.border)}" stroke-width="1"/>`,
+        );
+        if (node.text) contents.push(centred(node.text, style.color ?? COLORS.heading, style.align ?? 'left'));
+        break;
+      }
       case 'section':
-        if (node.bordered) parts.push(rect(COLORS.panel, COLORS.border));
+        if (style.background || style.border || node.bordered) {
+          surfaces.push(panel(style.background ?? COLORS.panel, style.border ?? COLORS.border, style.radius ?? 6));
+        }
         break;
-      case 'card':
-        parts.push(rect(COLORS.panel, COLORS.border, 10));
+      case 'card': {
+        if (style.shadow) {
+          surfaces.push(
+            `<rect x="${round(x)}" y="${round(y + 2)}" width="${round(width)}" height="${round(height)}" rx="${round(style.radius ?? 14)}" fill="#000000" opacity="0.06"/>`,
+          );
+        }
+        surfaces.push(panel(style.background ?? COLORS.panel, style.border ?? COLORS.border, style.radius ?? 14));
         break;
+      }
       case 'row':
+      case 'tabs': {
+        if (node.type === 'tabs') {
+          surfaces.push(
+            `<rect x="${round(x)}" y="${round(y)}" width="${round(width)}" height="${round(height)}" rx="${round(style.radius ?? 10)}" fill="${escapeXml(style.background ?? COLORS.track)}"/>`,
+          );
+        } else if (style.background || style.border) {
+          surfaces.push(panel(style.background ?? 'transparent', style.border, style.radius ?? 0));
+        }
         break;
+      }
       case 'divider':
-        parts.push(
-          `<line x1="${round(x)}" y1="${round(y)}" x2="${round(x + width)}" y2="${round(y)}" stroke="${COLORS.border}" stroke-width="1"/>`,
+        contents.push(
+          `<line x1="${round(x)}" y1="${round(y)}" x2="${round(x + width)}" y2="${round(y)}" stroke="${escapeXml(style.border ?? COLORS.border)}" stroke-width="${style.borderWidth ?? 1}"/>`,
         );
         break;
-      case 'image':
-        parts.push(rect(COLORS.image, COLORS.border));
-        parts.push(
-          `<path d="M ${round(x)} ${round(y + height)} L ${round(x + width)} ${round(y)}" stroke="${COLORS.border}" stroke-width="1"/>`,
+      case 'image': {
+        surfaces.push(panel(style.background ?? COLORS.image, style.border ?? COLORS.border, style.radius ?? 8));
+        // A picture mark, drawn from the box's own geometry: enough to read as an image at any size.
+        const mark = Math.min(width, height) * 0.22;
+        const cx = x + width / 2;
+        const cy = y + height / 2;
+        contents.push(
+          `<path d="M ${round(cx - mark)} ${round(cy + mark * 0.6)} L ${round(cx - mark * 0.25)} ${round(cy - mark * 0.5)} L ${round(cx + mark * 0.2)} ${round(cy + mark * 0.05)} L ${round(cx + mark * 0.6)} ${round(cy - mark * 0.35)} L ${round(cx + mark)} ${round(cy + mark * 0.6)} Z" fill="${escapeXml(style.color ?? COLORS.icon)}" opacity="0.55"/>`,
         );
+        if (node.text) contents.push(centred(node.text, style.color ?? COLORS.caption, style.align ?? 'center'));
         break;
-      case 'icon':
-        parts.push(`<circle cx="${round(x + width / 2)}" cy="${round(y + height / 2)}" r="${round(Math.min(width, height) / 2)}" fill="${COLORS.icon}"/>`);
+      }
+      case 'icon': {
+        const fill = style.background ?? COLORS.icon;
+        if (style.radius !== undefined) {
+          surfaces.push(
+            `<rect x="${round(x)}" y="${round(y)}" width="${round(width)}" height="${round(height)}" rx="${round(style.radius)}" fill="${escapeXml(fill)}"/>`,
+          );
+        } else {
+          contents.push(
+            `<circle cx="${round(x + width / 2)}" cy="${round(y + height / 2)}" r="${round(Math.min(width, height) / 2)}" fill="${escapeXml(fill)}"/>`,
+          );
+        }
         break;
-      case 'button':
-        parts.push(rect(COLORS.button, undefined, 8));
-        if (node.text) parts.push(label(node.text, FONT_SIZE.body, COLORS.buttonText, height / 2 + 5, 'middle'));
+      }
+      case 'button': {
+        const fill = style.background ?? COLORS.button;
+        surfaces.push(panel(fill, style.border, style.radius ?? 10));
+        if (node.text) contents.push(centred(node.text, style.color ?? readableOn(fill), style.align ?? 'center'));
         break;
-      case 'badge':
-        parts.push(rect(COLORS.badge, COLORS.border, 11));
-        if (node.text) parts.push(label(node.text, FONT_SIZE.caption, COLORS.label, height / 2 + 4, 'middle'));
+      }
+      case 'badge': {
+        const fill = style.background ?? COLORS.badge;
+        surfaces.push(panel(fill, style.border, style.radius ?? height / 2));
+        if (node.text) contents.push(centred(node.text, style.color ?? readableOn(fill), style.align ?? 'center'));
         break;
+      }
       case 'input': {
-        parts.push(rect('#ffffff', COLORS.border, 8));
-        if (node.text) parts.push(label(node.text, FONT_SIZE.body, COLORS.caption, height / 2 + 5));
+        const fill = style.background ?? '#ffffff';
+        surfaces.push(panel(fill, style.border ?? COLORS.border, style.radius ?? 10));
+        // A placeholder starts at the left edge of the content box, like a real one does.
+        if (node.text) contents.push(centred(node.text, style.color ?? COLORS.caption, style.align ?? 'left'));
         break;
       }
       case 'text': {
-        const role = node.role ?? 'body';
-        const fontSize = FONT_SIZE[role];
-        const fill = role === 'heading' ? COLORS.heading : role === 'subheading' ? COLORS.subheading : role === 'caption' ? COLORS.caption : role === 'label' ? COLORS.label : COLORS.body;
-        const lines = wrapText(node.text ?? '', fontSize, width);
-        lines.forEach((line, index) => {
-          parts.push(
-            `<text x="${round(x)}" y="${round(y + fontSize * 0.95 + index * fontSize * LINE_HEIGHT)}" font-size="${fontSize}"${role === 'heading' ? ' font-weight="600"' : ''} fill="${fill}">${escapeXml(line)}</text>`,
-          );
+        const align = style.align ?? 'left';
+        const fill = style.color ?? COLORS[node.role ?? 'body'];
+        const lines = wrapStyled(node.text ?? '', fontSize, content.width, weight);
+        lines.forEach((text, index) => {
+          contents.push(line(text, content, align, fill, fontSize * 0.95 + index * fontSize * LINE_HEIGHT));
         });
         break;
       }
@@ -561,8 +884,44 @@ export function renderUiSvg(layout: UiLayout, fontFamily = 'system-ui, -apple-sy
     }
   }
 
+  parts.push(...surfaces, ...contents);
   parts.push('</svg>');
   return parts.join('');
+}
+
+/**
+ * Black or white, whichever reads on this fill.
+ *
+ * A label is the one thing a sketch cannot afford to lose, and a caller that sets a light background
+ * on a button — `bg-white text-zinc-900` is a real pattern — would otherwise get white text on white.
+ */
+function readableOn(color: string): string {
+  return isLight(color) ? COLORS.heading : COLORS.buttonText;
+}
+
+function isLight(color: string): boolean {
+  const value = color.trim().toLowerCase();
+  if (value === 'white') return true;
+  if (value === 'black') return false;
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(value);
+  let r: number;
+  let g: number;
+  let b: number;
+  if (hex) {
+    const digits = hex[1]!;
+    const full = digits.length <= 4 ? digits.split('').map((digit) => digit + digit).join('') : digits;
+    r = parseInt(full.slice(0, 2), 16);
+    g = parseInt(full.slice(2, 4), 16);
+    b = parseInt(full.slice(4, 6), 16);
+  } else {
+    const rgb = /rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i.exec(value);
+    // `transparent` and `currentColor` are not fills at all: the page shows through, so text reads dark.
+    if (!rgb) return true;
+    r = Number(rgb[1]);
+    g = Number(rgb[2]);
+    b = Number(rgb[3]);
+  }
+  return 0.299 * r + 0.587 * g + 0.114 * b > 150;
 }
 
 export interface RenderedSketch {

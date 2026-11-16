@@ -229,7 +229,26 @@ describe('the screen sketch guide', () => {
     }
   });
 
-  it('leads with the ui tree and says the platform computes the coordinates', async () => {
+  it('leads with the page’s own source, and says the platform computes the coordinates', async () => {
+    {
+      const client = await connect();
+      try {
+        const text = textOf(await client.readResource({ uri: 'localehub://screen-sketch-guide' }));
+        // The first example is the `html` shape: the cheapest thing for an agent that has the page.
+        const first = /```jsonc\n([\s\S]*?)```/.exec(text)![1]!;
+        expect(first).toContain('"html"');
+        // …and the page's colours are part of what it promises, because a grey sketch is not
+        // recognisable as any particular screen.
+        expect(text).toContain('颜色');
+        expect(text).toContain('data-key');
+        expect(text).toContain('只解析');
+      } finally {
+        await client.close();
+      }
+    }
+  });
+
+  it('shows the ui tree too, and says the platform computes the coordinates', async () => {
     const client = await connect();
     try {
       const text = textOf(await client.readResource({ uri: 'localehub://screen-sketch-guide' }));
@@ -305,13 +324,26 @@ describe('the example in the sketch guide', () => {
   });
 
   it('produces the sketch it promises: one marker per string, on the named screen', () => {
-    const example = exampleFromGuide() as { ui: Parameters<typeof resolveMockupInput>[0]['ui']; platform: string };
-    const { image, markers } = resolveMockupInput({ ui: example.ui, platform: example.platform });
-    // Four strings in the example's tree — a heading, a search field and two buttons.
-    expect(markers.map((marker) => marker.key)).toEqual(['亲爱的', '搜索课程', '再想想', '下一步']);
+    // The first block is the `html` shape — the page's own source — so the example is run the way a
+    // caller pastes it: into the resolver, which parses it and draws it.
+    const example = exampleFromGuide() as { html: string; platform: string; namespace?: string };
+    const { image, markers } = resolveMockupInput({ html: example.html, platform: example.platform, namespace: example.namespace ?? null });
+    expect(markers.map((marker) => marker.text)).toEqual(['练习', '下一步']);
+    // The button names its key rather than defaulting to its text, which is the one thing markup
+    // cannot say by itself.
+    expect(markers[1]!.key).toBe('exam.next');
+    // The namespace reaches every marker, which is what an iOS string table needs.
+    expect(markers.every((marker) => marker.namespace === 'Localizable')).toBe(true);
     // And an iPhone-shaped canvas, which is the property the guide states in prose.
     expect(image.width).toBe(390);
     expect(image.height).toBe(844);
+  });
+
+  it('shows a `ui` example too, for a caller that would rather describe the screen', () => {
+    const blocks = [...REMOTE_MCP_SKETCH_GUIDE.matchAll(/```jsonc\n([\s\S]*?)```/g)];
+    expect(blocks.length).toBeGreaterThanOrEqual(2);
+    const ui = JSON.parse(blocks[1]![1]!) as { ui: { root: { type: string } } };
+    expect(ui.ui.root.type).toBe('screen');
   });
 });
 

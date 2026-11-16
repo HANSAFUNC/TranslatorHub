@@ -39,6 +39,10 @@
     "./ui-spec": {
       "types": "./dist/ui-spec.d.ts",
       "default": "./dist/ui-spec.js"
+    },
+    "./ui-extract": {
+      "types": "./dist/ui-extract.d.ts",
+      "default": "./dist/ui-extract.js"
     }
   }
 }

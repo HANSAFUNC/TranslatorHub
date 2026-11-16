@@ -169,8 +169,54 @@ describe('resolveMockupInput', () => {
     expect(image.width).toBe(412);
   });
 
-  it('refuses both inputs, and neither, with a sentence that names the alternative', () => {
+  it('refuses both inputs, and neither, with a sentence that names the alternatives', () => {
     expect(() => resolveMockupInput({ ui: page, imageBase64: base64(png(4, 4)) })).toThrow(/不要同时传/);
-    expect(() => resolveMockupInput({})).toThrow(/推荐用 ui/);
+    expect(() => resolveMockupInput({ html: '<div><p>你好</p></div>', ui: page })).toThrow(/三种输入选一种/);
+    expect(() => resolveMockupInput({})).toThrow(/传 ui/);
+  });
+});
+
+/**
+ * The page's own source as a third input.
+ *
+ * This is what makes a sketch worth uploading from an agent that has the markup: the page says which
+ * elements it has, what they say, and — through its classes and styles — what they look like. The
+ * server parses it with the same scanner the CLI runs on a checkout, and nothing in it is rendered or
+ * executed.
+ */
+describe('resolveMockupInput from html', () => {
+  const page = `
+    <style>.card { background: #f8fafc; border-radius: 12px; padding: 16px }</style>
+    <body><div class="card">
+      <h1 class="text-xl font-bold">课程详情</h1>
+      <button class="bg-blue-600 text-white rounded-lg px-4 py-2">开始练习</button>
+      <script>track('不是文案')</script>
+    </div></body>`;
+
+  it('draws the page and gets its strings, without executing anything it contains', () => {
+    const { image, markers } = resolveMockupInput({ html: page, platform: 'ios' });
+    expect(image.mimeType).toBe('image/svg+xml');
+    // One marker per visible string; the script body is not copy and is not in the picture.
+    expect(markers.map((marker) => marker.key)).toEqual(['课程详情', '开始练习']);
+    const svg = image.bytes.toString('utf8');
+    expect(svg).toContain('课程详情');
+    expect(svg).not.toContain('不是文案');
+    expect(svg).not.toContain('<script');
+  });
+
+  it('carries the page’s colours into the picture', () => {
+    const { image } = resolveMockupInput({ html: page });
+    const svg = image.bytes.toString('utf8');
+    expect(svg).toContain('#2563eb'); // the button, from `bg-blue-600`
+    expect(svg).toContain('#f8fafc'); // the card, from its own rule
+  });
+
+  it('stamps a namespace on every marker, the way the CLI’s --namespace does', () => {
+    const { markers } = resolveMockupInput({ html: page, namespace: 'Localizable' });
+    expect(markers.every((marker) => marker.namespace === 'Localizable')).toBe(true);
+  });
+
+  it('refuses a source with nothing to draw, in the caller’s terms', () => {
+    expect(() => resolveMockupInput({ html: 'export const x = 1;' })).toThrow(/没有找到任何界面元素/);
   });
 });

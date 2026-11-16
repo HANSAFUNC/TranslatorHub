@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { McpScope } from './roles';
 import { localeTagSchema, platformSchema } from './schemas';
 import { MAX_MARKERS_PER_MOCKUP, MAX_MOCKUP_BYTES, MAX_MOCKUP_REQUEST_BYTES, markerSchema } from './mockup';
-import { uiSpecSchema } from './ui-spec';
+import { MAX_UI_HTML_CHARS, uiSpecSchema } from './ui-spec';
 
 /**
  * Canonical registry of the Remote MCP's tools. Shared by the server, the API's discovery
@@ -304,6 +304,29 @@ export const remoteToolSchemas = {
      * hand is where sketches go wrong. With `ui` the platform lays the page out, draws it and computes
      * every marker itself. Exactly one of `ui` / `image_base64` is required.
      */
+    /**
+     * The page's own source, for a caller that has the markup rather than a description of it.
+     *
+     * Parsed, never rendered: no browser, no script, no network. What comes out is the same element
+     * tree `ui` describes — with the page's colours and component shapes read out of its classes,
+     * inline styles and `<style>` blocks — so the platform still draws the picture and computes the
+     * markers from one pass.
+     */
+    html: z
+      .string()
+      .min(1)
+      .max(MAX_UI_HTML_CHARS)
+      .optional()
+      .describe(
+        '页面源码（HTML，或 JSX/TSX 源码）：平台从中解析出界面元素树，自己排版、画图并算坐标，' +
+          '颜色与组件外观按 class（含 Tailwind）、inline style 与 <style> 规则还原。只解析，不渲染、不执行脚本、不联网取资源。' +
+          '想让 iOS 的多张字符串表各归各位，配合 namespace 使用。与 ui / image_base64 三选一。',
+      ),
+    namespace: z
+      .string()
+      .max(255)
+      .optional()
+      .describe('传 html 时的默认命名空间，整棵树继承（等于 ui.root.namespace）。iOS 分表导入时必填。'),
     ui: uiSpecSchema.optional().describe(
       '界面描述（推荐）：按元素描述页面，平台据此画出草图并自动计算每个标记的位置与大小——不需要你量坐标。' +
         'root 是一个树：screen 里放 text / button / input / card / row / image 等节点，节点上的 text 就是界面上显示的文字，' +
