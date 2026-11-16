@@ -3725,6 +3725,234 @@
                     "minLength": 1,
                     "maxLength": 64
                   },
+                  "frames": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 60
+                        },
+                        "html": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1000000
+                        },
+                        "ui": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 120
+                            },
+                            "platform": {
+                              "type": "string",
+                              "maxLength": 40
+                            },
+                            "locale": {
+                              "type": "string",
+                              "maxLength": 40
+                            },
+                            "width": {
+                              "type": "integer",
+                              "minimum": 64,
+                              "maximum": 8192
+                            },
+                            "height": {
+                              "type": "integer",
+                              "minimum": 64,
+                              "maximum": 8192
+                            },
+                            "theme": {
+                              "type": "object",
+                              "properties": {
+                                "accent": {
+                                  "type": "string",
+                                  "maxLength": 40,
+                                  "pattern": "^(#[0-9a-f]{3}|#[0-9a-f]{6}|#[0-9a-f]{8}|rgba?\\(\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*(?:,\\s*(?:0|1|0?\\.\\d+)\\s*)?\\)|transparent|currentColor|black|white|silver|gr[ae]y|red|maroon|yellow|olive|lime|green|aqua|cyan|teal|blue|navy|fuchsia|magenta|purple|orange|pink|brown)$"
+                                },
+                                "background": {
+                                  "type": "string",
+                                  "maxLength": 40,
+                                  "pattern": "^(#[0-9a-f]{3}|#[0-9a-f]{6}|#[0-9a-f]{8}|rgba?\\(\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*(?:,\\s*(?:0|1|0?\\.\\d+)\\s*)?\\)|transparent|currentColor|black|white|silver|gr[ae]y|red|maroon|yellow|olive|lime|green|aqua|cyan|teal|blue|navy|fuchsia|magenta|purple|orange|pink|brown)$"
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            "root": {
+                              "type": "object",
+                              "properties": {
+                                "type": {
+                                  "type": "string",
+                                  "enum": [
+                                    "canvas",
+                                    "screen",
+                                    "nav",
+                                    "tabbar",
+                                    "section",
+                                    "row",
+                                    "tabs",
+                                    "switch",
+                                    "slider",
+                                    "card",
+                                    "text",
+                                    "button",
+                                    "input",
+                                    "image",
+                                    "icon",
+                                    "divider",
+                                    "badge"
+                                  ]
+                                },
+                                "text": {
+                                  "type": "string",
+                                  "maxLength": 2000
+                                },
+                                "key": {
+                                  "type": "string",
+                                  "maxLength": 512
+                                },
+                                "namespace": {
+                                  "type": "string",
+                                  "maxLength": 255
+                                },
+                                "role": {
+                                  "type": "string",
+                                  "enum": [
+                                    "heading",
+                                    "subheading",
+                                    "body",
+                                    "label",
+                                    "caption"
+                                  ]
+                                },
+                                "bordered": {
+                                  "type": "boolean"
+                                },
+                                "width": {
+                                  "type": "number",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 8192
+                                },
+                                "height": {
+                                  "type": "number",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 8192
+                                },
+                                "columns": {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 6
+                                },
+                                "component": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 64
+                                },
+                                "src": {
+                                  "type": "string",
+                                  "maxLength": 400000,
+                                  "pattern": "^data:image\\/(png|jpe?g|gif|webp|avif);base64,[A-Za-z0-9+/]+=*$"
+                                },
+                                "style": {
+                                  "type": "object",
+                                  "properties": {
+                                    "color": {
+                                      "type": "string",
+                                      "maxLength": 40,
+                                      "pattern": "^(#[0-9a-f]{3}|#[0-9a-f]{6}|#[0-9a-f]{8}|rgba?\\(\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*(?:,\\s*(?:0|1|0?\\.\\d+)\\s*)?\\)|transparent|currentColor|black|white|silver|gr[ae]y|red|maroon|yellow|olive|lime|green|aqua|cyan|teal|blue|navy|fuchsia|magenta|purple|orange|pink|brown)$"
+                                    },
+                                    "background": {
+                                      "type": "string",
+                                      "maxLength": 40,
+                                      "pattern": "^(#[0-9a-f]{3}|#[0-9a-f]{6}|#[0-9a-f]{8}|rgba?\\(\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*(?:,\\s*(?:0|1|0?\\.\\d+)\\s*)?\\)|transparent|currentColor|black|white|silver|gr[ae]y|red|maroon|yellow|olive|lime|green|aqua|cyan|teal|blue|navy|fuchsia|magenta|purple|orange|pink|brown)$"
+                                    },
+                                    "border": {
+                                      "type": "string",
+                                      "maxLength": 40,
+                                      "pattern": "^(#[0-9a-f]{3}|#[0-9a-f]{6}|#[0-9a-f]{8}|rgba?\\(\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*,\\s*\\d{1,3}\\s*(?:,\\s*(?:0|1|0?\\.\\d+)\\s*)?\\)|transparent|currentColor|black|white|silver|gr[ae]y|red|maroon|yellow|olive|lime|green|aqua|cyan|teal|blue|navy|fuchsia|magenta|purple|orange|pink|brown)$"
+                                    },
+                                    "borderWidth": {
+                                      "type": "number",
+                                      "minimum": 0,
+                                      "maximum": 8
+                                    },
+                                    "radius": {
+                                      "type": "number",
+                                      "minimum": 0,
+                                      "maximum": 64
+                                    },
+                                    "fontSize": {
+                                      "type": "number",
+                                      "minimum": 8,
+                                      "maximum": 72
+                                    },
+                                    "fontWeight": {
+                                      "type": "string",
+                                      "enum": [
+                                        "regular",
+                                        "medium",
+                                        "semibold",
+                                        "bold"
+                                      ]
+                                    },
+                                    "align": {
+                                      "type": "string",
+                                      "enum": [
+                                        "left",
+                                        "center",
+                                        "right"
+                                      ]
+                                    },
+                                    "paddingX": {
+                                      "type": "number",
+                                      "minimum": 0,
+                                      "maximum": 64
+                                    },
+                                    "paddingY": {
+                                      "type": "number",
+                                      "minimum": 0,
+                                      "maximum": 64
+                                    },
+                                    "gap": {
+                                      "type": "number",
+                                      "minimum": 0,
+                                      "maximum": 64
+                                    },
+                                    "shadow": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                },
+                                "children": {
+                                  "type": "array",
+                                  "items": {},
+                                  "maxItems": 400
+                                }
+                              },
+                              "required": [
+                                "type"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "root"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "title"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 8
+                  },
                   "ui": {
                     "type": "object",
                     "properties": {
@@ -3773,6 +4001,7 @@
                           "type": {
                             "type": "string",
                             "enum": [
+                              "canvas",
                               "screen",
                               "nav",
                               "tabbar",
@@ -3830,6 +4059,11 @@
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 6
+                          },
+                          "component": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
                           },
                           "src": {
                             "type": "string",
@@ -4013,6 +4247,14 @@
                         "text": {
                           "type": "string",
                           "maxLength": 2000
+                        },
+                        "frame": {
+                          "type": "string",
+                          "maxLength": 60
+                        },
+                        "component": {
+                          "type": "string",
+                          "maxLength": 64
                         },
                         "note": {
                           "type": "string",

@@ -382,6 +382,11 @@ Agent 读完仍然会去手画。
 组件语汇都可以在平台侧继续演进，调用方不用重传。转写对照表在 `localehub://screen-sketch-guide`（顶栏 / 贴底标签栏 /
 开关 / 滑块 / 卡片 / 徽标 / 分段控件各有对应写法，类名不必是真 Tailwind——`class="tabbar"`、`class="card"` 也认）。
 
+**一个屏幕的多个状态**用 `frames` 传（与 `ui`/`html`/`image_base64` 互斥，最多 8 帧）：每帧 `{title, html|ui}`，
+平台横向排开、每帧上方写状态名，返回值 `markers.frames` 报告每帧的标记数。**组件**用节点上的 `component`
+（或 HTML 里的类名 / `data-component`）：平台给每个实例打编号徽章、在画布底部列出编号与实例数（只有一个组件时不画），
+并让组件内部的文案都归属该组件——编辑器旁边就是同一份清单，点一下高亮。
+
 **页面自己没带颜色时**有两个入口，通常一起用：`css`（把颜色所在的那份样式表一起传，规则先于页面内的 `<style>`）、
 `theme`（`{accent, background}`，accent 落在按钮/开关/滑块与选中的页签上；不传按端取默认：iOS 系统蓝、Android Material 蓝、
 web 近黑）。**图片**只有带在载荷里的才画得出来：`<img src="data:image/png;base64,…">`（单张 ≤ 300 KB、合计 ≤ 1.2 MB）；
@@ -418,7 +423,7 @@ web 近黑）。**图片**只有带在载荷里的才画得出来：`<img src="d
 节点还能带 `style`（`color`/`background`/`border`/`radius`/`fontSize`/`fontWeight`/`align`/`paddingX`/`paddingY`/`gap`/`shadow`），
 颜色只接受 `#rgb`、`#rrggbb`、`#rrggbbaa`、`rgb()`/`rgba()` 与常见颜色名；不写就是这套元素本该有的样子。
 节点上的 `text` 就是界面上显示的文字，它同时是标记的默认 key（项目按 key 命名时，用 `key` 覆盖；
-`namespace` 可以写在根节点上，整棵树继承）。可用的节点类型：`screen`、`nav`（顶栏，`text` 是标题、
+`namespace` 可以写在根节点上，整棵树继承）。可用的节点类型：`canvas`（一张画布，子节点是各状态的帧，横向排开、每帧上方写标题）、`screen`、`nav`（顶栏，`text` 是标题、
 `children` 是右侧动作）、`tabbar`（**贴屏幕底部的**标签栏，内容再长也不会把它挤到下面去）、`section`、`card`、`row`、
 `tabs`（分段控件）、`switch`、`slider`、`text`（`role`: heading/subheading/body/label/caption）、`button`、`input`、
 `image`（`alt` 进标记）、`icon`、`badge`、`divider`。

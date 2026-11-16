@@ -7,6 +7,7 @@ import {
   localeTagSchema,
   markerSchema,
   platformSchema,
+  MAX_MOCKUP_FRAMES,
   MAX_UI_HTML_CHARS,
   uiSpecSchema,
   uiThemeSchema,
@@ -43,6 +44,14 @@ const uploadSchema = z.object({
    * platform lays it out, draws it and computes the markers. Exactly one of `ui` / `imageBase64` is
    * required, and `resolveMockupInput` is what decides that, so this route and the MCP tool agree.
    */
+  /**
+   * A screen's states, each its own frame on one canvas. Exclusive with `ui` / `html` / `imageBase64`,
+   * and the reason a translator can see what a key reads like when the list is empty.
+   */
+  frames: z
+    .array(z.object({ title: z.string().min(1).max(60), html: z.string().min(1).max(MAX_UI_HTML_CHARS).optional(), ui: uiSpecSchema.optional() }))
+    .max(MAX_MOCKUP_FRAMES)
+    .optional(),
   ui: uiSpecSchema.optional(),
   /**
    * The page's own source. Parsed, never rendered — the same scanner the CLI runs on a checkout, so

@@ -486,3 +486,84 @@ describe('theme and pictures', () => {
     expect(selected).toEqual(['全部']);
   });
 });
+
+/**
+ * A board of states, and the components it is made of.
+ *
+ * A screen is rarely one picture — the empty list, the loading row, the validation error — and the
+ * elements are rarely anonymous: a card, a button, a tab bar. Putting the states side by side and
+ * numbering what they are made of is what lets a translator see that the same key reads differently
+ * in each state, and that "this button" is the same button everywhere.
+ */
+describe('frames on a canvas', () => {
+  const board = spec({
+    type: 'canvas',
+    children: [
+      { type: 'screen', text: '默认', children: [{ type: 'nav', text: '我的保单' }, { type: 'button', text: '查看详情' }] },
+      { type: 'screen', text: '空状态', children: [{ type: 'nav', text: '我的保单' }, { type: 'text', text: '还没有保单' }] },
+    ],
+  });
+
+  it('is as wide as its frames, and every marker names the state it is in', () => {
+    const layout = layoutUiSpec(board);
+    // Two 390-wide frames and the gap between them.
+    expect(layout.width).toBe(390 * 2 + 32);
+    expect(layout.markers.map((marker) => marker.frame)).toEqual(['默认', '默认', '空状态', '空状态']);
+    // The frame titles are the platform's annotation, not the page's copy.
+    expect(layout.markers.map((marker) => marker.text)).not.toContain('默认');
+  });
+
+  it('keeps each frame’s own layout: one frame’s content does not push the other’s', () => {
+    const uneven = spec({
+      type: 'canvas',
+      children: [
+        { type: 'screen', text: '高', children: Array.from({ length: 12 }, (_, index) => ({ type: 'text' as const, text: `第 ${index} 行` })) },
+        { type: 'screen', text: '矮', children: [{ type: 'button', text: '查看详情' }] },
+      ],
+    });
+    const layout = layoutUiSpec(uneven);
+    const button = layout.boxes.find((box) => box.node.type === 'button')!;
+    // The second frame starts at the top, not below the first frame's twelve rows.
+    expect(button.y).toBeLessThan(200);
+  });
+
+  it('numbers the components it is made of, one badge per instance', () => {
+    const withComponents = spec({
+      type: 'screen',
+      children: [
+        { type: 'card', component: 'PolicyCard', children: [{ type: 'text', text: '保单 A' }] },
+        { type: 'card', component: 'PolicyCard', children: [{ type: 'text', text: '保单 B' }] },
+        { type: 'button', text: '查看详情', component: 'PrimaryButton' },
+      ],
+    });
+    const sketch = renderUiSketch(withComponents);
+    expect(sketch.legend).toEqual([
+      { index: 1, name: 'PolicyCard', count: 2 },
+      { index: 2, name: 'PrimaryButton', count: 1 },
+    ]);
+    // The second card's string inherits the name without declaring it again.
+    const layout = layoutUiSpec(withComponents);
+    expect(layout.markers.map((marker) => marker.component)).toEqual(['PolicyCard', 'PolicyCard', 'PrimaryButton']);
+    expect(layout.boxes.filter((box) => box.componentRoot)).toHaveLength(3);
+    // The legend band is part of the picture, so it cannot cover anything.
+    expect(layout.height).toBeGreaterThan(sketch.height - 60);
+    expect(sketch.svg).toContain('PolicyCard');
+  });
+
+  it('draws a tab bar against its own frame’s bottom, not the canvas’s', () => {
+    const layout = layoutUiSpec(
+      spec({
+        type: 'canvas',
+        children: [
+          { type: 'screen', text: '默认', children: [{ type: 'text', text: '内容' }, { type: 'tabbar', children: [{ type: 'text', text: '首页' }] }] },
+          { type: 'screen', text: '空', children: [{ type: 'text', text: '空' }] },
+        ],
+      }),
+    );
+    const bar = layout.boxes.find((box) => box.node.type === 'tabbar')!;
+    // The frame is the tallest thing on the board, so its bottom is the canvas bottom — and the bar
+    // sits against *that*, twelve hundred pixels to the right of the other frame's.
+    expect(bar.y + bar.height).toBeCloseTo(layout.height, 0);
+    expect(bar.y).toBeGreaterThan(700);
+  });
+});

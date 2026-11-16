@@ -82,7 +82,13 @@ interface UploadResult {
   name: string;
   replaced: boolean;
   image: { mimeType: string; byteSize: number; width: number | null; height: number | null; checksum: string };
-  markers: { total: number; matchedKeys: number; unmatched: { key: string; namespace: string; reason: string }[] };
+  markers: {
+    total: number;
+    matchedKeys: number;
+    unmatched: { key: string; namespace: string; reason: string }[];
+    frames: { title: string; markers: number }[];
+  };
+  components: { index: number; name: string; count: number }[];
   imagePath: string;
 }
 
@@ -446,6 +452,68 @@ describe('screen mockups', () => {
     expect(svg).toContain('#2563eb'); // the button's colour, from the page's own class
     expect(svg).not.toContain('window.tracked');
     expect(svg).not.toContain('<script');
+  }, 60_000);
+
+  it('draws a screen’s states as frames on one canvas, and keeps the components it is made of', async () => {
+    // The whole point of a board: a translator sees that the same key reads differently — or is not
+    // there at all — in the empty state, and which component each string sits in.
+    const frame = (title: string, body: string): { title: string; html: string } => ({
+      title,
+      html: `<nav class="navbar"><h1>Checkout</h1></nav><div class="policy-card">${body}</div>`,
+    });
+    const response = await call<UploadResult>(`/projects/${projectId}/mockups`, {
+      method: 'POST',
+      token: session.token,
+      body: {
+        name: 'checkout-states',
+        platform: 'web',
+        locale: 'en-US',
+        frames: [
+          frame('默认', '<span>Your cart is empty</span><button class="primary-button">Pay now</button>'),
+          frame('加载中', '<span>Loading…</span>'),
+        ],
+        replace: true,
+      },
+    });
+    expect(response.status, JSON.stringify(response.body.error)).toBe(201);
+    // One frame per state, each reporting its own markers.
+    // Each frame carries its own nav title, so three strings in the first state (title, empty text,
+    // button) and two in the second (title, loading text).
+    expect(response.body.data!.markers.frames).toEqual([
+      { title: '默认', markers: 3 },
+      { title: '加载中', markers: 2 },
+    ]);
+    // The components are numbered for the legend, in the order the picture first draws them.
+    expect(response.body.data!.components.map((item) => item.name)).toEqual(['navbar', 'policy-card', 'primary-button']);
+    // The canvas is two frames wide, not one viewport.
+    expect(response.body.data!.image.width).toBeGreaterThan(1400);
+
+    const detail = await call<{ mockup: { components: { name: string }[] }; markers: { key: string; frame: string | null; component: string | null }[] }>(
+      `/projects/${projectId}/mockups/${response.body.data!.mockupId}`,
+      { token: session.token },
+    );
+    const states = [...new Set(detail.body.data!.markers.map((marker) => marker.frame))];
+    expect(states).toEqual(['默认', '加载中']);
+    // A string inside the card belongs to the card, which is what the editor highlights by.
+    expect(detail.body.data!.markers.filter((marker) => marker.component === 'policy-card').length).toBeGreaterThan(0);
+    expect(detail.body.data!.mockup.components.map((item) => item.name)).toEqual(['navbar', 'policy-card', 'primary-button']);
+  }, 60_000);
+
+  it('refuses frames together with a single-screen input, so the board is unambiguous', async () => {
+    const response = await call<unknown>(`/projects/${projectId}/mockups`, {
+      method: 'POST',
+      token: session.token,
+      body: {
+        name: 'both-shapes',
+        platform: 'web',
+        locale: 'en-US',
+        html: '<div><p>Checkout</p></div>',
+        frames: [{ title: '默认', html: '<div><p>Checkout</p></div>' }],
+        replace: true,
+      },
+    });
+    expect(response.status).toBe(422);
+    expect(JSON.stringify(response.body.error)).toContain('frames');
   }, 60_000);
 
   it('refuses two input shapes at once, naming all three', async () => {

@@ -84,6 +84,8 @@ export class MockupsService {
           mimeType: true,
           byteSize: true,
           contentHash: true,
+          // The component numbering the picture carries, so the editor lists the same numbers.
+          legend: true,
           createdAt: true,
           updatedAt: true,
           markers: {
@@ -96,6 +98,8 @@ export class MockupsService {
               width: true,
               height: true,
               text: true,
+              frame: true,
+              component: true,
               note: true,
             },
           },
@@ -125,6 +129,8 @@ export class MockupsService {
           createdAt: mockup.createdAt,
           updatedAt: mockup.updatedAt,
           markerCount: markers.length,
+          // The component numbering, exactly as the picture's badges show it.
+          components: mockup.legend,
           imagePath: `/projects/${projectId}/mockups/${mockup.id}/image`,
         },
         locale,
@@ -176,7 +182,7 @@ export class MockupsService {
     assertRole(actor, projectId, Role.DEVELOPER);
     // Either a picture the caller drew, or a description the platform draws. Same resolver as the MCP
     // tool, so "you sent neither / both" reads identically on both surfaces.
-    const { image, markers } = resolveMockupInput({
+    const { image, markers, legend } = resolveMockupInput({
       imageBase64: body.imageBase64 ?? null,
       mimeType: body.mimeType ?? null,
       width: body.width ?? null,
@@ -184,6 +190,7 @@ export class MockupsService {
       markers: body.markers,
       ui: body.ui ?? null,
       html: body.html ?? null,
+      frames: body.frames ?? null,
       namespace: body.namespace ?? null,
       css: body.css ?? null,
       theme: body.theme ?? null,
@@ -201,6 +208,7 @@ export class MockupsService {
         locale: body.locale,
         image,
         markers,
+        legend,
         replace: body.replace ?? true,
       }),
     );

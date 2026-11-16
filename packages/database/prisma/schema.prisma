@@ -1080,6 +1080,13 @@ model ScreenMockup {
   byteSize       Int          @map("byte_size")
   contentHash    String       @map("content_hash")
   image          Bytes
+  /**
+   * The component numbering drawn on the picture.
+   *
+   * Stored rather than recomputed: the badges in the sketch and the list beside it have to agree, and
+   * only the render that drew the numbers knows their order.
+   */
+  legend         Json         @default("[]")
   createdById    String?      @map("created_by_id") @db.Uuid
   createdAt      DateTime     @default(now()) @map("created_at")
   updatedAt      DateTime     @updatedAt @map("updated_at")
@@ -1105,6 +1112,7 @@ model ScreenMockup {
  * points at a key the platform has not imported yet is a fact about the UI, not corruption — the
  * editor reports it as "平台没有这个 Key" instead of hiding the marker.
  */
+/// One screen, its sketch, and the components the board was drawn with.
 model ScreenMockupMarker {
   id             String   @id @default(uuid()) @db.Uuid
   organizationId String   @map("organization_id") @db.Uuid
@@ -1117,6 +1125,16 @@ model ScreenMockupMarker {
   height         Float?
   /** The text visible in the sketch at this position — what the caller saw, even if the platform's source text differs. */
   text           String?
+  /**
+   * The frame (state) this marker sits in, when the sketch is a board of them.
+   *
+   * A screen is rarely one picture: the empty list, the loading row, the validation error. The caller
+   * sends them as frames on one canvas and the translator gets to see that the same key reads
+   * differently — or does not appear at all — in each.
+   */
+  frame          String?
+  /** The component the element belongs to (`PrimaryButton`, `card`), shared with the canvas legend. */
+  component      String?
   note           String?
   createdAt      DateTime @default(now()) @map("created_at")
 

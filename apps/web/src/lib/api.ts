@@ -281,6 +281,13 @@ export interface MockupSummary {
   mimeType: string;
   byteSize: number;
   markerCount: number;
+  /**
+   * The components the picture is made of, numbered as the badges on it are.
+   *
+   * Drawn into the sketch by the platform, so the list beside it has to be the same list: only the
+   * render that drew the numbers knows their order.
+   */
+  components?: { index: number; name: string; count: number }[];
   updatedAt: string;
   imagePath: string;
   /** Present when the list was asked about a specific key. */
@@ -296,6 +303,13 @@ export interface MockupMarker {
   width: number | null;
   height: number | null;
   text: string | null;
+  /**
+   * The frame (state) the marker sits in, when the sketch shows the screen in several of them: the
+   * empty list, the loading row, the validation error. Null for a single-screen sketch.
+   */
+  frame: string | null;
+  /** The component the element belongs to, matching a number in the sketch's legend. */
+  component: string | null;
   note: string | null;
   /** The platform the key was found on; null when the project has no such key. */
   platform: string | null;

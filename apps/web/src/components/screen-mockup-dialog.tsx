@@ -17,6 +17,8 @@ import { fetchObjectUrl, get, type MockupDetail, type MockupMarker, type MockupS
 import { localeDisplayName } from '@localehub/contracts/locale';
 import { cn } from '@/lib/utils';
 
+import { SketchCanvas } from './sketch-canvas';
+
 /**
  * The 90% detail view: the screen on the left, the translations on the right.
  *
@@ -183,34 +185,42 @@ export function ScreenMockupDialog({
   const markers = useMemo(() => detail?.markers ?? [], [detail]);
 
   /**
-   * The sketch's box, sized so it *is* the painted image — which is what makes percentage-positioned
-   * markers land on the right pixels.
+   * The picture's own pixel size, which is what the canvas scales.
    *
-   * Two earlier attempts failed in opposite directions, both measured in a real browser:
-   *
-   *   - an `inline-block` wrapper with `max-w-full` on the image inside it collapses to nothing: a
-   *     percentage max-width resolves against a shrink-to-fit parent whose width is decided by the
-   *     image, and browsers settle that circularity at zero. A 375×812 sketch painted 2×2 px with all
-   *     seven markers piled into it.
-   *   - `height: 100%` + `aspect-ratio` + `max-w-full` fits a portrait sketch exactly but stretches a
-   *     landscape one: the height stays definite when `max-width` clamps the width, so a 1440×900
-   *     sketch painted 655×778 — ratio 0.84 instead of 1.60, every web screenshot squashed.
-   *
-   * What works is choosing the width from the pane's own box, in both directions at once: the pane is
-   * a size container, so `100cqh` and `100%` are its height and width, and `min()` picks whichever
-   * side runs out first. The height then follows from `aspect-ratio`, so the ratio is never broken.
+   * The sketch is drawn at this size and transformed, never re-laid-out: every marker is a percentage
+   * of it, so a re-layout would move the text out from under its boxes.
    */
-  const sketch = useMemo(() => {
+  const natural = useMemo(() => {
     const width = detail?.mockup.width;
     const height = detail?.mockup.height;
-    if (!width || !height) return null;
-    const ratio = width / height;
-    return {
-      aspectRatio: `${width} / ${height}`,
-      // `100%` is the pane's content width, `100cqh` its content height.
-      width: `min(100%, calc(100cqh * ${ratio}))`,
-    };
+    return width && height ? { width, height } : null;
   }, [detail?.mockup.width, detail?.mockup.height]);
+
+  /**
+   * The state (frame) or component the reader has picked out.
+   *
+   * A board of four states and a legend of six components is a lot of picture: picking one dims
+   * everything that is not it, which is how "where does this button appear?" gets answered.
+   */
+  const [highlight, setHighlight] = useState<{ kind: 'frame' | 'component'; value: string } | null>(null);
+
+  useEffect(() => {
+    setHighlight(null);
+  }, [detail?.mockup.id]);
+
+  /** The states this board shows, in the order the picture draws them (markers are in reading order). */
+  const frames = useMemo(() => {
+    const seen: string[] = [];
+    for (const marker of markers) if (marker.frame && !seen.includes(marker.frame)) seen.push(marker.frame);
+    return seen;
+  }, [markers]);
+
+  const components = detail?.mockup.components ?? [];
+
+  const isDimmed = (marker: MockupMarker): boolean => {
+    if (!highlight) return false;
+    return highlight.kind === 'frame' ? marker.frame !== highlight.value : marker.component !== highlight.value;
+  };
 
   /** Which key the panes agree is current: the marker list, or the entry the editor had selected. */
   const activeKey = useMemo(() => {
@@ -318,84 +328,124 @@ export function ScreenMockupDialog({
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-            {/* Left: the sketch. Scrolls on its own, because a phone-shaped screen is taller than the
-                dialog and the reader still needs to reach its bottom half. */}
-            <div className="bg-muted/30 flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-auto p-4 [container-type:size]">
-              {detailLoading || !detail ? (
+            {/* Left: the sketch, on a canvas that pans and zooms. A board of states is wider than the
+                dialog and a phone screen is taller, so "fit" shows the shape and 1:1 shows the print. */}
+            {detailLoading || !detail || !natural ? (
+              <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-4">
                 <Skeleton className="h-64 w-full max-w-xl" />
-              ) : (
-                // Sized from the pane (`sketch`), so the box is exactly the painted image at any
-                // orientation; `max-h-full` is the belt to that braces.
-                <div
-                  // The checkerboard is the pane's ground, not decoration: most sketches are light
-                  // wireframes, and on a dark surface their edges and thin outlines simply vanish —
-                  // a white sheet on a neutral ground reads as a sheet at any theme.
-                  className="relative max-h-full max-w-full rounded-md bg-white bg-[repeating-conic-gradient(#e4e4e7_0_25%,#ffffff_0_50%)] bg-[length:16px_16px]"
-                  style={sketch ? { aspectRatio: sketch.aspectRatio, width: sketch.width } : undefined}
-                >
-                  {imageUrl ? (
-                    <img
-                      src={imageUrl}
-                      alt={`${detail.mockup.name} 界面草图`}
-                      className={
-                        sketch
-                          ? 'absolute inset-0 h-full w-full rounded-md border shadow-sm'
-                          : 'block h-auto max-h-[76svh] w-auto rounded-md border shadow-sm'
-                      }
-                    />
-                  ) : (
-                    <Skeleton className="h-64 w-96" />
-                  )}
-                  <div className="absolute inset-0">
-                    {markers.map((marker, index) => {
-                      const identity = markerKey(marker);
-                      const isActive = identity === activeKey;
-                      const untranslated = marker.source !== null && (!marker.entry || !marker.entry.value);
-                      // A caller may send `width` without `height` (or the reverse). The box is then
-                      // anchored by its top-left corner, which is what the percentages mean; only a
-                      // marker with neither dimension is a point, and only a point is centred.
-                      const anchored = Boolean(marker.width || marker.height);
-                      return (
-                        <button
-                          key={marker.id}
-                          type="button"
-                          data-marker={identity}
-                          onClick={() => select(identity)}
-                          title={`${marker.key}${marker.text ? `\n草图：${marker.text}` : ''}`}
-                          style={{
-                            left: `${marker.x * 100}%`,
-                            top: `${marker.y * 100}%`,
-                            width: marker.width ? `${marker.width * 100}%` : undefined,
-                            height: marker.height ? `${marker.height * 100}%` : undefined,
-                          }}
-                          className={cn(
-                            'absolute rounded-[3px] border text-left transition',
-                            anchored ? 'flex items-start' : 'size-4 -translate-x-1/2 -translate-y-1/2 rounded-full',
-                            // Every marker keeps a translucent fill: the point of the overlay is to show
-                            // where the text sits, and an outline-only box disappears over a wireframe
-                            // whose own borders are the same colour.
-                            isActive
-                              ? 'border-primary bg-primary/30 ring-primary ring-2'
-                              : untranslated
-                                ? 'border-amber-500 bg-amber-400/30 hover:bg-amber-400/45'
-                                : 'border-primary/70 bg-primary/20 hover:bg-primary/35',
-                          )}
-                        >
-                          <span
+              </div>
+            ) : (
+              <SketchCanvas
+                width={natural.width}
+                height={natural.height}
+                label={`${detail.mockup.name} ${mockupId ?? ''}`}
+                controls={
+                  <>
+                    {frames.length > 1 ? (
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-muted-foreground text-xs">状态</span>
+                        {frames.map((frame) => (
+                          <button
+                            key={frame}
+                            type="button"
+                            onClick={() => setHighlight(highlight?.kind === 'frame' && highlight.value === frame ? null : { kind: 'frame', value: frame })}
                             className={cn(
-                              'rounded-[3px] px-1 text-[10px] font-medium leading-4 tabular-nums',
-                              isActive ? 'bg-primary text-primary-foreground' : 'bg-primary/80 text-primary-foreground',
+                              'rounded-full border px-2 py-0.5 text-xs transition-colors',
+                              highlight?.kind === 'frame' && highlight.value === frame ? 'border-primary bg-primary text-primary-foreground' : 'hover:bg-muted',
                             )}
                           >
-                            {index + 1}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                            {frame}
+                          </button>
+                        ))}
+                      </span>
+                    ) : null}
+                    {components.length ? (
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-muted-foreground text-xs">组件</span>
+                        {components.map((item) => (
+                          <button
+                            key={item.name}
+                            type="button"
+                            data-component={item.name}
+                            onClick={() =>
+                              setHighlight(highlight?.kind === 'component' && highlight.value === item.name ? null : { kind: 'component', value: item.name })
+                            }
+                            className={cn(
+                              'flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors',
+                              highlight?.kind === 'component' && highlight.value === item.name ? 'border-primary bg-primary text-primary-foreground' : 'hover:bg-muted',
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                'flex size-4 items-center justify-center rounded-full text-[10px] font-medium tabular-nums',
+                                highlight?.kind === 'component' && highlight.value === item.name ? 'bg-primary-foreground text-primary' : 'bg-muted text-muted-foreground',
+                              )}
+                            >
+                              {item.index}
+                            </span>
+                            {item.name}
+                            {item.count > 1 ? <span className="text-muted-foreground">×{item.count}</span> : null}
+                          </button>
+                        ))}
+                      </span>
+                    ) : null}
+                    {!frames.length && !components.length ? (
+                      <span className="text-muted-foreground text-xs">拖动平移，滚轮缩放</span>
+                    ) : null}
+                  </>
+                }
+              >
+                {imageUrl ? (
+                  <img src={imageUrl} alt={`${detail.mockup.name} 界面草图`} className="absolute inset-0 h-full w-full rounded-md" />
+                ) : (
+                  <Skeleton className="absolute inset-0" />
+                )}
+                <div className="absolute inset-0">
+                  {markers.map((marker, index) => {
+                    const identity = markerKey(marker);
+                    const isActive = identity === activeKey;
+                    const untranslated = marker.source !== null && (!marker.entry || !marker.entry.value);
+                    const anchored = Boolean(marker.width || marker.height);
+                    return (
+                      <button
+                        key={marker.id}
+                        type="button"
+                        data-marker={identity}
+                        onClick={() => select(identity)}
+                        title={`${marker.key}${marker.frame ? `
+状态：${marker.frame}` : ''}${marker.text ? `
+草图：${marker.text}` : ''}`}
+                        style={{
+                          left: `${marker.x * 100}%`,
+                          top: `${marker.y * 100}%`,
+                          width: marker.width ? `${marker.width * 100}%` : undefined,
+                          height: marker.height ? `${marker.height * 100}%` : undefined,
+                        }}
+                        className={cn(
+                          'absolute rounded-[3px] border text-left transition',
+                          anchored ? 'flex items-start' : 'size-4 -translate-x-1/2 -translate-y-1/2 rounded-full',
+                          isDimmed(marker) ? 'opacity-20' : '',
+                          isActive
+                            ? 'border-primary bg-primary/30 ring-primary ring-2'
+                            : untranslated
+                              ? 'border-amber-500 bg-amber-400/30 hover:bg-amber-400/45'
+                              : 'border-primary/70 bg-primary/20 hover:bg-primary/35',
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            'rounded-[3px] px-1 text-[10px] font-medium leading-4 tabular-nums',
+                            isActive ? 'bg-primary text-primary-foreground' : 'bg-primary/80 text-primary-foreground',
+                          )}
+                        >
+                          {index + 1}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
-              )}
-            </div>
+              </SketchCanvas>
+            )}
 
             {/* Right: the same keys, with the translation for the locale under review. */}
             <div className="flex min-h-0 flex-1 flex-col border-t lg:max-w-[38rem] lg:border-l lg:border-t-0">
@@ -424,6 +474,8 @@ export function ScreenMockupDialog({
                         sketchLocale={detail.mockup.locale}
                         sourceLocale={sourceLocale}
                         active={markerKey(marker) === activeKey}
+                        dimmed={isDimmed(marker)}
+                        onHighlight={setHighlight}
                         onSelect={() => select(markerKey(marker))}
                         onOpenInEditor={onOpenInEditor}
                         register={(node) => {
@@ -450,6 +502,8 @@ function MarkerRow({
   sketchLocale,
   sourceLocale,
   active,
+  dimmed,
+  onHighlight,
   onSelect,
   onOpenInEditor,
   register,
@@ -462,6 +516,9 @@ function MarkerRow({
   /** The project's source locale; drift is only meaningful when the two agree. */
   sourceLocale: string | undefined;
   active: boolean;
+  /** Dimmed when the reader has picked out another state or component. */
+  dimmed?: boolean;
+  onHighlight: (highlight: { kind: 'frame' | 'component'; value: string }) => void;
   onSelect: () => void;
   onOpenInEditor: (entry: { entryId: string; value: string }) => void;
   register: (node: HTMLElement | null) => void;
@@ -486,7 +543,11 @@ function MarkerRow({
       // clicking them, and "the third <li>" is not a stable way to find a row.
       data-marker-row={markerKey(marker)}
       onClick={onSelect}
-      className={cn('cursor-pointer px-4 py-3 transition-colors', active ? 'bg-accent/70' : 'hover:bg-muted/50')}
+      className={cn(
+        'cursor-pointer px-4 py-3 transition-colors',
+        active ? 'bg-accent/70' : 'hover:bg-muted/50',
+        dimmed ? 'opacity-40' : '',
+      )}
     >
       <div className="flex items-start gap-3">
         <span
@@ -500,6 +561,33 @@ function MarkerRow({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="truncate font-mono text-xs">{marker.key}</span>
+            {/* Which state this string appears in, and which component it belongs to: on a board of
+                frames the same key shows up several times, and the two chips are what tell them apart. */}
+            {marker.frame ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onHighlight({ kind: 'frame', value: marker.frame! });
+                }}
+                className="bg-muted text-muted-foreground hover:bg-accent rounded-full px-2 py-0.5 text-[10px]"
+              >
+                {marker.frame}
+              </button>
+            ) : null}
+            {marker.component ? (
+              <button
+                type="button"
+                data-row-component={marker.component}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onHighlight({ kind: 'component', value: marker.component! });
+                }}
+                className="bg-muted text-muted-foreground hover:bg-accent rounded-full px-2 py-0.5 text-[10px]"
+              >
+                {marker.component}
+              </button>
+            ) : null}
             {marker.namespace ? <Badge variant="muted" className="text-[10px]">{marker.namespace}</Badge> : null}
             {missingKey ? (
               <Badge variant="outline" className="text-[10px]">平台没有这个 Key</Badge>

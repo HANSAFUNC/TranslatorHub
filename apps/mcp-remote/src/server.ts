@@ -895,6 +895,8 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       html?: string;
       /** Default namespace for an `html` upload. */
       namespace?: string;
+      /** A screen's states, each its own frame on one canvas. */
+      frames?: { title: string; html?: string; ui?: UiSpec }[];
       /** The page's stylesheet, when its colours live in another file. */
       css?: string;
       /** Brand colours, for a screen whose own source carries none. */
@@ -922,7 +924,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       // should be refused without holding a database connection, and both error messages already say
       // what to change. `ui` is rendered here, so the stored picture and the stored markers come from
       // one pass over one description.
-      const { image, markers: resolvedMarkers } = resolveMockupInput({
+      const { image, markers: resolvedMarkers, legend } = resolveMockupInput({
         imageBase64: input.image_base64 ?? null,
         mimeType: input.mime_type ?? null,
         width: input.width ?? null,
@@ -930,6 +932,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
         markers: input.markers,
         ui: input.ui ?? null,
         html: input.html ?? null,
+        frames: input.frames ?? null,
         namespace: input.namespace ?? null,
         css: input.css ?? null,
         theme: input.theme ?? null,
@@ -949,6 +952,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
           // `namespace` carries a schema default, and a client is free to omit it; filling it here
           // means the domain function always receives the shape its type declares.
           markers: resolvedMarkers,
+          legend,
           replace: input.replace,
         }),
       );

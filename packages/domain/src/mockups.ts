@@ -6,6 +6,7 @@ import {
   MAX_MOCKUP_BYTES,
   MAX_MOCKUP_DIMENSION,
   canonicalizeLocaleTag,
+  defaultViewport,
   detectImageType,
   extractUiSpec,
   imageDimensions,
@@ -16,6 +17,7 @@ import {
   type MockupMarkerInput,
   type PlatformName,
   type ReviewStatus,
+  type UiLegendItem,
   type UiSpec,
   type UiTheme,
   uiSpecIssues,
@@ -162,7 +164,7 @@ export function assertMockupDimensions(image: DecodedMockupImage): void {
  * A spec is validated like an image is: the renderer's work is proportional to what the caller sent,
  * and the result has to satisfy the same size and marker limits an upload does.
  */
-export function renderMockupSpec(spec: UiSpec): { image: DecodedMockupImage; markers: MockupMarkerInput[] } {
+export function renderMockupSpec(spec: UiSpec): { image: DecodedMockupImage; markers: MockupMarkerInput[]; legend: UiLegendItem[] } {
   const issues = uiSpecIssues(spec);
   if (issues.length) {
     throw new LocaleHubError(ErrorCode.VALIDATION_ERROR, `ui 描述有问题：${issues.join('；')}`, 422, { issues });
@@ -220,7 +222,12 @@ export function renderMockupSpec(spec: UiSpec): { image: DecodedMockupImage; mar
       width: marker.width,
       height: marker.height,
       text: marker.text,
+      // Which state the marker is in, and which component its element is: the editor groups by the
+      // first, and lists and highlights by the second.
+      ...(marker.frame ? { frame: marker.frame } : {}),
+      ...(marker.component ? { component: marker.component } : {}),
     })),
+    legend: rendered.legend,
   };
 }
 
@@ -265,6 +272,14 @@ export function resolveMockupInput(input: {
   /** Brand colours, for a screen whose source says nothing about them. */
   theme?: UiTheme | null;
   /**
+   * The screen's states, each its own frame on one canvas.
+   *
+   * A screen is rarely one picture: the empty list, the loading row, the validation error. Sending
+   * them together is what lets a translator see that the same key reads differently — or does not
+   * appear at all — in each state, instead of trusting one picture to stand for all of them.
+   */
+  frames?: readonly { title: string; html?: string | null; ui?: UiSpec | null }[] | null;
+  /**
    * The screen's platform, used only to pick the canvas size when the `ui` description does not
    * carry one of its own.
    *
@@ -273,7 +288,7 @@ export function resolveMockupInput(input: {
    * what the sketch guide tells a caller to do, because the screen's identity comes from the call.
    */
   platform?: string | null;
-}): { image: DecodedMockupImage; markers: MockupMarkerInput[] } {
+}): { image: DecodedMockupImage; markers: MockupMarkerInput[]; legend: UiLegendItem[] } {
   const hasImage = Boolean(input.imageBase64);
   const hasUi = Boolean(input.ui);
   const hasHtml = Boolean(input.html);
@@ -284,6 +299,39 @@ export function resolveMockupInput(input: {
       '三种输入选一种：ui（界面描述）、html（页面源码）、image_base64（自己画的图，配 markers）。不要同时传。',
       422,
     );
+  }
+
+  if (input.frames?.length) {
+    if (hasUi || hasHtml || hasImage) {
+      throw new LocaleHubError(
+        ErrorCode.VALIDATION_ERROR,
+        '传了 frames 就不要再传 ui / html / image_base64：每个状态在自己的 frame 里给。',
+        422,
+      );
+    }
+    const viewport = defaultViewport(input.platform ?? undefined);
+    const frames = input.frames.map((frame) => {
+      const root = frame.ui
+        ? frame.ui.root
+        : frame.html
+          ? extractUiSpec(frame.html, sourceNameFor(frame.html), {
+              ...(input.namespace ? { namespace: input.namespace } : {}),
+              ...(input.css ? { css: input.css } : {}),
+            }).root
+          : null;
+      if (!root) {
+        throw new LocaleHubError(ErrorCode.VALIDATION_ERROR, `frame「${frame.title}」既没有 ui 也没有 html。`, 422);
+      }
+      // Each frame is a screen at the platform's own size, titled with the state it shows.
+      return { ...root, type: 'screen' as const, text: frame.title, width: viewport.width, height: viewport.height };
+    });
+    const spec: UiSpec = {
+      ...(input.platform ? { platform: input.platform } : {}),
+      ...(input.theme ? { theme: input.theme } : {}),
+      root: { type: 'canvas', children: frames },
+    };
+    const rendered = renderMockupSpec(spec);
+    return { image: rendered.image, markers: rendered.markers, legend: rendered.legend };
   }
 
   if (hasHtml) {
@@ -300,7 +348,7 @@ export function resolveMockupInput(input: {
       root,
     };
     const rendered = renderMockupSpec(spec);
-    return { image: rendered.image, markers: rendered.markers };
+    return { image: rendered.image, markers: rendered.markers, legend: rendered.legend };
   }
 
   if (hasUi) {
@@ -312,7 +360,7 @@ export function resolveMockupInput(input: {
       ...(input.theme && !input.ui!.theme ? { theme: input.theme } : {}),
     };
     const rendered = renderMockupSpec(spec);
-    return { image: rendered.image, markers: rendered.markers };
+    return { image: rendered.image, markers: rendered.markers, legend: rendered.legend };
   }
 
   if (!hasImage) {
@@ -345,6 +393,8 @@ export function resolveMockupInput(input: {
       height: input.height ?? null,
     }),
     markers,
+    // A hand-drawn picture has no components to number; the legend is what a description produces.
+    legend: [],
   };
 }
 
@@ -357,6 +407,8 @@ export interface UpsertScreenMockupInput {
   locale: string;
   image: DecodedMockupImage;
   markers: MockupMarkerInput[];
+  /** The component numbering drawn on the picture, stored so the editor lists the same numbers. */
+  legend?: UiLegendItem[];
   /** Superseded by `replace` on the tool: the caller has already regenerated the screen. */
   replace: boolean;
 }
@@ -375,7 +427,15 @@ export interface UpsertScreenMockupResult {
   locale: string;
   replaced: boolean;
   image: { mimeType: string; byteSize: number; width: number | null; height: number | null; checksum: string };
-  markers: { total: number; matchedKeys: number; unmatched: UnmatchedMarker[] };
+  markers: {
+    total: number;
+    matchedKeys: number;
+    unmatched: UnmatchedMarker[];
+    /** One entry per frame the upload drew, in the order it drew them. */
+    frames: { title: string; markers: number }[];
+  };
+  /** The component numbering the picture carries, for the list the editor shows beside it. */
+  components: UiLegendItem[];
   /** What the editor adds to a relative path to fetch the image. */
   imagePath: string;
 }
@@ -439,6 +499,7 @@ export async function upsertScreenMockup(
   }
 
   const data = {
+    legend: (input.legend ?? []) as unknown as Prisma.InputJsonValue,
     organizationId: input.organizationId,
     projectId: input.projectId,
     name: input.name,
@@ -475,14 +536,14 @@ export async function upsertScreenMockup(
         await tx.$queryRaw<{ id: string }[]>`
           INSERT INTO screen_mockups (
             id, organization_id, project_id, name, platform, locale,
-            width, height, mime_type, byte_size, content_hash, image, created_by_id,
+            width, height, mime_type, byte_size, content_hash, image, legend, created_by_id,
             created_at, updated_at
           )
           VALUES (
             gen_random_uuid(), ${data.organizationId}::uuid, ${data.projectId}::uuid, ${data.name},
             ${data.platform}::text::"PlatformKind", ${data.locale},
             ${data.width}, ${data.height}, ${data.mimeType}, ${data.byteSize},
-            ${data.contentHash}, ${data.image}, ${data.createdById}::uuid,
+            ${data.contentHash}, ${data.image}, ${JSON.stringify(data.legend)}::jsonb, ${data.createdById}::uuid,
             now(), now()
           )
           ON CONFLICT (project_id, platform, name) DO UPDATE SET
@@ -494,6 +555,7 @@ export async function upsertScreenMockup(
             byte_size = EXCLUDED.byte_size,
             content_hash = EXCLUDED.content_hash,
             image = EXCLUDED.image,
+            legend = EXCLUDED.legend,
             created_by_id = EXCLUDED.created_by_id,
             updated_at = now()
           RETURNING id
@@ -550,6 +612,10 @@ export async function upsertScreenMockup(
       width: marker.width,
       height: marker.height,
       text: marker.text ?? null,
+      // The frame (state) and the component are part of what a marker says: neither can be recovered
+      // from the picture afterwards, and the editor groups and highlights by exactly these.
+      frame: marker.frame ?? null,
+      component: marker.component ?? null,
       note: marker.note ?? null,
     })),
   });
@@ -571,12 +637,31 @@ export async function upsertScreenMockup(
       height: input.image.height,
       checksum,
     },
-    markers: { total: markers.length, matchedKeys, unmatched },
+    markers: {
+      total: markers.length,
+      matchedKeys,
+      unmatched,
+      // Grouped the way the picture is drawn: one entry per state, in the order the frames appear.
+      frames: summarizeFrames(markers),
+    },
+    components: input.legend ?? [],
     // Relative to the API base, not absolute: the browser client is handed `/api/v1/...` and adds its
     // own base, so an absolute path here produced `/api/v1/api/v1/...` and a 404 the dialog could
     // only report as a broken sketch.
     imagePath: `/projects/${input.projectId}/mockups/${mockupId}/image`,
   };
+}
+
+/** How many markers each frame holds, in the order the frames were drawn. */
+function summarizeFrames(markers: readonly { frame?: string | null }[]): { title: string; markers: number }[] {
+  const frames: { title: string; markers: number }[] = [];
+  for (const marker of markers) {
+    if (!marker.frame) continue;
+    const existing = frames.find((frame) => frame.title === marker.frame);
+    if (existing) existing.markers += 1;
+    else frames.push({ title: marker.frame, markers: 1 });
+  }
+  return frames;
 }
 
 export interface ScreenMockupSummary {
@@ -676,6 +761,8 @@ export async function resolveScreenMarkers(
     width: number | null;
     height: number | null;
     text: string | null;
+    frame: string | null;
+    component: string | null;
     note: string | null;
   }[]; locale: string | null },
 ): Promise<ResolvedMarker[]> {
@@ -744,6 +831,10 @@ export async function resolveScreenMarkers(
       width: marker.width,
       height: marker.height,
       text: marker.text,
+      // The editor groups markers by frame (the state they belong to) and lists and highlights them by
+      // component, so both travel with the marker rather than being re-derived from the picture.
+      frame: marker.frame,
+      component: marker.component,
       note: marker.note,
       platform: (row?.platform as string | undefined) ?? null,
       source: row?.sourceVersions[0]?.value ?? null,

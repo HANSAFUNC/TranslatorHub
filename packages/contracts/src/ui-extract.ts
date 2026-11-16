@@ -7,7 +7,7 @@ import {
   type UiSpec,
   type UiTheme,
 } from './ui-spec';
-import { mergeStyles, parseStyleSheet, styleForElement, type StyleSheet } from './ui-style';
+import { isUtilityClass, mergeStyles, parseStyleSheet, styleForElement, type StyleSheet } from './ui-style';
 
 /**
  * Turn a page's source into a screen description.
@@ -355,6 +355,38 @@ const TEXT_ATTRIBUTES = ['placeholder', 'title', 'alt', 'aria-label', 'label', '
  */
 const KEY_ATTRIBUTES = ['data-i18n-key', 'data-key', 'i18n-key'];
 
+/**
+ * The tags that are markup rather than somebody's component.
+ *
+ * `PrimaryButton` and `ProductCard` are names a person chose, and they are exactly what a reader of
+ * the sketch wants to see listed beside it; `div` and `span` are not.
+ */
+const PLAIN_TAGS = new Set([
+  'a', 'article', 'aside', 'body', 'button', 'caption', 'dd', 'div', 'dl', 'dt', 'em', 'fieldset', 'figcaption', 'figure',
+  'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hr', 'html', 'img', 'input', 'label', 'legend', 'li',
+  'main', 'nav', 'ol', 'option', 'p', 'picture', 'section', 'select', 'small', 'span', 'strong', 'table', 'tbody', 'td',
+  'textarea', 'th', 'thead', 'tr', 'ul', 'video', 'canvas', 'svg',
+]);
+
+/**
+ * What to call the component this element is an instance of.
+ *
+ * A JSX component name is the page's own word for it, so it wins. In plain markup the name is a class
+ * (`class="policy-card"`), and everything that styles rather than names — `flex`, `mx-auto`, `text-sm`
+ * — is skipped. `data-component="…"` overrides both, for a caller that wants its own vocabulary.
+ */
+function componentNameOf(element: ParsedElement): string | undefined {
+  const explicit = element.attributes['data-component'];
+  if (explicit && explicit !== 'true' && !element.expressions?.includes('data-component')) return explicit.slice(0, 64);
+
+  const tag = element.tag;
+  if (!PLAIN_TAGS.has(tag.toLowerCase()) && /^[A-Za-z][\w.$]*$/.test(tag)) return tag.slice(0, 64);
+
+  const classes = (element.attributes.class ?? element.attributes.className ?? '').split(/\s+/).filter(Boolean);
+  const named = classes.find((token) => /^[a-z][a-z0-9-]*$/.test(token) && !token.includes(':') && !isUtilityClass(token));
+  return named?.slice(0, 64);
+}
+
 interface ParsedElement {
   tag: string;
   attributes: Record<string, string>;
@@ -665,7 +697,12 @@ function toNode(
   // Whatever the page says about how this element looks — its tag's rules, its classes, its inline
   // style, in that order. `undefined` means "draw it the way this kind of element is drawn".
   const style = styleForElement(element, options.styleSheet);
-  const styled = <T extends UiNode>(node: T): T => (style ? { ...node, style } : node);
+  const component = componentNameOf(element);
+  const styled = <T extends UiNode>(node: T): T => ({
+    ...node,
+    ...(style ? { style } : {}),
+    ...(component ? { component } : {}),
+  });
 
   // A container's text becomes a label when it has none of its own — a `<button>Save</button>` inside a
   // `<div>` should read as a button, not as an empty box with a floating caption.
@@ -755,6 +792,10 @@ function toNode(
       text: title.text,
       // The bar's own styling first, so the title's typography wins where they disagree.
       ...(Object.keys(merged).length ? { style: merged } : {}),
+      // The bar's own name goes with it: dropping it here made a `<nav class="navbar">` invisible to
+      // the component legend, which is exactly the element a reader wants listed.
+      ...(component ? { component } : {}),
+      ...(explicitKey ? { key: explicitKey } : {}),
       ...(namespace ? { namespace } : {}),
     };
   }

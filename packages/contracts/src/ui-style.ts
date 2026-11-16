@@ -153,6 +153,21 @@ export function styleFromClassNames(classNames: string): UiStyle {
   return style;
 }
 
+/**
+ * Whether a class token is a styling utility rather than a name.
+ *
+ * Used to tell a component name (`card`, `policy-card`, `tabbar`) from the layout noise around it
+ * (`flex`, `items-center`, `mx-auto`). A token counts as a utility when the mapper above understands
+ * it, or when its first word is one of Tailwind's vocabulary words — the second test catches the
+ * utilities a sketch has no use for but a page is still full of.
+ */
+const UTILITY_WORDS =
+  /^(?:flex|grid|inline|block|hidden|contents|relative|absolute|fixed|sticky|static|flow|isolate|container|order|col|row|items|justify|content|self|place|gap|space|divide|p[trblxy]?|m[trblxy]?|w|h|min|max|size|text|font|leading|tracking|uppercase|lowercase|capitalize|normal|underline|line|decoration|antialiased|subpixel|italic|truncate|overflow|whitespace|break|list|align|appearance|outline|ring|shadow|opacity|mix|bg|from|via|to|border|rounded|fill|stroke|object|aspect|columns|z|table|transition|duration|ease|delay|animate|transform|scale|rotate|translate|skew|origin|cursor|select|resize|scroll|snap|touch|user|will|pointer|sr|group|peer|dark|hover|focus|active|visited|disabled|checked|first|last|odd|even|sm|md|lg|xl|2xl|print|motion|contrast)(?:-|$)/;
+
+export function isUtilityClass(token: string): boolean {
+  return Object.keys(styleFromClassNames(token)).length > 0 || UTILITY_WORDS.test(token);
+}
+
 /** `12px`, `0.875rem`, `50%` → a number the renderer can use. */
 function toPixels(value: string): number | undefined {
   const match = /^([\d.]+)(px|rem|em)?$/.exec(value.trim());

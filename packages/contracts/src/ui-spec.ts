@@ -22,6 +22,7 @@ import { z } from 'zod';
  * rows" — not to reproduce a design system. Every kind here has a distinct, recognizable drawing.
  */
 export const UI_NODE_TYPES = [
+  'canvas',
   'screen',
   'nav',
   'tabbar',
@@ -174,6 +175,14 @@ export interface UiNode {
   columns?: number;
   /** The picture itself, as a base64 data URL. `image` and `icon` nodes only. */
   src?: string;
+  /**
+   * The component this element is an instance of (`PrimaryButton`, `ProductCard`, `card`).
+   *
+   * A sketch answers "which screen is this?", and a big part of that answer is "made of these
+   * components". The platform numbers them and lists them beside the board; the caller only has to
+   * name them, or let the extractor name them from the source.
+   */
+  component?: string;
   /** How it looks. Omitted means "however this kind of element looks by default". */
   style?: UiStyle;
   children?: UiNode[];
@@ -190,6 +199,7 @@ export const uiNodeSchema: z.ZodType<UiNode> = z.lazy(() =>
     width: z.number().positive().max(8192).optional(),
     height: z.number().positive().max(8192).optional(),
     columns: z.number().int().min(1).max(6).optional(),
+    component: z.string().min(1).max(64).optional(),
     src: z
       .string()
       .max(MAX_INLINE_IMAGE_CHARS)
@@ -211,6 +221,14 @@ export const MAX_UI_DEPTH = 24;
 export const MAX_UI_NODES = 600;
 /** A page's source is smaller than a picture of it; this is the cap on the `html` input. */
 export const MAX_UI_HTML_CHARS = 1_000_000;
+
+/**
+ * How many states one board may hold.
+ *
+ * A board is read at a glance: past a handful of frames the shapes get small enough that a translator
+ * is scrolling rather than comparing, and the point of putting states together is lost.
+ */
+export const MAX_MOCKUP_FRAMES = 8;
 
 /**
  * The colours a sketch falls back to.
@@ -335,6 +353,17 @@ export interface UiBox {
   height: number;
   /** How deep the node sits, root = 1. Surfaces are painted in this order, parents first. */
   depth: number;
+  /** The frame this box was laid out inside, for a sketch that is a board of them. */
+  frame?: string;
+  /**
+   * The component this box belongs to — its own, or the nearest ancestor's.
+   *
+   * A card's *contents* are the card's: the strings inside it are what a reader means by "this
+   * component", and a marker that did not inherit the name could not be grouped with it.
+   */
+  component?: string;
+  /** True on the box that actually declares the component, which is where the badge is drawn. */
+  componentRoot?: boolean;
   /**
    * Where the node's own content sits, once its padding is taken off.
    *
@@ -360,6 +389,10 @@ export interface MarkerGeometry {
   key: string;
   namespace: string;
   text: string;
+  /** The frame (state) the marker sits in, when the sketch is a board of them. */
+  frame?: string;
+  /** The component the element belongs to, matching the canvas legend. */
+  component?: string;
   /** Fractions of the image, which is what an upload stores. */
   x: number;
   y: number;
@@ -375,6 +408,10 @@ const LINE_HEIGHT = 1.45;
 const NAV_HEIGHT = 52;
 const TABS_HEIGHT = 34;
 const TABBAR_HEIGHT = 56;
+const CANVAS_GAP = 32;
+/** Room for the component legend under a board that has one. */
+const LEGEND_HEIGHT = 46;
+const LEGEND_FONT = 13;
 const SWITCH_WIDTH = 46;
 const SWITCH_HEIGHT = 28;
 const SLIDER_HEIGHT = 28;
@@ -489,6 +526,17 @@ export function wrapText(text: string, fontSize: number, maxWidth: number): stri
   return lines.length ? lines : [''];
 }
 
+/**
+ * Boxes in the order a reader meets them: parents before children, layout order within that.
+ *
+ * The legend numbers components by first appearance, and "first" has to mean the same thing on every
+ * render — the layout's own order is post-order for containers, which would number a card's contents
+ * before the card.
+ */
+function boxesInPaintOrder(boxes: UiBox[]): UiBox[] {
+  return [...boxes].sort((a, b) => a.depth - b.depth);
+}
+
 /** Everything the first item of a bar drew is the selected one. */
 function markSelected(state: LayoutState, from: number): void {
   for (let index = from; index < state.boxes.length; index += 1) state.boxes[index]!.selected = true;
@@ -506,7 +554,15 @@ interface LayoutState {
    * most of them. They are placed once the canvas height is known, so the picture and their markers
    * still come from one pass.
    */
-  docked?: { node: UiNode; x: number; width: number; depth: number }[];
+  docked?: { node: UiNode; x: number; width: number; depth: number; bottom?: number; frame?: string }[];
+  /** The frame currently being laid out, stamped onto every box inside it. */
+  frame?: string;
+  /** The component currently being laid out, inherited by everything inside it. */
+  component?: string;
+  /** The bottom edge a docked bar belongs to: the screen's, or the frame that holds it. */
+  dockBottom?: number;
+  /** The viewport a frame is drawn at, so a `screen` inside a canvas knows its own size. */
+  viewport?: { width: number; height: number };
 }
 
 /**
@@ -524,6 +580,20 @@ function layoutNode(node: UiNode, x: number, y: number, width: number, state: La
   }
   state.nodes += 1;
 
+  // A component's name reaches everything inside it, and is taken back afterwards: `<div
+  // class="policy-card">` declares a card, and the strings inside it belong to that card.
+  const declared = node.component;
+  const previous = state.component;
+  if (declared) state.component = declared;
+  try {
+    return placeNode(node, x, y, width, state, depth, declared);
+  } finally {
+    state.component = previous;
+  }
+}
+
+function placeNode(node: UiNode, x: number, y: number, width: number, state: LayoutState, depth: number, declared?: string): number {
+
   const padding = paddingOf(node);
   const push = (height: number, marker: boolean, boxWidth = width, boxX = x, boxY = y, pad = padding): number => {
     state.boxes.push({
@@ -540,6 +610,9 @@ function layoutNode(node: UiNode, x: number, y: number, width: number, state: La
         Math.max(0, height - pad.y * 2),
       ),
       marker,
+      ...(state.frame ? { frame: state.frame } : {}),
+      ...(state.component ? { component: state.component } : {}),
+      ...(declared && declared === state.component ? { componentRoot: true } : {}),
     });
     return height;
   };
@@ -620,6 +693,8 @@ function layoutNode(node: UiNode, x: number, y: number, width: number, state: La
           height: controlHeight,
           content: rect(x + width - controlWidth, y + (height - controlHeight) / 2, controlWidth, controlHeight),
           marker: false,
+          ...(state.frame ? { frame: state.frame } : {}),
+          ...(state.component ? { component: state.component } : {}),
         });
         return height;
       }
@@ -701,6 +776,49 @@ function layoutNode(node: UiNode, x: number, y: number, width: number, state: La
         padding.y * 2
       );
     }
+    case 'canvas': {
+      // A board of states: each child is a frame drawn at its own viewport size, with its title above
+      // it. The point is that a translator sees the same screen in each state it can be in — the empty
+      // list, the loading row, the validation error — instead of one picture and a guess.
+      const gap = node.style?.gap ?? CANVAS_GAP;
+      const frames = node.children ?? [];
+      const viewport = state.viewport ?? { width: 390, height: 844 };
+      const titleHeight = FONT_SIZE.subheading * LINE_HEIGHT + 8;
+      let cursor = x + padding.x;
+      let tallest = 0;
+      for (const frame of frames) {
+        const frameWidth = frame.width ?? viewport.width;
+        const frameHeight = frame.height ?? viewport.height;
+        const frameTop = y + padding.y + titleHeight;
+        if (frame.text) {
+          // The frame's title is the platform's annotation, not the page's copy: drawn, never marked.
+          state.boxes.push({
+            node: { type: 'text', role: 'subheading', text: frame.text, ...(frame.style ? { style: frame.style } : {}) },
+            depth,
+            x: cursor,
+            y: y + padding.y,
+            width: frameWidth,
+            height: FONT_SIZE.subheading * LINE_HEIGHT,
+            content: rect(cursor, y + padding.y, frameWidth, FONT_SIZE.subheading * LINE_HEIGHT),
+            marker: false,
+          });
+        }
+        const previousFrame = state.frame;
+        const previousBottom = state.dockBottom;
+        const previousViewport = state.viewport;
+        state.frame = frame.text ?? previousFrame;
+        state.viewport = { width: frameWidth, height: frameHeight };
+        state.dockBottom = frameTop + frameHeight;
+        layoutNode({ ...frame, width: frameWidth, height: frameHeight }, cursor, frameTop, frameWidth, state, depth + 1);
+        state.frame = previousFrame;
+        state.dockBottom = previousBottom;
+        state.viewport = previousViewport;
+        cursor += frameWidth + gap;
+        tallest = Math.max(tallest, titleHeight + frameHeight);
+      }
+      const height = node.height ?? tallest + padding.y * 2;
+      return push(height, false, Math.max(1, cursor - gap - x + padding.x));
+    }
     case 'screen':
     case 'section':
     case 'card': {
@@ -711,7 +829,14 @@ function layoutNode(node: UiNode, x: number, y: number, width: number, state: La
       let bottom = y;
       for (const child of children) {
         if (node.type === 'screen' && child.type === 'tabbar') {
-          (state.docked ??= []).push({ node: child, x, width, depth: depth + 1 });
+          (state.docked ??= []).push({
+            node: child,
+            x,
+            width,
+            depth: depth + 1,
+            ...(state.dockBottom ? { bottom: state.dockBottom } : {}),
+            ...(state.frame ? { frame: state.frame } : {}),
+          });
           continue;
         }
         // A nav spans the screen: a page's header is not inset like its content, and drawing it inset
@@ -727,7 +852,8 @@ function layoutNode(node: UiNode, x: number, y: number, width: number, state: La
       // The top padding is already inside `bottom`; the bottom one is added unless there is nothing
       // to pad around.
       const contentHeight = children.length ? bottom - y : 0;
-      const height = Math.max(node.height ?? 0, contentHeight + padding.y * (children.length ? 1 : 2));
+      const sized = node.type === 'screen' && node.height ? node.height : 0;
+      const height = Math.max(sized, contentHeight + padding.y * (children.length ? 1 : 2));
       return push(height, false);
     }
     default:
@@ -764,7 +890,16 @@ export interface UiLayout {
   markers: MarkerGeometry[];
   /** The accent and page colour the drawing falls back to. */
   theme: Required<UiTheme>;
+  /** The components the board is made of, numbered in the order they first appear. */
+  legend: UiLegendItem[];
   truncated: boolean;
+}
+
+export interface UiLegendItem {
+  /** The number drawn on every instance of this component. */
+  index: number;
+  name: string;
+  count: number;
 }
 
 /**
@@ -782,7 +917,18 @@ export function layoutUiSpec(spec: UiSpec): UiLayout {
     ? inheritNamespace(spec.root, spec.root.namespace)
     : spec.root;
   const viewport = defaultViewport(spec.platform);
-  const width = spec.width ?? viewport.width;
+  // A board is as wide as its frames: the whole point is to see the states side by side, and a canvas
+  // clipped to one viewport would stack them off the right edge.
+  const boardWidth = (node: UiNode): number => {
+    if (node.type !== 'canvas') return 0;
+    const frames = node.children ?? [];
+    if (!frames.length) return 0;
+    const gap = node.style?.gap ?? CANVAS_GAP;
+    const padding = node.style?.paddingX ?? 0;
+    const total = frames.reduce((sum, frame) => sum + (frame.width ?? viewport.width), 0) + gap * (frames.length - 1);
+    return total + padding * 2;
+  };
+  const width = spec.width ?? (boardWidth(root) || viewport.width);
   const maxHeight = 8192;
 
   const state: LayoutState = { boxes: [], nodes: 0, truncated: false };
@@ -791,10 +937,17 @@ export function layoutUiSpec(spec: UiSpec): UiLayout {
   // Anything docked to the bottom edge waits for the canvas: it is placed against the bottom of the
   // drawing, whatever the content above it turned out to need.
   const placed = (): number => state.boxes.reduce((lowest, box) => Math.max(lowest, box.y + box.height), 0);
+  state.viewport = { width, height: spec.height ?? viewport.height };
   let canvasHeight = Math.max(spec.height ?? viewport.height, contentHeight, placed());
   for (const docked of state.docked ?? []) {
     const barHeight = docked.node.height ?? TABBAR_HEIGHT;
-    layoutNode(docked.node, docked.x, canvasHeight - barHeight, docked.width, state, docked.depth);
+    // Against the bottom of whatever holds it: the whole picture for a plain screen, the frame when the
+    // screen is one of several states on a board.
+    const bottom = docked.bottom ?? canvasHeight;
+    // Its own frame, so the bar's labels are markers of that state like everything else in the frame.
+    state.frame = docked.frame;
+    layoutNode(docked.node, docked.x, bottom - barHeight, docked.width, state, docked.depth);
+    state.frame = undefined;
   }
   canvasHeight = Math.max(canvasHeight, placed());
   /**
@@ -806,6 +959,26 @@ export function layoutUiSpec(spec: UiSpec): UiLayout {
    * markers hanging off the bottom: the guarantee holds by construction instead of by every node
    * type being careful.
    */
+  // The legend band, reserved before the height is final: the numbers it explains are drawn on the
+  // picture, so it has to be part of it.
+  const seen = new Map<string, UiLegendItem>();
+  if (canvasHeight > 0) {
+    for (const box of boxesInPaintOrder(state.boxes)) {
+      // One entry per *instance*: the count answers "how many of these are on this board", which is
+      // what a legend is for. The name a marker carries is the inherited one, so its strings group
+      // with it either way.
+      if (!box.componentRoot || !box.component) continue;
+      const existing = seen.get(box.component);
+      if (existing) existing.count += 1;
+      else seen.set(box.component, { index: seen.size + 1, name: box.component, count: 1 });
+    }
+  }
+  // One component is not a legend, it is a label: a band explaining "this screen is a card" adds a
+  // strip to every sketch ever drawn. Two or more is when a reader needs the map.
+  const legend = seen.size >= 2 ? [...seen.values()] : [];
+  const legendHeight = legend.length ? LEGEND_HEIGHT : 0;
+  if (legendHeight) canvasHeight += legendHeight;
+
   let height = canvasHeight;
 
   let boxes = state.boxes;
@@ -831,6 +1004,8 @@ export function layoutUiSpec(spec: UiSpec): UiLayout {
       key,
       namespace: box.node.namespace ?? '',
       text,
+      ...(box.frame ? { frame: box.frame } : {}),
+      ...(box.component ? { component: box.component } : {}),
       // The content rect, not the whole box: markers point at text, and a padded control's text is
       // inset inside it.
       x: clamp01(box.content.x / width),
@@ -841,7 +1016,7 @@ export function layoutUiSpec(spec: UiSpec): UiLayout {
   }
 
   const theme = { ...defaultTheme(spec.platform), ...stripUndefined(spec.theme) };
-  return { width, height, boxes, markers, theme, truncated: state.truncated };
+  return { width, height, boxes, markers, theme, legend, truncated: state.truncated };
 }
 
 /** Only the fields the caller actually set; anything else keeps the platform's default. */
@@ -1117,6 +1292,43 @@ export function renderUiSvg(layout: UiLayout, fontFamily = 'system-ui, -apple-sy
     }
   }
 
+  // Component numbers, drawn last: they are annotations over the picture, not part of any frame.
+  const numbers = new Map(layout.legend.map((item) => [item.name, item.index]));
+  for (const box of boxesInPaintOrder(layout.boxes)) {
+    // The badge marks the component's root: numbering every string inside the card as well would say
+    // the same thing four times.
+    const name = box.componentRoot ? box.component : undefined;
+    if (!name) continue;
+    const index = numbers.get(name);
+    if (!index) continue;
+    const cx = box.x + 12;
+    const cy = box.y + 13;
+    parts.push(
+      `<circle cx="${round(cx)}" cy="${round(cy)}" r="9" fill="${escapeXml(accent)}"/>`,
+      `<text x="${round(cx)}" y="${round(cy + 4)}" font-size="11" font-weight="600" fill="${escapeXml(readableOn(accent))}" text-anchor="middle">${index}</text>`,
+    );
+  }
+
+  if (layout.legend.length) {
+    // One row under the board: a number, a name, how many instances. The numbers match the badges.
+    const bandTop = layout.height - LEGEND_HEIGHT;
+    parts.push(
+      `<rect x="0" y="${round(bandTop)}" width="${layout.width}" height="${LEGEND_HEIGHT + 1}" fill="${escapeXml(COLORS.track)}"/>`,
+      `<line x1="0" y1="${round(bandTop)}" x2="${layout.width}" y2="${round(bandTop)}" stroke="${escapeXml(COLORS.border)}" stroke-width="1"/>`,
+    );
+    let cursor = 16;
+    for (const item of layout.legend) {
+      const label = `${item.index}  ${item.name}${item.count > 1 ? ` ×${item.count}` : ''}`;
+      const width = measureText(label, LEGEND_FONT) + 26;
+      parts.push(
+        `<circle cx="${round(cursor + 11)}" cy="${round(bandTop + LEGEND_HEIGHT / 2)}" r="9" fill="${escapeXml(accent)}"/>`,
+        `<text x="${round(cursor + 11)}" y="${round(bandTop + LEGEND_HEIGHT / 2 + 4)}" font-size="11" font-weight="600" fill="${escapeXml(readableOn(accent))}" text-anchor="middle">${item.index}</text>`,
+        `<text x="${round(cursor + 26)}" y="${round(bandTop + LEGEND_HEIGHT / 2 + 5)}" font-size="${LEGEND_FONT}" fill="${escapeXml(COLORS.body)}">${escapeXml(item.name)}${item.count > 1 ? ` ×${item.count}` : ''}</text>`,
+      );
+      cursor += width + 14;
+    }
+  }
+
   parts.push(...defs, ...surfaces, ...contents);
   parts.push('</svg>');
   return parts.join('');
@@ -1162,6 +1374,8 @@ export interface RenderedSketch {
   width: number;
   height: number;
   markers: MarkerGeometry[];
+  /** The components the board is made of, numbered as the badges on the picture are. */
+  legend: UiLegendItem[];
   nodes: number;
   truncated: boolean;
 }
@@ -1174,6 +1388,7 @@ export function renderUiSketch(spec: UiSpec): RenderedSketch {
     width: layout.width,
     height: layout.height,
     markers: layout.markers,
+    legend: layout.legend,
     nodes: layout.boxes.length,
     truncated: layout.truncated,
   };

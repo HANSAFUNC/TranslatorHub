@@ -96,6 +96,15 @@ export const markerSchema = z
     height: z.number().min(0).max(1).optional(),
     /** The text as it appears in the sketch, so a mismatch against the platform value can be shown. */
     text: z.string().max(2000).optional(),
+    /**
+     * The frame (state) this marker belongs to, when the sketch shows a screen in several of them.
+     *
+     * A caller drawing its own picture can label its markers the same way the platform labels the ones
+     * it computes, so the editor groups a board of states identically whichever way it arrived.
+     */
+    frame: z.string().max(60).optional(),
+    /** The component the marked element belongs to (`PrimaryButton`, `card`), matching the legend. */
+    component: z.string().max(64).optional(),
     note: z.string().max(1000).optional(),
   })
   .refine((marker) => marker.width === undefined || marker.x + marker.width <= 1.0001, {

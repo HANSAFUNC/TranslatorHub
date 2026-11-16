@@ -57,6 +57,7 @@ describe('the Remote MCP tool registry', () => {
 
     expect(Object.keys(schema.properties).sort()).toEqual([
       'css',
+      'frames',
       'height',
       'html',
       'image_base64',
@@ -82,6 +83,10 @@ describe('the Remote MCP tool registry', () => {
     // wireframe: the stylesheet its colours live in, and the brand colour it does not carry.
     expect(schema.properties.css!.description).toContain('globals.css');
     expect(schema.properties.theme!.description).toContain('accent');
+    // A board of states is the other half of "which screen is this?": the states have to be named,
+    // and the caller has to know that frames replace the single-screen inputs rather than joining them.
+    expect(schema.properties.frames!.description).toContain('多个状态');
+    expect(schema.properties.frames!.description).toContain('不要再传');
 
     // Markers are fractions of the image, and a caller that assumes pixels produces a sketch whose
     // markers all sit in one corner. The description is the only place it can learn otherwise.

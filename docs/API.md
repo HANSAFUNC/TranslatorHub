@@ -141,7 +141,12 @@ public 路由不受影响，负载均衡仍可探测。
 | POST   | `/projects/:projectId/mockups`                | DEVELOPER + `sync.push`  | 上传/替换屏幕（`imageBase64` + `markers`，或 `ui` 由平台绘制） |
 | DELETE | `/projects/:projectId/mockups/:mockupId`      | DEVELOPER + `sync.push`  | 删除屏幕（标记随外键级联）                                 |
 
-上传有两种输入，二选一：
+上传有三种输入，选一种（`frames` 与另外三种互斥）：
+
+- **`frames`**：一个屏幕的多个状态，各占一帧排在同一张画布上（`[{title, html|ui}]`，最多 8 帧）。平台横向排开、
+  每帧上方写状态名，`markers[].frame` 记住每条文案落在哪一帧，`components` 给出组件的编号清单
+  （节点上的 `component`，或 HTML 里的类名 / `data-component`；组件内部的文案继承该组件）。
+
 
 - **`imageBase64` + `markers`**：调用方自己画的图，以及每个 Key 在图上的位置。
 - **`html`**：页面源码（HTML 或 JSX/TSX）。平台用 CLI 读仓库时同一个扫描器解析出元素树，再走下面 `ui` 那条路：

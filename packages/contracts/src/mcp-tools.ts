@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { McpScope } from './roles';
 import { localeTagSchema, platformSchema } from './schemas';
 import { MAX_MARKERS_PER_MOCKUP, MAX_MOCKUP_BYTES, MAX_MOCKUP_REQUEST_BYTES, markerSchema } from './mockup';
-import { MAX_UI_HTML_CHARS, uiSpecSchema, uiThemeSchema } from './ui-spec';
+import { MAX_UI_HTML_CHARS, MAX_MOCKUP_FRAMES, uiSpecSchema, uiThemeSchema } from './ui-spec';
 
 /**
  * Canonical registry of the Remote MCP's tools. Shared by the server, the API's discovery
@@ -340,6 +340,21 @@ export const remoteToolSchemas = {
       .describe(
         '品牌色：accent 用在按钮、开关、滑块、选中的那个页签上，background 是页面底色。' +
           '默认按 platform：ios 是系统蓝，android 是 Material 蓝，web 是近黑。页面自己带颜色时以页面为准。',
+      ),
+    frames: z
+      .array(
+        z.object({
+          title: z.string().min(1).max(60).describe('这个状态的名字：默认 / 空 / 加载中 / 校验失败…'),
+          html: z.string().min(1).max(MAX_UI_HTML_CHARS).optional(),
+          ui: uiSpecSchema.optional(),
+        }),
+      )
+      .max(MAX_MOCKUP_FRAMES)
+      .optional()
+      .describe(
+        '一个屏幕的多个状态，各占一帧、排在同一张画布上：译者能看到同一个 key 在每种状态下读起来是什么样（或者根本不出现）。' +
+          '每帧给 html 或 ui 之一；给了 frames 就不要再传 ui / html / image_base64。' +
+          '一帧一个状态，别把同一状态拆开——帧多到看不清时，挑真正影响译文的那几个。',
       ),
     ui: uiSpecSchema.optional().describe(
       '界面描述（推荐）：按元素描述页面，平台据此画出草图并自动计算每个标记的位置与大小——不需要你量坐标。' +

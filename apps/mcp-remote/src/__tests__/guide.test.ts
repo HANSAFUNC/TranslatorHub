@@ -297,14 +297,11 @@ describe('the screen sketch guide', () => {
  * nothing to compare against. Both are fixed; this is what keeps them fixed.
  */
 describe('the example in the sketch guide', () => {
-  /** The first ```jsonc block of the guide, comments removed — a caller pastes it into a tool call. */
-  function exampleFromGuide(): Record<string, unknown> {
-    const match = /```jsonc\n([\s\S]*?)```/.exec(REMOTE_MCP_SKETCH_GUIDE);
-    expect(match, 'the guide carries a JSON example').toBeTruthy();
-    const withoutComments = match![1]!
+  /** Comments removed the way a reader must remove them: `//` inside a string is part of the value. */
+  function stripComments(block: string): string {
+    return block
       .split('\n')
       .map((line) => {
-        // `//` inside a string is part of the value (`"https://…"`), so the scan skips strings.
         let quote = false;
         for (let index = 0; index < line.length; index += 1) {
           const character = line[index];
@@ -314,7 +311,13 @@ describe('the example in the sketch guide', () => {
         return line;
       })
       .join('\n');
-    return JSON.parse(withoutComments) as Record<string, unknown>;
+  }
+
+  /** The first ```jsonc block of the guide — a caller pastes it into a tool call. */
+  function exampleFromGuide(): Record<string, unknown> {
+    const match = /```jsonc\n([\s\S]*?)```/.exec(REMOTE_MCP_SKETCH_GUIDE);
+    expect(match, 'the guide carries a JSON example').toBeTruthy();
+    return JSON.parse(stripComments(match![1]!)) as Record<string, unknown>;
   }
 
   it('is accepted by the tool schema, which is what a caller pastes it into', () => {
@@ -339,11 +342,20 @@ describe('the example in the sketch guide', () => {
     expect(image.height).toBe(844);
   });
 
-  it('shows a `ui` example too, for a caller that would rather describe the screen', () => {
-    const blocks = [...REMOTE_MCP_SKETCH_GUIDE.matchAll(/```jsonc\n([\s\S]*?)```/g)];
-    expect(blocks.length).toBeGreaterThanOrEqual(2);
-    const ui = JSON.parse(blocks[1]![1]!) as { ui: { root: { type: string } } };
-    expect(ui.ui.root.type).toBe('screen');
+  it('shows the other shapes too, and each example is one a caller could actually send', () => {
+    const blocks = [...REMOTE_MCP_SKETCH_GUIDE.matchAll(/```jsonc\n([\s\S]*?)```/g)].map((match) => match[1]!);
+    expect(blocks.length).toBeGreaterThanOrEqual(3);
+    // Comment-stripped the same way a caller pastes them, because a JSONC example that does not parse
+    // is a tutorial that fails at the first step.
+    const parsed = blocks.map((block) => JSON.parse(stripComments(block)) as Record<string, unknown>);
+
+    const board = parsed.find((example) => 'frames' in example) as { frames: { title: string; html?: string; ui?: unknown }[] };
+    expect(board.frames.map((frame) => frame.title)).toEqual(['默认', '空状态', '加载中']);
+    // Every frame carries exactly one shape, which is the rule the prose states.
+    for (const frame of board.frames) expect(Boolean(frame.html) !== Boolean(frame.ui)).toBe(true);
+
+    const described = parsed.find((example) => 'ui' in example) as { ui: { root: { type: string } } };
+    expect(described.ui.root.type).toBe('screen');
   });
 });
 
