@@ -1,10 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Copy, GitBranch, Languages, MonitorSmartphone, Plug, Settings2, Trash2, Users } from 'lucide-react';
 
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -23,6 +24,10 @@ import { StatCard } from '@/components/stat-card';
 import { StatusBadge } from '@/components/status-badge';
 import { timeAgo, useAsync } from '@/components/use-async';
 import { del, get, patch, post } from '@/lib/api';
+// The `roles` subpath, not the package root: the root reaches `node:crypto` through its hashing
+// helpers, which webpack refuses to bundle — the same reason this app imports `contracts/locale`
+// rather than `contracts`.
+import { Role } from '@localehub/contracts/roles';
 import { localeDisplayName } from '@localehub/contracts/locale';
 import { toast } from 'sonner';
 
@@ -33,6 +38,8 @@ interface ProjectDetail {
   description: string | null;
   sourceLocale: string;
   revision: number;
+  /** The caller's effective role here — the API computes it with the same rule its guards use. */
+  role: string | null;
   locales: { id: string; code: string; name: string; isSource: boolean; status: string }[];
   platforms: { platform: string }[];
   connections: {
@@ -75,8 +82,16 @@ export default function ProjectPage() {
   const [settingsError, setSettingsError] = useState<unknown>(null);
   const [pendingLocale, setPendingLocale] = useState('');
   const [settings, setSettings] = useState<SettingsForm | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [deleteError, setDeleteError] = useState<unknown>(null);
+  const router = useRouter();
 
   const hasEntries = (dashboard?.entries ?? 0) > 0;
+  // The API ranks roles (ORG_OWNER 90 > ORG_ADMIN 80 > PROJECT_MANAGER 60 …) and took the stronger of
+  // the org and project roles when it reported `role`, so this list is exactly "may delete".
+  const DELETE_ROLES: string[] = [Role.PLATFORM_ADMIN, Role.ORG_OWNER, Role.ORG_ADMIN, Role.PROJECT_MANAGER];
+  const canDelete = Boolean(project?.role && DELETE_ROLES.includes(project.role));
   const fromProject: SettingsForm | null = project
     ? {
         name: project.name,
@@ -109,6 +124,27 @@ export default function ProjectPage() {
       await Promise.all([reload(), reloadDashboard()]);
     } catch (err) {
       setSettingsError(err);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /**
+   * Delete the project and leave the page.
+   *
+   * The name is required by the API, not only by this dialog: the project's keys, translations,
+   * sketches and sync history go with it and there is no undo. The repository's language files are
+   * untouched — this deletes the *platform's* copy.
+   */
+  async function deleteProject() {
+    setBusy('delete');
+    setDeleteError(null);
+    try {
+      await del(`/projects/${projectId}?confirmName=${encodeURIComponent(deleteConfirm)}`);
+      toast.success(`项目「${project?.name ?? ''}」已删除`);
+      router.push('/projects');
+    } catch (err) {
+      setDeleteError(err);
     } finally {
       setBusy(null);
     }
@@ -390,6 +426,69 @@ export default function ProjectPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="border-destructive/40 mt-4">
+        <CardHeader>
+          <CardTitle className="text-destructive flex items-center gap-2 text-base">
+            <Trash2 className="size-4" />
+            删除项目
+          </CardTitle>
+          <CardDescription>
+            连同这个项目的 Key、译文、界面草图和同步记录一起删除，<strong>无法撤销</strong>。仓库里的语言文件不受影响。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-muted-foreground text-sm">
+            {canDelete
+              ? '删除后，这个项目 id 立刻对所有 MCP Token 与 CLI 失效。'
+              : '需要项目管理员（或更高的组织角色）才能删除，当前角色：' + (project?.role ?? '未知')}
+          </p>
+          <Button variant="destructive" disabled={!canDelete} onClick={() => { setDeleteConfirm(''); setDeleteError(null); setDeleteOpen(true); }}>
+            <Trash2 />
+            删除项目
+          </Button>
+        </CardContent>
+      </Card>
+
+      <AlertDialog open={deleteOpen} onOpenChange={(open) => { setDeleteOpen(open); if (!open) setDeleteError(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除「{project?.name}」？</AlertDialogTitle>
+            <AlertDialogDescription>
+              这个操作无法撤销：项目里的 Key、译文、界面草图和同步历史会一起消失。仓库里的语言文件不动。
+              请输入项目名以确认。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <Field>
+            <FieldLabel htmlFor="delete-confirm">项目名</FieldLabel>
+            <Input
+              id="delete-confirm"
+              value={deleteConfirm}
+              autoComplete="off"
+              placeholder={project?.name ?? ''}
+              onChange={(event) => setDeleteConfirm(event.target.value)}
+            />
+            <FieldDescription>必须与项目名完全一致，删除按钮才会可用。</FieldDescription>
+          </Field>
+
+          <ErrorAlert error={deleteError} />
+
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy === 'delete'}>取消</AlertDialogCancel>
+            {/* A plain Button rather than AlertDialogAction: that one closes the dialog on click, so a
+                refused delete would take its error message with it. */}
+            <Button
+              variant="destructive"
+              disabled={busy === 'delete' || deleteConfirm !== (project?.name ?? '')}
+              onClick={() => void deleteProject()}
+            >
+              {busy === 'delete' ? <Spinner /> : <Trash2 />}
+              永久删除
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Card className="mt-4">
         <CardHeader>

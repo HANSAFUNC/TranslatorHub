@@ -872,9 +872,11 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
    */
   define(
     'upload_screen_mockup',
-    '上传一张界面草图（SVG/PNG/JPEG）＋若干标记，标出每个 key 的文字在界面上的位置。' +
-      '平台的翻译编辑器会用它在译文旁边显示界面，点标记跳到对应译文。' +
-      '坐标是相对图片的比例 0~1（不是像素）；key 可以还没导入，会作为 unmatched 报告而不是拒绝。',
+    '给一个界面加上「这些文字在屏幕的什么位置」：平台的翻译编辑器会把界面和译文并排显示，点标记跳到对应译文。' +
+      '两种输入二选一——**推荐传 ui**：按元素描述页面（text/button/input/row…），平台自己排版、画图、算出每个标记的坐标，' +
+      '你不需要画图也不需要量坐标；或者传 image_base64（SVG/PNG/JPEG，自己画的图）＋ markers。' +
+      '传 ui 时，节点上的 text 就是界面上显示的文字，默认作为 key（可用 key 覆盖）；key 还没导入也照存，' +
+      '会在返回值里以 markers.unmatched 报告，而不是拒绝。同名屏幕再传一次是整体替换（没有 dry run）。',
     async (input: {
       project_id: string;
       name: string;

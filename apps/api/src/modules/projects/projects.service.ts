@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ErrorCode, LocaleHubError, Role, canonicalizeLocaleTag, isValidLocaleTag, localeDisplayName, resolveLocaleTag } from '@localehub/contracts';
-import { assertRole, type ActorContext } from '@localehub/permissions';
+import { assertRole, highestRole, type ActorContext } from '@localehub/permissions';
 import { createProject, emitProjectEvent, slugify } from '@localehub/domain';
 import { PrismaService } from '../../common/prisma.service';
 
@@ -82,7 +82,11 @@ export class ProjectsService {
         },
       });
       if (!project) throw new LocaleHubError(ErrorCode.NOT_FOUND, `Project ${projectId} not found`, 404);
-      return project;
+      // The caller's *effective* role, by the same rule `assertRole` uses (the stronger of the org role
+      // and the project role). The settings page needs it to decide whether to offer a destructive
+      // action, and computing it here means the page cannot disagree with what the API will allow —
+      // a button that is refused, or one that is hidden from someone who could have used it.
+      return { ...project, role: highestRole([actor.orgRole, actor.projectRoles[projectId]]) ?? null };
     });
   }
 
@@ -205,7 +209,18 @@ export class ProjectsService {
     return this.prisma.tenant.withOrganization(actor.organizationId, async (tx) => {
       const project = await tx.project.findUnique({ where: { id: projectId }, select: { name: true } });
       if (!project) throw new LocaleHubError(ErrorCode.NOT_FOUND, `Project ${projectId} not found`, 404);
-      if (confirmName !== undefined && confirmName !== project.name) {
+      // Required, not optional. The name is the whole guard: a project takes its keys, translations,
+      // sketches and sync history with it, and there is no undo. Omitting the parameter used to delete
+      // the project without any confirmation at all, which made a `DELETE` one typo away from losing a
+      // project — and made the UI's "type the name" step look stronger than it was.
+      if (confirmName === undefined) {
+        throw new LocaleHubError(
+          ErrorCode.VALIDATION_ERROR,
+          `Deleting a project requires confirmation. Pass confirmName="${project.name}".`,
+          422,
+        );
+      }
+      if (confirmName !== project.name) {
         throw new LocaleHubError(
           ErrorCode.VALIDATION_ERROR,
           `Confirmation name does not match. Pass confirmName="${project.name}" to delete this project.`,

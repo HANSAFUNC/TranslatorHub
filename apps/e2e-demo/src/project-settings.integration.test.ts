@@ -47,6 +47,7 @@ interface ProjectDetail {
   name: string;
   description: string | null;
   sourceLocale: string;
+  role: string | null;
   locales: { code: string; name: string; isSource: boolean }[];
   platforms: { platform: string }[];
 }
@@ -354,5 +355,119 @@ describe('editing a project', () => {
 
     const detail = await call<ProjectDetail>(`/projects/${project.id}`, { token });
     expect((detail.body.data?.platforms ?? []).map((row) => row.platform).sort()).toEqual(['ios', 'web']);
+  });
+});
+
+/**
+ * Deleting a project is the one action here with no undo, so the rules around it are pinned: who may,
+ * and what has to be typed first. The name is the guard — omitting it used to delete the project
+ * outright, which made both the API and the settings page's "type the name" step weaker than they
+ * looked.
+ */
+describe('deleting a project', () => {
+  it('reports the caller’s effective role on the project, which is what offers the button', async () => {
+    const project = await createProject({ name: `Roles ${runId}`, sourceLocale: 'en-US' });
+    const detail = await call<ProjectDetail>(`/projects/${project.id}`, { token });
+    // ORG_OWNER here, and the API ranks it the same way its guards do.
+    expect(detail.body.data!.role).toBe('ORG_OWNER');
+  });
+
+  it('refuses a delete with no confirmation name', async () => {
+    const project = await createProject({ name: `No confirm ${runId}`, sourceLocale: 'en-US' });
+    const refused = await call(`/projects/${project.id}`, { method: 'DELETE', token });
+    expect(refused.status).toBe(422);
+    expect(refused.body.error?.message).toContain('requires confirmation');
+
+    // Still there.
+    const detail = await call(`/projects/${project.id}`, { token });
+    expect(detail.status).toBe(200);
+  });
+
+  it('refuses a delete whose confirmation name does not match', async () => {
+    const project = await createProject({ name: `Wrong name ${runId}`, sourceLocale: 'en-US' });
+    const refused = await call(`/projects/${project.id}?confirmName=${encodeURIComponent('something else')}`, {
+      method: 'DELETE',
+      token,
+    });
+    expect(refused.status).toBe(422);
+    expect(refused.body.error?.message).toContain('does not match');
+
+    const detail = await call(`/projects/${project.id}`, { token });
+    expect(detail.status).toBe(200);
+  });
+
+  it('deletes the project, its keys and its sketches when the name matches', async () => {
+    const project = await createProject({ name: `Doomed ${runId}`, sourceLocale: 'en-US', locales: ['ja-JP'] });
+    await call(`/projects/${project.id}/mockups`, {
+      method: 'POST',
+      token,
+      body: {
+        name: '练习页',
+        locale: 'en-US',
+        ui: { name: '练习页', root: { type: 'screen', children: [{ type: 'text', text: 'Hello' }] } },
+      },
+    });
+
+    const deleted = await call<{ deleted: boolean }>(`/projects/${project.id}?confirmName=${encodeURIComponent(project.name)}`, {
+      method: 'DELETE',
+      token,
+    });
+    expect(deleted.status, JSON.stringify(deleted.body.error)).toBe(200);
+    expect(deleted.body.data?.deleted).toBe(true);
+
+    // Gone from the API…
+    const detail = await call(`/projects/${project.id}`, { token });
+    expect(detail.status).toBe(404);
+
+    // …and gone from the database, children included (the relations cascade).
+    const prisma = new PrismaClient();
+    try {
+      await prisma.$executeRawUnsafe(`SELECT set_config('app.bypass_rls', 'on', true)`);
+      const rows = await prisma.$queryRawUnsafe<{ keys: bigint; mockups: bigint }[]>(
+        `SELECT (SELECT count(*) FROM translation_keys WHERE project_id = $1::uuid) AS keys,
+                (SELECT count(*) FROM screen_mockups WHERE project_id = $1::uuid) AS mockups`,
+        project.id,
+      );
+      expect(Number(rows[0]!.keys)).toBe(0);
+      expect(Number(rows[0]!.mockups)).toBe(0);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+  it('refuses a delete from someone who is only a member of the project', async () => {
+    const project = await createProject({ name: `Protected ${runId}`, sourceLocale: 'en-US' });
+
+    // A second account in the same organization, with no project role at all: the project role list
+    // starts at PROJECT_MANAGER, so the org role decides — and READONLY is not enough.
+    const prisma = new PrismaClient();
+    let readerToken = '';
+    try {
+      const { hashPassword } = await import('@localehub/domain');
+      const email = `reader-${runId}@localehub.dev`;
+      const password = 'reader-password-123';
+      const passwordHash = await hashPassword(password);
+      const organization = await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SELECT set_config('app.bypass_rls', 'on', true)`);
+        const existing = await tx.project.findUniqueOrThrow({ where: { id: project.id }, select: { organizationId: true } });
+        const user = await tx.user.create({ data: { email, name: 'Reader', passwordHash, isPlatformAdmin: false } });
+        await tx.membership.create({ data: { organizationId: existing.organizationId, userId: user.id, role: 'READONLY' } });
+        return existing.organizationId;
+      });
+      expect(organization).toBeTruthy();
+      const login = await call<{ token: string }>('/auth/login', { method: 'POST', body: { email, password } });
+      readerToken = login.body.data!.token;
+    } finally {
+      await prisma.$disconnect();
+    }
+
+    const refused = await call(`/projects/${project.id}?confirmName=${encodeURIComponent(project.name)}`, {
+      method: 'DELETE',
+      token: readerToken,
+    });
+    expect(refused.status).toBe(403);
+
+    const detail = await call(`/projects/${project.id}`, { token });
+    expect(detail.status).toBe(200);
   });
 });

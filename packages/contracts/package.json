@@ -28,6 +28,10 @@
       "types": "./dist/locale-catalog.d.ts",
       "default": "./dist/locale-catalog.js"
     },
+    "./roles": {
+      "types": "./dist/roles.d.ts",
+      "default": "./dist/roles.js"
+    },
     "./mockup": {
       "types": "./dist/mockup.d.ts",
       "default": "./dist/mockup.js"
