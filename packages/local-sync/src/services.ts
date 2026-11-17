@@ -489,6 +489,44 @@ export class LocalSyncServices {
     const svgPath = join(outDir, `${name.replace(/[^\p{L}\p{N}._-]+/gu, '-')}.svg`);
     writeFileSync(svgPath, sketch.svg, 'utf8');
 
+    /**
+     * The sketch's own record, written beside it.
+     *
+     * `.localehub/mockups/` is meant to be committed, and a picture on its own does not say where it
+     * came from or whether it is what the platform holds. This does: the page it was read out of, the
+     * screen's identity, how many markers, and — once uploaded — the checksum the platform stored, so
+     * a reviewer can tell a current sketch from one that has drifted.
+     */
+    const manifestPath = join(outDir, `${name.replace(/[^\p{L}\p{N}._-]+/gu, '-')}.json`);
+    const writeManifest = (uploaded: { mockupId: string; checksum: string } | null): void => {
+      writeFileSync(
+        manifestPath,
+        `${JSON.stringify(
+          {
+            $comment:
+              '由 localehub mockup 生成；这份 .svg 就是上传到平台的那张图。' +
+              '要改就改页面源码再跑一次，不要手改这里的文件。',
+            projectId: this.projectId(),
+            name,
+            platform,
+            locale,
+            namespace: input.namespace ?? null,
+            page: fileName,
+            canvas: { width: sketch.width, height: sketch.height },
+            markers: sketch.markers.length,
+            strings: strings.length,
+            components: sketch.legend,
+            uploaded,
+            generatedAt: new Date().toISOString(),
+          },
+          null,
+          2,
+        )}\n`,
+        'utf8',
+      );
+    };
+    writeManifest(null);
+
     const summary = {
       page: fileName,
       name,
@@ -499,6 +537,7 @@ export class LocalSyncServices {
       markers: sketch.markers.length,
       keys: strings.slice(0, 5).map((entry) => entry.key),
       svgPath: relative(guard.root, svgPath),
+      manifestPath: relative(guard.root, manifestPath),
       inlinedImages: pictures.inlined.length,
       skippedImages: pictures.skipped,
       warnings: [
@@ -525,6 +564,8 @@ export class LocalSyncServices {
       ui: spec,
       replace: input.replace ?? true,
     });
+
+    writeManifest({ mockupId: result.mockupId, checksum: result.image.checksum });
 
     return {
       ...summary,

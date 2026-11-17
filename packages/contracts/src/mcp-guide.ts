@@ -238,6 +238,21 @@ export const REMOTE_MCP_SKETCH_GUIDE = `# 把界面草图传上来：让每句�
 - \`theme\`：直接说品牌色，\`{"accent": "#c8102e", "background": "#f7f7f9"}\`。accent 用在按钮、开关、滑块、
   以及**选中的那个页签**上。不传就按端取默认（iOS 系统蓝、Android Material 蓝、web 近黑）；页面自己带的颜色永远优先。
 
+### 仓库里的工作目录：\`.localehub/\`
+
+平台这一侧不碰你的磁盘，所以「Agent 往平台上放了什么」要在仓库里留痕——这就是 \`.localehub/\`：
+
+| 文件 | 提交吗 | 为什么 |
+| --- | --- | --- |
+| \`.localehub/config.yaml\` | **要** | 仓库与项目的对应关系（project id、语言目录、端映射）。没有它，下一个人接不上 |
+| \`.localehub/mockups/*.svg\` + \`*.json\` | **要** | 上传的那张图本身，加一份说明（哪一页、哪个屏幕、多少标记、平台的校验和）。评审时能看到 Agent 到底往平台上放了什么 |
+| \`.localehub/state.json\` | 不要（已 gitignore） | 一台机器的同步游标与历史，提交上去只会互相打架 |
+| \`.localehub/backups/\`\` / \`cache/\`\` / \`patches/\`\` / \`*.local.yaml\` | 不要（已 gitignore） | 本地回滚、缓存、本地覆盖 |
+
+\`localehub mockup --page\` 会自己建目录并写这两个文件（先预览后 \`--confirm\` 上传；上传后再写一次，带上平台的校验和）。
+**只用 MCP、不跑 CLI 的 Agent 也应该这么做**：把你上传的那份描述（或平台返回的图）写进
+\`.localehub/mockups/\` 并一起提交——否则平台上的改动在仓库里查无实据。上传是会改共享系统的事，仓库里要看得见。
+
 ### 图片
 
 平台**不联网取图**，所以只有带在载荷里的才画得出来：\`<img src="data:image/png;base64,…">\`（单张 ≤ 约 300 KB，合计 ≤ 约 1.2 MB）。

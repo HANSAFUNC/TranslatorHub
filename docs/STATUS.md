@@ -1479,6 +1479,30 @@ namespace（空的 `web` 行已删），`platform=web` 查询返回 0 条。
 
 结论一句话：**平台这一侧能修的是「素材 + CSS + 排版」，但「还原度」的天花板在输入那一层**——手写 HTML 转述的界面，
 画出来永远是线框图。要真正的还原度，得让 Agent 在本地截图。
+### 1.45 工作目录 `.localehub/`：什么要提交、什么不要
+
+用户问：「是不是应该让 Agent 用的时候建一个工作目录 .localehub，然后输出的东西也要在里面提交」。
+
+**是，而且一直就是这个设计**——只是没人把「提交什么」写下来，而且有一处该忽略的没忽略。现在定死：
+
+| 文件 | 提交 | 说明 |
+| --- | --- | --- |
+| `.localehub/config.yaml` | **要** | 仓库与项目的对应关系（project id、语言目录、端映射）。`create_project` 的 nextSteps 现在明说「并提交进仓库」 |
+| `.localehub/mockups/*.svg` + `*.json` | **要** | 见下 |
+| `.localehub/state.json` | 不要 | 本机同步游标与历史。**之前没有 gitignore**——提交上去会让两台机器的 lastRevision/history 互相覆盖，也会把组织内部的 id 带进仓库 |
+| `backups/`、`cache/`、`patches/`、`*.local.yaml` | 不要 | 本来就在 gitignore 里 |
+
+**新增：草图旁边那份说明（manifest）。** 图片本身不说明它从哪来、是不是平台现在持有的那一版，所以
+`localehub mockup` 现在同时写 `mockups/<名字>.json`：来源页面、屏幕身份（platform/locale/namespace）、画布尺寸、
+标记数、组件清单、生成时间，以及**上传后平台的 checksum**。文件里带一句 `$comment` 直接写给人看：
+「这份 .svg 就是上传到平台的那张图，要改就改页面源码再跑一次，不要手改这里的文件」。
+
+为什么值得提交：Agent 改平台是改一个共享系统，评审应该在 PR 里看见它放了什么——一张几 KB 的 SVG 加一份说明，
+比一句「我上传了草图」有用得多。
+
+**验证**：402 单元（新增 2 条：图片与说明一起写出、预览态 `uploaded: null`）+ 170 集成测试；
+`localehub://screen-sketch-guide`、`docs/QUICKSTART.md`、`docs/MCP.md` 都补了这张表。
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

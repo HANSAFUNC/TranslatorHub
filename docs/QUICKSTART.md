@@ -61,6 +61,19 @@ node /path/to/localehub/apps/cli/dist/bin.js apply --confirm --apply-plan <id>
 git diff          # 只应包含预期的语言文件条目
 ```
 
+## 3.5 仓库里的 `.localehub/`
+
+`localehub init`（或让 Agent 用 `create_project`）会在仓库里建一个 `.localehub/`，它是仓库与项目的对应关系所在：
+
+| 文件 | 提交吗 | 内容 |
+| --- | --- | --- |
+| `config.yaml` | **要** | project id、语言目录、端点映射、workspace 白名单。没有它，换台机器／换个人就接不上 |
+| `mockups/*.svg` + `*.json` | **要** | `localehub mockup --page` 生成并上传的那张图，加一份说明（哪一页、多少标记、平台的校验和）。审查 PR 时能看到 Agent 往平台上放了什么；图或页面变了就重跑一次，别手改 |
+| `state.json` | 不要 | 本机的同步游标与历史（已 gitignore） |
+| `backups/` / `cache/` / `patches/` / `*.local.yaml` | 不要 | 本地回滚、缓存、本地覆盖（已 gitignore） |
+
+只用 MCP 不跑 CLI 的 Agent 也应该把上传的东西写进 `.localehub/mockups/` 并提交：平台的改动在仓库里要留痕。
+
 ## 4. 在 Claude Code / Cursor 里用
 
 把 `docs/MCP.md` 中的 `.mcp.json` 片段放到仓库根目录（只有一条远端条目，不需要在仓库里装东西），

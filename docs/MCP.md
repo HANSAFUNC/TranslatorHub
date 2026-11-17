@@ -477,6 +477,10 @@ localehub mockup --page src/app/projects/page.tsx --name 项目列表 --confirm 
 
 ## 3. 本地仓库操作：CLI（不是 MCP）
 
+> 仓库里的落点固定是 `.localehub/`：`config.yaml` 与 `mockups/`（图 + 说明）**要提交**，`state.json` /
+> `backups/` / `cache/` / `patches/` 已 gitignore。`create_project` 的返回里直接告诉 Agent 提交 config；
+> 只用 MCP 的 Agent 同样应当把上传的草图写进 `mockups/` 再提交——共享系统上的改动要在仓库里看得见。
+
 读写开发者仓库的 14 个动作都在 CLI 里，`localehub <command>`。它们与 MCP 无关，也不需要
 MCP：Agent 可以用 Bash 调用，CI 可以直接调用，人也可以在终端里调用。
 

@@ -251,7 +251,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
         configPath: '.localehub/config.yaml',
         config: template.yaml,
         nextSteps: [
-          `把 config 的内容写入 ${'.localehub/config.yaml'}`,
+          `把 config 的内容写入 ${'.localehub/config.yaml'} 并提交进仓库（它是这个仓库与项目的对应关系，别人接手要靠它）`,
           'export LOCALEHUB_TOKEN=<你签发的 token>',
           `用 import_translations 上传内容，project_id=${created.id}`,
           '然后 localehub scan && localehub sync preview 检查平台与仓库是否一致',

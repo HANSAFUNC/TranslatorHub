@@ -13,6 +13,10 @@ localehub.env
 !env.example
 
 # Local sync runtime artifacts must never be committed
+# The workspace directory: the repo's link to the platform, and the sketches it uploaded.
+# `config.yaml` and `mockups/` are meant to be committed — a reviewer should see what an agent put on
+# the platform. The rest is one machine's working state.
+.localehub/state.json
 .localehub/backups/
 .localehub/cache/
 .localehub/patches/

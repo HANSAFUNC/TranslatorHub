@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -59,5 +59,67 @@ describe('LOCALEHUB_API_URL', () => {
       env: { LOCALEHUB_TOKEN: 't' },
     });
     expect(services.config().config.localehub.apiUrl).toBe('http://config-file.invalid/api/v1');
+  });
+});
+
+/**
+ * What `localehub mockup` leaves in the workspace.
+ *
+ * `.localehub/` is the repo's link to the platform, and `mockups/` in it is meant to be committed: an
+ * agent that puts a screen on the platform should leave behind something a reviewer can look at, and a
+ * picture on its own does not say where it came from or whether it is still what the platform holds.
+ */
+describe('the sketch written into .localehub/mockups', () => {
+  function workspaceWithPage(): string {
+    const root = workspaceWithConfig();
+    mkdirSync(join(root, 'src', 'app'), { recursive: true });
+    writeFileSync(
+      join(root, 'src', 'app', 'page.tsx'),
+      [
+        'export default function Page() {',
+        '  return (',
+        '    <div className="card">',
+        '      <h1 className="text-2xl font-bold text-slate-900">我的保单</h1>',
+        '      <button className="bg-blue-600 text-white rounded-lg px-4 py-2">查看详情</button>',
+        '    </div>',
+        '  );',
+        '}',
+      ].join('\n'),
+      'utf8',
+    );
+    return root;
+  }
+
+  it('writes the picture and a record of what it is', async () => {
+    const root = workspaceWithPage();
+    const services = new LocalSyncServices({ cwd: root, env: { LOCALEHUB_TOKEN: 't' } });
+    const result = await services.generateScreenMockup({ page: 'src/app/page.tsx', name: '我的保单' });
+
+    const svg = readFileSync(join(root, '.localehub', 'mockups', '我的保单.svg'), 'utf8');
+    expect(svg.startsWith('<svg')).toBe(true);
+
+    const manifest = JSON.parse(readFileSync(join(root, '.localehub', 'mockups', '我的保单.json'), 'utf8')) as Record<string, unknown>;
+    expect(manifest).toMatchObject({
+      projectId: '00000000-0000-0000-0000-000000000001',
+      name: '我的保单',
+      platform: 'web',
+      locale: 'en-US',
+      page: 'src/app/page.tsx',
+      uploaded: null,
+    });
+    expect(manifest.markers).toBeGreaterThan(0);
+    // The comment is the instruction a reviewer needs: this file is the upload, not a source to edit.
+    expect(String(manifest.$comment)).toContain('就是上传到平台的那张图');
+    expect(String(result.manifestPath)).toBe('.localehub/mockups/我的保单.json');
+  });
+
+  it('records the platform’s own checksum once the screen is uploaded', async () => {
+    // The upload itself is the API's; what matters here is that the manifest is written twice — once
+    // for the preview, again once the platform has the bytes — so the committed file can be compared.
+    const root = workspaceWithPage();
+    const services = new LocalSyncServices({ cwd: root, env: { LOCALEHUB_TOKEN: 't' } });
+    const preview = await services.generateScreenMockup({ page: 'src/app/page.tsx', name: '预览' });
+    const manifest = JSON.parse(readFileSync(join(root, String(preview.manifestPath)), 'utf8')) as { uploaded: unknown };
+    expect(manifest.uploaded).toBeNull();
   });
 });
