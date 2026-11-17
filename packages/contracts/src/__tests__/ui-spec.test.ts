@@ -506,8 +506,9 @@ describe('frames on a canvas', () => {
 
   it('is as wide as its frames, and every marker names the state it is in', () => {
     const layout = layoutUiSpec(board);
-    // Two 390-wide frames and the gap between them.
-    expect(layout.width).toBe(390 * 2 + 32);
+    // Two 390-wide frames and the gap between them; the annotation rail is a margin beside that, not
+    // part of the board.
+    expect(layout.width - (layout.rail?.width ?? 0)).toBe(390 * 2 + 32);
     expect(layout.markers.map((marker) => marker.frame)).toEqual(['默认', '默认', '空状态', '空状态']);
     // The frame titles are the platform's annotation, not the page's copy.
     expect(layout.markers.map((marker) => marker.text)).not.toContain('默认');
@@ -565,5 +566,73 @@ describe('frames on a canvas', () => {
     // sits against *that*, twelve hundred pixels to the right of the other frame's.
     expect(bar.y + bar.height).toBeCloseTo(layout.height, 0);
     expect(bar.y).toBeGreaterThan(700);
+  });
+});
+
+/**
+ * What a marker covers, and what the board says about a key.
+ *
+ * Two complaints from a real upload: the boxes circled the letters ("我的" as a 106×20 strip) instead of
+ * the thing a reader recognises — a tab, a button, a field — and a board of states never said what the
+ * *same key* reads like in each one. The rail is that answer, with a leader line to the control it is
+ * about.
+ */
+describe('markers cover the control, and the rail explains the states', () => {
+  const board = spec({
+    type: 'canvas',
+    children: [
+      {
+        type: 'screen',
+        text: '默认',
+        children: [
+          { type: 'nav', text: '我的' },
+          { type: 'button', text: '查看详情' },
+          // The same key in both states: one callout, two lines. That is what the rail is for.
+          { type: 'text', text: '共 3 份保单', key: 'policy.count' },
+        ],
+      },
+      { type: 'screen', text: '空状态', children: [{ type: 'nav', text: '我的' }, { type: 'text', text: '共 0 份保单', key: 'policy.count' }] },
+    ],
+  });
+
+  it('marks a control as the control, not as its label', () => {
+    const layout = layoutUiSpec(board);
+    const button = layout.markers.find((marker) => marker.text === '查看详情')!;
+    // The whole button, padding included, rather than the glyphs inside it.
+    expect(button.height * layout.height).toBeGreaterThan(30);
+    // A nav title gets its half of the bar, at the bar's full height.
+    const title = layout.markers.find((marker) => marker.text === '我的')!;
+    expect(title.height * layout.height).toBeCloseTo(52, 0);
+    expect(title.width * layout.width).toBeGreaterThan(200);
+  });
+
+  it('lists what each state says, with a leader line from the control', () => {
+    const layout = layoutUiSpec(board);
+    const rail = layout.rail!;
+    expect(rail).toBeTruthy();
+    // Three keys on the board, one callout each, in reading order.
+    expect(rail.items.map((item) => item.key)).toEqual(['我的', '查看详情', 'policy.count']);
+    expect(rail.items[0]!.lines).toEqual([
+      { frame: '默认', text: '我的' },
+      { frame: '空状态', text: '我的' },
+    ]);
+    // The button exists in one state only, and the callout says so rather than staying silent.
+    expect(rail.items[1]!.lines).toEqual([
+      { frame: '默认', text: '查看详情' },
+      { frame: '空状态', text: '—' },
+    ]);
+    // One key, two states, both readings side by side.
+    expect(rail.items[2]!.lines).toEqual([
+      { frame: '默认', text: '共 3 份保单' },
+      { frame: '空状态', text: '共 0 份保单' },
+    ]);
+    // The leader starts at the control it is about.
+    const button = layout.markers.find((marker) => marker.text === '查看详情')!;
+    expect(rail.items[1]!.from.x).toBeCloseTo((button.x + button.width) * layout.width, 0);
+  });
+
+  it('does not draw a rail for a single screen, where there are no states to compare', () => {
+    const single = layoutUiSpec(spec({ type: 'screen', children: [{ type: 'button', text: '查看详情' }] }));
+    expect(single.rail).toBeUndefined();
   });
 });

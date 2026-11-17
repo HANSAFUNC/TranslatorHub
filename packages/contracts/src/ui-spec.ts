@@ -374,6 +374,14 @@ export interface UiBox {
   /** The box the marker should cover, when the node carries a translatable string. */
   marker: boolean;
   /**
+   * What the marker covers, when that is not simply the node's content.
+   *
+   * A string's marker should sit on the thing the reader recognises as carrying it: a button's whole
+   * frame, an input's whole field, the cell a tab occupies in its bar. Circling only the glyphs makes
+   * a board of labels look like it was annotated by a machine — which it was, and that is the problem.
+   */
+  markerRect?: UiRect;
+  /**
    * The first item of a `tabs` or `tabbar`: the one a screen shows as current.
    *
    * A segmented control with nothing selected reads as three loose words, and a tab bar with nothing
@@ -409,6 +417,12 @@ const NAV_HEIGHT = 52;
 const TABS_HEIGHT = 34;
 const TABBAR_HEIGHT = 56;
 const CANVAS_GAP = 32;
+/** The annotation rail: a callout column to the right of the board, with a line to each control. */
+const RAIL_WIDTH = 280;
+const RAIL_LINE = 15;
+const RAIL_HEAD = 18;
+const RAIL_GAP = 14;
+const RAIL_FONT = 12;
 /** Room for the component legend under a board that has one. */
 const LEGEND_HEIGHT = 46;
 const LEGEND_FONT = 13;
@@ -537,6 +551,20 @@ function boxesInPaintOrder(boxes: UiBox[]): UiBox[] {
   return [...boxes].sort((a, b) => a.depth - b.depth);
 }
 
+/** The whole control is what its string is on. */
+function markControl(state: LayoutState, node: UiNode, rect: UiRect): void {
+  for (let index = state.boxes.length - 1; index >= 0; index -= 1) {
+    const box = state.boxes[index]!;
+    if (box.node !== node) break;
+    box.markerRect = rect;
+  }
+}
+
+/** The cell an item occupies in a bar: from where the bar starts, the full height of the bar. */
+function markCells(state: LayoutState, from: number, rect: UiRect): void {
+  for (let index = from; index < state.boxes.length; index += 1) state.boxes[index]!.markerRect = rect;
+}
+
 /** Everything the first item of a bar drew is the selected one. */
 function markSelected(state: LayoutState, from: number): void {
   for (let index = from; index < state.boxes.length; index += 1) state.boxes[index]!.selected = true;
@@ -648,11 +676,17 @@ function placeNode(node: UiNode, x: number, y: number, width: number, state: Lay
       const textWidth = measureStyled(node.text ?? '', fontSize, weight) + padding.x * 2;
       const boxWidth = Math.min(width, Math.max(node.width ?? 0, textWidth));
       const height = node.height ?? Math.max(node.type === 'button' ? 38 : 22, fontSize * LINE_HEIGHT + padding.y * 2);
-      return push(height, Boolean(node.text), boxWidth);
+      const boxHeight = push(height, Boolean(node.text), boxWidth);
+      // A button or a chip is one object: the marker covers the whole control, not the letters in it.
+      markControl(state, node, { x, y, width: boxWidth, height: boxHeight });
+      return boxHeight;
     }
     case 'input': {
       const height = node.height ?? Math.max(38, fontSizeOf(node) * LINE_HEIGHT + padding.y * 2);
-      return push(height, Boolean(node.text));
+      const used = push(height, Boolean(node.text));
+      // The field, not the placeholder text: a placeholder is a hint inside a control a person types in.
+      markControl(state, node, { x, y, width, height: used });
+      return used;
     }
     case 'image': {
       const height = node.height ?? 120;
@@ -710,6 +744,8 @@ function placeNode(node: UiNode, x: number, y: number, width: number, state: Lay
         const before = state.boxes.length;
         layoutNode(item, x + index * each, y + 8, each, state, depth + 1);
         if (index === 0) markSelected(state, before);
+        // A tab is a cell, not a line of text: the marker covers the cell a thumb would land on.
+        markCells(state, before, { x: x + index * each, y, width: each, height });
       });
       return push(height, false, width, x, y, { x: 0, y: 0 });
     }
@@ -733,9 +769,11 @@ function placeNode(node: UiNode, x: number, y: number, width: number, state: Lay
         layoutNode(action, cursor, y + (height - 24) / 2, actionWidth / actions.length, state, depth + 1);
         cursor += actionWidth / actions.length;
       }
-      // The marker is the title, not the bar: it points at a string, and it is drawn at the same
-      // place the renderer draws it.
-      return push(height, Boolean(node.text), width, x, y, titleSpace);
+      const used = push(height, Boolean(node.text), width, x, y, titleSpace);
+      // The title's own area of the bar — its half of the width, the bar's full height — rather than the
+      // line of text inside it. A nav bar with a small box on its text reads as an annotation on a word.
+      markControl(state, node, { x: titleSpace.x, y, width: Math.max(1, width - padding.x * 2 - actionWidth), height });
+      return used;
     }
     case 'tabs': {
       const items = node.children ?? [];
@@ -747,6 +785,7 @@ function placeNode(node: UiNode, x: number, y: number, width: number, state: Lay
           const before = state.boxes.length;
           layoutNode(item, x + padding.x + index * each, y + padding.y, each, state, depth + 1);
           if (index === 0) markSelected(state, before);
+          markCells(state, before, { x: x + padding.x + index * each, y, width: each, height });
         });
       }
       return push(height, false, width, x, y, { x: padding.x, y: padding.y });
@@ -892,7 +931,32 @@ export interface UiLayout {
   theme: Required<UiTheme>;
   /** The components the board is made of, numbered in the order they first appear. */
   legend: UiLegendItem[];
+  /**
+   * The annotation rail, when the board has states to compare.
+   *
+   * A board answers "what does this key read like in each state?" only if the reader can find the same
+   * key in every frame. The rail is the answer: a leader line from each key's control out to a callout
+   * that lists what every state says there — including the states where the string is not on screen at
+   * all, which is itself the answer to a translator's question.
+   */
+  rail?: UiRail;
   truncated: boolean;
+}
+
+export interface UiRailItem {
+  key: string;
+  /** Where the leader line starts: the control the string sits on. */
+  from: { x: number; y: number };
+  /** Where the callout sits. */
+  y: number;
+  /** One line per frame, in board order. */
+  lines: { frame: string; text: string }[];
+}
+
+export interface UiRail {
+  x: number;
+  width: number;
+  items: UiRailItem[];
 }
 
 export interface UiLegendItem {
@@ -1006,17 +1070,99 @@ export function layoutUiSpec(spec: UiSpec): UiLayout {
       text,
       ...(box.frame ? { frame: box.frame } : {}),
       ...(box.component ? { component: box.component } : {}),
-      // The content rect, not the whole box: markers point at text, and a padded control's text is
-      // inset inside it.
-      x: clamp01(box.content.x / width),
-      y: clamp01(box.content.y / height),
-      width: clamp01(box.content.width / width),
-      height: clamp01(box.content.height / height),
+      // The control the string belongs to when there is one, its own text box otherwise.
+      ...(() => {
+        const rect = box.markerRect ?? box.content;
+        return {
+          x: clamp01(rect.x / width),
+          y: clamp01(rect.y / height),
+          width: clamp01(rect.width / width),
+          height: clamp01(rect.height / height),
+        };
+      })(),
     });
   }
 
   const theme = { ...defaultTheme(spec.platform), ...stripUndefined(spec.theme) };
-  return { width, height, boxes, markers, theme, legend, truncated: state.truncated };
+  const rail = buildRail(markers, width, height);
+  if (!rail) {
+    return { width, height, boxes, markers, theme, legend, truncated: state.truncated };
+  }
+
+  // The rail widens the picture, and the markers are fractions *of the picture* — the whole upload
+  // contract is "x is the fraction of the image". So they are remapped once the margin is added, or
+  // every box would sit a little to the right of the control it describes.
+  const finalWidth = width + rail.width;
+  const finalHeight = Math.max(height, (rail.items.at(-1)?.y ?? 0) + RAIL_HEAD + 40);
+  const remapped = markers.map((marker) => ({
+    ...marker,
+    x: clamp01((marker.x * width) / finalWidth),
+    width: clamp01((marker.width * width) / finalWidth),
+    y: clamp01((marker.y * height) / finalHeight),
+    height: clamp01((marker.height * height) / finalHeight),
+  }));
+
+  return {
+    width: finalWidth,
+    height: finalHeight,
+    boxes,
+    markers: remapped,
+    theme,
+    legend,
+    rail,
+    truncated: state.truncated,
+  };
+}
+
+/**
+ * The callouts, when the board shows more than one state.
+ *
+ * Order is the frames' own: the first state a key appears in leads, and every state gets a line — with
+ * an em dash where the string is not on that screen, because "it is not there in the empty state" is
+ * exactly what a translator needs to know.
+ */
+function buildRail(markers: readonly MarkerGeometry[], boardWidth: number, boardHeight: number): UiRail | undefined {
+  const frames = [...new Set(markers.map((marker) => marker.frame).filter((frame): frame is string => Boolean(frame)))];
+  if (frames.length < 2) return undefined;
+
+  interface Group {
+    identity: string;
+    key: string;
+    anchor: MarkerGeometry;
+    lines: { frame: string; text: string }[];
+  }
+  const groups: Group[] = [];
+  for (const marker of markers) {
+    const identity = `${marker.namespace}\u0000${marker.key}`;
+    let group = groups.find((candidate) => candidate.identity === identity);
+    if (!group) {
+      group = { identity, key: marker.namespace ? `${marker.namespace}:${marker.key}` : marker.key, anchor: marker, lines: [] };
+      groups.push(group);
+    }
+    const frame = marker.frame ?? '';
+    if (!group.lines.some((line) => line.frame === frame)) group.lines.push({ frame, text: marker.text });
+  }
+  // Every state gets a line, even where the key says nothing at all.
+  for (const group of groups) {
+    group.lines = frames.map((frame) => group.lines.find((line) => line.frame === frame) ?? { frame, text: '—' });
+  }
+
+  let cursor = 24;
+  const items: UiRailItem[] = groups.map((group) => {
+    const y = cursor;
+    cursor += RAIL_HEAD + group.lines.length * RAIL_LINE + RAIL_GAP;
+    return {
+      key: group.key,
+      from: {
+        x: (group.anchor.x + (group.anchor.width ?? 0)) * boardWidth,
+        y: (group.anchor.y + (group.anchor.height ?? 0) / 2) * boardHeight,
+      },
+      y,
+      lines: group.lines,
+    };
+  });
+
+  return { x: boardWidth + 24, width: RAIL_WIDTH, items };
 }
 
 /** Only the fields the caller actually set; anything else keeps the platform's default. */
@@ -1329,6 +1475,32 @@ export function renderUiSvg(layout: UiLayout, fontFamily = 'system-ui, -apple-sy
     }
   }
 
+  if (layout.rail) {
+    // The callout column: a leader line from each key's control out to the margin, then what every
+    // state says there. It is the board's own answer to "where does this string live, and what does it
+    // read like in each state" — a translator should not have to hunt for the same key in four frames.
+    const rail = layout.rail;
+    const last = rail.items.at(-1);
+    const bottom = (last ? last.y + RAIL_HEAD + last.lines.length * RAIL_LINE : 0) + 12;
+    parts.push(
+      `<line x1="${round(rail.x - 16)}" y1="12" x2="${round(rail.x - 16)}" y2="${round(bottom)}" stroke="${escapeXml(COLORS.border)}" stroke-width="1"/>`,
+    );
+    for (const item of rail.items) {
+      parts.push(
+        `<circle cx="${round(item.from.x)}" cy="${round(item.from.y)}" r="3" fill="${escapeXml(accent)}"/>`,
+        `<path d="M ${round(item.from.x + 3)} ${round(item.from.y)} L ${round(rail.x - 18)} ${round(item.from.y)} L ${round(rail.x - 18)} ${round(item.y + RAIL_HEAD / 2)} L ${round(rail.x - 6)} ${round(item.y + RAIL_HEAD / 2)}" fill="none" stroke="${escapeXml(accent)}" stroke-width="1" opacity="0.6"/>`,
+        `<text x="${round(rail.x)}" y="${round(item.y + 11)}" font-size="${RAIL_FONT}" font-weight="600" fill="${escapeXml(COLORS.heading)}">${escapeXml(item.key.slice(0, 34))}</text>`,
+      );
+      item.lines.forEach((line, index) => {
+        const y = item.y + RAIL_HEAD + index * RAIL_LINE + 10;
+        parts.push(
+          `<text x="${round(rail.x)}" y="${round(y)}" font-size="${RAIL_FONT - 1}" fill="${escapeXml(COLORS.caption)}">${escapeXml(line.frame.slice(0, 8))}</text>`,
+          `<text x="${round(rail.x + 52)}" y="${round(y)}" font-size="${RAIL_FONT - 1}" fill="${escapeXml(line.text === '—' ? COLORS.icon : COLORS.body)}">${escapeXml(line.text.slice(0, 30))}${line.text.length > 30 ? '…' : ''}</text>`,
+        );
+      });
+    }
+  }
+
   parts.push(...defs, ...surfaces, ...contents);
   parts.push('</svg>');
   return parts.join('');
@@ -1376,6 +1548,8 @@ export interface RenderedSketch {
   markers: MarkerGeometry[];
   /** The components the board is made of, numbered as the badges on the picture are. */
   legend: UiLegendItem[];
+  /** The callouts beside the board, one per key, when there are states to compare. */
+  rail?: UiRail;
   nodes: number;
   truncated: boolean;
 }
@@ -1389,6 +1563,7 @@ export function renderUiSketch(spec: UiSpec): RenderedSketch {
     height: layout.height,
     markers: layout.markers,
     legend: layout.legend,
+    ...(layout.rail ? { rail: layout.rail } : {}),
     nodes: layout.boxes.length,
     truncated: layout.truncated,
   };
