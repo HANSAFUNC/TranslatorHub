@@ -5,6 +5,14 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { cn } from '@/lib/utils';
 
 /**
+ * How far the pointer may travel before it is a drag rather than a click.
+ *
+ * Four pixels in each direction at most, measured as a sum so the threshold is a diamond rather than a
+ * square. Below it the gesture stays a click, which is what a marker needs.
+ */
+const DRAG_SLOP = 4;
+
+/**
  * The sketch, on a canvas you can move around.
  *
  * A board of states is much wider than a dialog, and a single phone screen is much taller: at "fit"
@@ -93,19 +101,31 @@ export function SketchCanvas({
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           drag.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, panX: pan.x, panY: pan.y };
-          event.currentTarget.setPointerCapture(event.pointerId);
         }}
         onPointerMove={(event) => {
           const state = drag.current;
           if (!state || state.pointerId !== event.pointerId) return;
           const dx = event.clientX - state.startX;
           const dy = event.clientY - state.startY;
-          // A few pixels of slop, so a click on a marker is not read as the start of a pan.
-          if (!dragging && Math.abs(dx) + Math.abs(dy) > 4) setDragging(true);
-          if (dragging || Math.abs(dx) + Math.abs(dy) > 4) setPan({ x: state.panX + dx, y: state.panY + dy });
+          if (!dragging) {
+            // A few pixels of slop, so a click on a marker is not read as the start of a pan — and the
+            // pointer is captured *only* once a drag has really begun. Capturing on pointerdown
+            // retargeted the compatibility click to this pane, so a marker never received its own
+            // click: the sketch and the list beside it stopped talking to each other in that
+            // direction, while row → marker still worked because a row is not inside the canvas.
+            if (Math.abs(dx) + Math.abs(dy) <= DRAG_SLOP) return;
+            setDragging(true);
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }
+          setPan({ x: state.panX + dx, y: state.panY + dy });
         }}
         onPointerUp={(event) => {
-          if (drag.current?.pointerId === event.pointerId) event.currentTarget.releasePointerCapture(event.pointerId);
+          if (drag.current?.pointerId !== event.pointerId) return;
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+          drag.current = null;
+          setDragging(false);
+        }}
+        onPointerCancel={() => {
           drag.current = null;
           setDragging(false);
         }}
