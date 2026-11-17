@@ -62,6 +62,19 @@ export const UI_IMAGE_DATA_PATTERN = /^data:image\/(png|jpe?g|gif|webp|avif);bas
 
 /** One picture, ~300 KB of bytes once decoded. Beyond this the payload stops being a payload. */
 export const MAX_INLINE_IMAGE_CHARS = 400_000;
+
+/**
+ * An inline `<svg>` is a picture the page carries, and it is drawn as one.
+ *
+ * Icons, logos and illustrations are usually inline SVG — the most common "asset" on a page that the
+ * platform was drawing as a grey circle. There is nothing to fetch: the markup is right there, so the
+ * extractor turns it into an `image` node like any other. The platform's SVG gate still runs over the
+ * finished sketch, so anything scriptable inside it is refused rather than drawn.
+ */
+export const MAX_INLINE_SVG_CHARS = 20_000;
+
+/** `graphic` in the source: carried as an attribute value so the scanner still sees one element. */
+export const UI_GRAPHIC_ATTRIBUTE = 'data-inline-svg';
 /** All of them together: the stored sketch has its own 2 MB ceiling to stay under. */
 export const MAX_INLINE_IMAGE_TOTAL_CHARS = 1_200_000;
 
@@ -173,8 +186,17 @@ export interface UiNode {
   height?: number;
   /** Equal-width columns for a `row` (`grid-cols-3`). */
   columns?: number;
-  /** The picture itself, as a base64 data URL. `image` and `icon` nodes only. */
+  /** The picture itself, as a base64 data URL (raster only). `image` and `icon` nodes only. */
   src?: string;
+  /**
+   * The picture as SVG markup, embedded into the sketch as it is.
+   *
+   * A vector travels as markup rather than as a data URI: a sketch is served as an SVG inside an
+   * `<img>`, and in that context the engine refuses to load anything the document points at —
+   * including another SVG, even as a `data:` URI. Measured, not assumed: an
+   * `<image href="data:image/svg+xml;…">` draws nothing at all.
+   */
+  graphic?: string;
   /**
    * The component this element is an instance of (`PrimaryButton`, `ProductCard`, `card`).
    *
@@ -200,6 +222,7 @@ export const uiNodeSchema: z.ZodType<UiNode> = z.lazy(() =>
     height: z.number().positive().max(8192).optional(),
     columns: z.number().int().min(1).max(6).optional(),
     component: z.string().min(1).max(64).optional(),
+    graphic: z.string().min(1).max(MAX_INLINE_SVG_CHARS).optional(),
     src: z
       .string()
       .max(MAX_INLINE_IMAGE_CHARS)
@@ -1357,6 +1380,15 @@ export function renderUiSvg(layout: UiLayout, fontFamily = 'system-ui, -apple-sy
       case 'image': {
         const radius = style.radius ?? 8;
         surfaces.push(panel(style.background ?? COLORS.image, style.border ?? COLORS.border, radius));
+        if (node.graphic) {
+          // The drawing goes in as itself, scaled into the box: a nested `<svg>` at the box's position
+          // and size, keeping the icon's own viewBox.
+          const embedded = embedGraphic(node.graphic, { x, y, width, height });
+          if (embedded) {
+            contents.push(embedded);
+            break;
+          }
+        }
         if (node.src) {
           // Clipped to the frame, so a rounded corner stays rounded with a photo in it. The id is the
           // picture's index: unique within the document, and identical on every render.
@@ -1365,6 +1397,7 @@ export function renderUiSvg(layout: UiLayout, fontFamily = 'system-ui, -apple-sy
           defs.push(
             `<clipPath id="${clip}"><rect x="${round(x)}" y="${round(y)}" width="${round(width)}" height="${round(height)}" rx="${round(radius)}"/></clipPath>`,
           );
+          // A photograph fills its frame and is cropped.
           contents.push(
             `<image href="${node.src}" x="${round(x)}" y="${round(y)}" width="${round(width)}" height="${round(height)}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clip})"/>`,
           );
@@ -1512,6 +1545,26 @@ export function renderUiSvg(layout: UiLayout, fontFamily = 'system-ui, -apple-sy
  * A label is the one thing a sketch cannot afford to lose, and a caller that sets a light background
  * on a button — `bg-white text-zinc-900` is a real pattern — would otherwise get white text on white.
  */
+/**
+ * Put a piece of SVG markup inside the sketch, at this box.
+ *
+ * The markup keeps its own coordinate system (its `viewBox`), which is what makes a 24×24 icon draw
+ * correctly in a 20-pixel slot. A fragment with no `viewBox` is skipped: without one there is no way to
+ * know what its coordinates mean, and guessing would draw a corner of an icon.
+ */
+function embedGraphic(markup: string, box: { x: number; y: number; width: number; height: number }): string | null {
+  const open = /^\s*<svg\b([^>]*)>/i.exec(markup);
+  if (!open) return null;
+  const viewBox = /viewBox\s*=\s*["']([^"']+)["']/i.exec(open[1]!)?.[1];
+  if (!viewBox) return null;
+  const inner = markup.slice(open[0].length).replace(/<\/svg\s*>\s*$/i, '');
+  if (!inner.trim()) return null;
+  return (
+    `<svg x="${round(box.x)}" y="${round(box.y)}" width="${round(box.width)}" height="${round(box.height)}" ` +
+    `viewBox="${escapeXml(viewBox)}" preserveAspectRatio="xMidYMid meet">${inner}</svg>`
+  );
+}
+
 function readableOn(color: string): string {
   return isLight(color) ? COLORS.heading : COLORS.buttonText;
 }

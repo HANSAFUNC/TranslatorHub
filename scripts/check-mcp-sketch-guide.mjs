@@ -96,6 +96,15 @@ check(/\| `badge` \|/.test(guideText) && /\| `divider` \|/.test(guideText), 'the
 check(guideText.includes('markers.unmatched') && guideText.includes('markers.matchedKeys'), 'the guide names the marker fields');
 check(guideText.includes('整体替换'), 'the guide states the replacement rule');
 check(guideText.includes('localehub mockup --page'), 'the guide gives the CLI recipe');
+// The guidance tool: the guide has to say that a sketch is judged after it is drawn, and what each
+// finding means — the failure modes are silent otherwise.
+check(guideText.includes('report') && guideText.includes('sourceColours'), 'the guide explains the report the platform returns');
+check(
+  ['NO_PICTURES', 'PLACEHOLDER_PICTURES', 'NO_SOURCE_COLOURS', 'IDENTICAL_FRAMES', 'MISSING_KEYS', 'NO_COMPONENTS'].every(
+    (code) => guideText.includes(code),
+  ),
+  'the guide lists every finding the report can carry',
+);
 
 const prompts = (await client.listPrompts()).prompts.map((row) => row.name);
 check(prompts.includes('upload-screen-sketch'), 'the sketch prompt is registered', prompts.join(', '));
@@ -103,6 +112,7 @@ const rendered = await client.getPrompt({ name: 'upload-screen-sketch', argument
 const promptText = String(rendered.messages[0]?.content?.text ?? '');
 check(promptText.includes('localehub://screen-sketch-guide'), 'the prompt sends the agent to the guide');
 check(promptText.includes('不要传 markers'), 'the prompt says not to hand-roll markers');
+check(promptText.includes('report'), 'the prompt tells the agent to read the report back');
 
 const tool = (await client.listTools()).tools.find((row) => row.name === 'upload_screen_mockup');
 check(tool?.description?.includes('ui'), 'the tool description leads with ui');

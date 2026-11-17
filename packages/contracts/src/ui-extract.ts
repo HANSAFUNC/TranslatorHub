@@ -1,6 +1,9 @@
 import { ErrorCode, LocaleHubError } from './errors';
+import { unsafeSvgReasons } from './mockup';
 import {
   MAX_INLINE_IMAGE_CHARS,
+  MAX_INLINE_SVG_CHARS,
+  UI_GRAPHIC_ATTRIBUTE,
   MAX_UI_NODES,
   UI_IMAGE_DATA_PATTERN,
   type UiNode,
@@ -354,6 +357,32 @@ const TEXT_ATTRIBUTES = ['placeholder', 'title', 'alt', 'aria-label', 'label', '
  * is React's list key, which is an index or an id rather than a translation key.
  */
 const KEY_ATTRIBUTES = ['data-i18n-key', 'data-key', 'i18n-key'];
+
+/**
+ * Turn each inline `<svg>` into an `<img>` with the same drawing inside it.
+ *
+ * An inline SVG is an image the page already carries, and the renderer draws images — so the cheapest
+ * correct thing is to hand it over in the form everything downstream already understands, rather than
+ * teaching every layer to walk foreign markup. Two are skipped rather than drawn: one that trips the
+ * platform's own SVG gate (a script inside an icon is not a picture), and one too large to belong to a
+ * sketch. Both are counted so the caller can be told.
+ */
+function inlineSvgAsImages(source: string): { source: string; drawn: number; skipped: number } {
+  let drawn = 0;
+  let skipped = 0;
+  const next = source.replace(/<svg\b[\s\S]*?<\/svg>/gi, (whole) => {
+    if (whole.length > MAX_INLINE_SVG_CHARS || unsafeSvgReasons(whole).length || !/viewBox\s*=/i.test(whole)) {
+      skipped += 1;
+      return whole;
+    }
+    drawn += 1;
+    // Carried as an attribute so the scanner still sees one element: the drawing travels in the node,
+    // and the renderer embeds it.
+    const encoded = Buffer.from(whole, 'utf8').toString('base64');
+    return `<img ${UI_GRAPHIC_ATTRIBUTE}="${encoded}">`;
+  });
+  return { source: next, drawn, skipped };
+}
 
 /**
  * The tags that are markup rather than somebody's component.
@@ -718,10 +747,17 @@ function toNode(
     const src = element.attributes.src;
     const inline =
       kind === 'image' && src && src.length <= MAX_INLINE_IMAGE_CHARS && UI_IMAGE_DATA_PATTERN.test(src) ? src : undefined;
+    // A vector the page carried as markup: decoded here, drawn by the renderer as a nested `<svg>`.
+    const encodedGraphic = element.attributes[UI_GRAPHIC_ATTRIBUTE];
+    const graphic =
+      kind === 'image' && encodedGraphic && encodedGraphic.length <= MAX_INLINE_SVG_CHARS * 2
+        ? Buffer.from(encodedGraphic, 'base64').toString('utf8')
+        : undefined;
     return styled({
       type: kind as UiNode['type'],
       ...(text ? { text } : {}),
       ...(inline ? { src: inline } : {}),
+      ...(!inline && graphic && !unsafeSvgReasons(graphic).length ? { graphic } : {}),
       ...(text && explicitKey ? { key: explicitKey } : {}),
       ...(namespace ? { namespace } : {}),
     });
@@ -879,7 +915,8 @@ export function extractUiSpec(source: string, fileName: string, options: Extract
   };
   const withSheet: ExtractOptions = { ...options, styleSheet };
 
-  const markup = withoutCode.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '');
+  const withInlinePictures = inlineSvgAsImages(withoutCode.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ''));
+  const markup = withInlinePictures.source;
   const elements = /\.html?$/i.test(fileName) ? parseHtml(markup) : parseJsx(markup);
 
   const nodes = elements

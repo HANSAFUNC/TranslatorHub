@@ -6,6 +6,7 @@ export * from './roles';
 export * from './locale';
 export * from './locale-catalog';
 export * from './mockup';
+export * from './mockup-report';
 export * from './ui-spec';
 export * from './ui-extract';
 export * from './ui-style';

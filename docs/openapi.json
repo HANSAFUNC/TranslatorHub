@@ -3852,6 +3852,11 @@
                                   "minLength": 1,
                                   "maxLength": 64
                                 },
+                                "graphic": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 20000
+                                },
                                 "src": {
                                   "type": "string",
                                   "maxLength": 400000,
@@ -4064,6 +4069,11 @@
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 64
+                          },
+                          "graphic": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 20000
                           },
                           "src": {
                             "type": "string",

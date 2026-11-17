@@ -1087,6 +1087,14 @@ model ScreenMockup {
    * only the render that drew the numbers knows their order.
    */
   legend         Json         @default("[]")
+  /**
+   * The sketch's own report: what a reader would notice is missing (no pictures, no page colours,
+   * identical frames), with what to do about it.
+   *
+   * Stored rather than derived on every read because reading it means pulling the image bytes; older
+   * rows carry an empty array and are analysed on demand.
+   */
+  report         Json         @default("[]")
   createdById    String?      @map("created_by_id") @db.Uuid
   createdAt      DateTime     @default(now()) @map("created_at")
   updatedAt      DateTime     @updatedAt @map("updated_at")

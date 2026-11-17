@@ -291,9 +291,9 @@ Token 推得上去、落不下来——这正是规格要的分离。
 | --- | --- | --- |
 | `instructions` | 两个方向别搞反、三条事后难改的规则、分批上限、dry-run 默认 | 客户端在调用任何工具前放进上下文 |
 | `localehub://import-guide` | 完整上传教程：调用形状、逐条规则、实测边界、推荐顺序、`.strings` 解析坑 | Agent 按需读取 |
-| `localehub://screen-sketch-guide` | 界面草图教程：`ui` 元素树与节点表、key/namespace 从哪来、上限、两件不可逆的事、CLI 从源码生成的做法 | Agent 按需读取 |
+| `localehub://screen-sketch-guide` | 界面草图教程：三种输入、节点表、key/namespace 从哪来、上限、两件不可逆的事、CLI 从源码生成的做法，以及 §7「传完先看 `report`」的逐条对照表 | Agent 按需读取 |
 | `import-localization-files` 提示词 | 七步流程，供人在客户端里直接唤起 | 人（斜杠命令） |
-| `upload-screen-sketch` 提示词 | 六步流程：生成 `ui` 描述 → 报出标记 → `upload_screen_mockup` | 人（斜杠命令） |
+| `upload-screen-sketch` 提示词 | 七步流程：把页面转成 HTML → 上报标记 → 读 `report`，没还原到位就按 advice 改输入后重传 | 人（斜杠命令） |
 | 工具与字段的 `description` | 每个字段在什么情况下会出错（如 `platform` 默认 `web`，iOS 必须显式传） | 随 `tools/list` 一起下发 |
 
 关键一条：**字段描述随 schema 走，所以默认值也能被解释**。`platform` 的 schema 现在是
@@ -456,6 +456,13 @@ localehub mockup --page src/app/projects/page.tsx --name 项目列表 --confirm 
   返回值 `markers.unmatched` 里报告，编辑器把它显示为「平台没有这个 Key」。之后
   `import_translations` 把 key 导进来，标记自动对上译文，不需要重传草图——反过来（先要求 key 存在）
   等于要求先有译文才能画界面，把顺序完全弄反了。
+- **传完先看 `report`，它就是「引导工具」。** 返回值里带一份平台看过自己画出来的图之后的结论：
+  `stats` 是图上真实的数量，`findings` 逐条给出问题与 `advice`。**这些失败不会报错**——上传成功，
+  只是图上看不出是哪个页面，所以不读它就不知道。`NO_PICTURES` / `PLACEHOLDER_PICTURES`（图片只有
+  URL，平台不联网取图）、`NO_SOURCE_COLOURS`（颜色所在的样式表没跟着上来）、`IDENTICAL_FRAMES`
+  （几帧是复制品）这三类说明还没还原到位，按 advice 改输入后**同名重传**；`clean` 或只剩
+  `MISSING_KEYS` 就可以继续。MCP 的 `nextSteps` 会把 findings 的标题直接列出来，
+  教程 §7 有逐条对照表。
 - **屏幕名是身份。** 同名同端再传一次是整体替换（图与标记一起换）。Agent 重新生成一版不该留下
   `checkout-2`、`checkout-final`；确实想并存就换个名字，或者传 `replace: false` 让平台报冲突。
 - **标记按 key + namespace 匹配，不按端。** 一个界面只画一次，`platform` 是这张图的标签。同一 key

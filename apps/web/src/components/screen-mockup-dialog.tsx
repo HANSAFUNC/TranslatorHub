@@ -89,8 +89,15 @@ function useObjectUrl(path: string | null): { url: string | null; error: unknown
  * click through `querySelector` silently did nothing. A character a namespace cannot contain (it is a
  * `.strings` table name) is both safe in a selector and readable in the inspector.
  */
-function markerKey(marker: { key: string; namespace: string }): string {
-  return `${marker.namespace}\u001f${marker.key}`;
+/**
+ * One marker's identity: the key, its namespace, and the frame it is in.
+ *
+ * The frame matters as soon as a board shows several states: the same key is on screen in each of them,
+ * and identifying markers by key alone made four boxes and four rows light up at once — clicking one
+ * occurrence looked like the panel had selected the whole board.
+ */
+function markerKey(marker: { key: string; namespace: string; frame?: string | null }): string {
+  return `${marker.namespace}\u001f${marker.key}\u001f${marker.frame ?? ''}`;
 }
 
 export function ScreenMockupDialog({
@@ -312,6 +319,24 @@ export function ScreenMockupDialog({
 
         <ErrorAlert error={listError ?? detailError ?? imageError} />
 
+        {/* The platform's own reading of the sketch: the failures here are quiet ones (a picture that
+            came out as a grey box, a page that contributed no colour, four states that are copies), so
+            the dialog says them out loud, with what to do about each. */}
+        {detail?.mockup.report && !detail.mockup.report.clean ? (
+          <div className="bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900 mx-4 mt-2 flex flex-col gap-1 rounded-md border px-3 py-2 text-xs">
+            <span className="font-medium">这张草图有 {detail.mockup.report.findings.length} 处可以改进</span>
+            {detail.mockup.report.findings.map((finding) => (
+              <div key={finding.code} className="flex flex-col gap-0.5">
+                <span>
+                  {finding.severity === 'warning' ? '⚠ ' : '· '}
+                  {finding.title}
+                </span>
+                <span className="text-muted-foreground pl-3">{finding.advice}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
         {!listLoading && mockups && mockups.length === 0 ? (
           <div className="p-6">
             <EmptyState
@@ -451,7 +476,8 @@ export function ScreenMockupDialog({
             <div className="flex min-h-0 flex-1 flex-col border-t lg:max-w-[38rem] lg:border-l lg:border-t-0">
               <div className="text-muted-foreground flex shrink-0 items-center justify-between gap-2 border-b px-4 py-2 text-xs">
                 <span>
-                  {markers.length} 个标记 · 目标语言{' '}
+                  {markers.length} 个标记
+                  {frames.length > 1 ? ` · ${frames.length} 个状态` : ''} · 目标语言{' '}
                   <span className="font-mono">{locale ? localeDisplayName(locale) : '—'}</span>
                 </span>
                 <span className="hidden sm:inline">点标记 ↔ 点条目，两侧互相跳转</span>

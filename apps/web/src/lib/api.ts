@@ -288,6 +288,8 @@ export interface MockupSummary {
    * render that drew the numbers knows their order.
    */
   components?: { index: number; name: string; count: number }[];
+  /** Present on the detail response: what the platform found wrong with the sketch. */
+  report?: MockupReport;
   updatedAt: string;
   imagePath: string;
   /** Present when the list was asked about a specific key. */
@@ -320,6 +322,21 @@ export interface MockupMarker {
    */
   source: string | null;
   entry: { entryId: string; value: string; status: string; revision: number; updatedAt: string } | null;
+}
+
+/** What a reader would notice is missing from the sketch, with what to do about it. */
+export interface MockupFinding {
+  code: string;
+  severity: 'warning' | 'info';
+  title: string;
+  advice: string;
+  count?: number;
+}
+
+export interface MockupReport {
+  findings: MockupFinding[];
+  stats: Record<string, number>;
+  clean: boolean;
 }
 
 export interface MockupDetail {

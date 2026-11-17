@@ -30,6 +30,8 @@ import { globToRegExp } from '@localehub/contracts';
 import type { ApplyPlan } from '@localehub/sync-engine';
 import { executeApply, planApply, toApplyReportPayload } from './apply';
 import { scanAndCollect, type ScanSummary } from './scan';
+import { analyzeSketch } from '@localehub/contracts';
+
 import { inlineLocalImages, readPageFile } from './ui-extract';
 import { StateStore } from './state';
 
@@ -527,6 +529,20 @@ export class LocalSyncServices {
     };
     writeManifest(null);
 
+    // The same reading the platform will do, run here so the caller hears it before uploading.
+    const report = analyzeSketch({
+      svg: sketch.svg,
+      markers: sketch.markers.map((marker) => ({
+        key: marker.key,
+        namespace: marker.namespace,
+        frame: marker.frame ?? null,
+        component: marker.component ?? null,
+        text: marker.text,
+        missing: false,
+      })),
+      legend: sketch.legend,
+    });
+
     const summary = {
       page: fileName,
       name,
@@ -544,6 +560,7 @@ export class LocalSyncServices {
         ...warnings,
         ...pictures.skipped.map((entry) => `没有内联 ${entry.ref}：${entry.why}（草图里会是占位框）`),
       ],
+      report,
       uploaded: false as boolean,
       requiresConfirmation: !input.confirm,
     };
@@ -553,7 +570,11 @@ export class LocalSyncServices {
         ...summary,
         message:
           `生成了 ${sketch.markers.length} 个标记（写到这里：${summary.svgPath}）。` +
-          '要提交到平台，加 --confirm；提交后这个屏幕在翻译编辑器里就能和译文并排看了。',
+          '要提交到平台，加 --confirm；提交后这个屏幕在翻译编辑器里就能和译文并排看了。' +
+          (report.findings.length
+            ? `\n可以先改这些：\n${report.findings.map((finding) => `  · ${finding.title}——${finding.advice}`).join('\n')}`
+            : ''),
+
       };
     }
 

@@ -89,6 +89,7 @@ interface UploadResult {
     frames: { title: string; markers: number }[];
   };
   components: { index: number; name: string; count: number }[];
+  report: { findings: { code: string; title: string; advice: string }[]; clean: boolean };
   imagePath: string;
 }
 
@@ -488,7 +489,15 @@ describe('screen mockups', () => {
     // The canvas is two frames wide, not one viewport.
     expect(response.body.data!.image.width).toBeGreaterThan(1400);
 
-    const detail = await call<{ mockup: { components: { name: string }[] }; markers: { key: string; frame: string | null; component: string | null }[] }>(
+    // The platform says what is wrong with what it just drew, rather than leaving the caller to
+    // discover it by looking at a grey picture: no pictures here, no colours of the page's own, and
+    // the same content in both frames.
+    const codes = (response.body.data!.report.findings as { code: string }[]).map((finding) => finding.code);
+    expect(codes).toContain('NO_SOURCE_COLOURS');
+    expect(codes).toContain('NO_PICTURES');
+    expect(codes.every((code) => typeof code === 'string')).toBe(true);
+
+    const detail = await call<{ mockup: { components: { name: string }[]; report: { findings: unknown[] } }; markers: { key: string; frame: string | null; component: string | null }[] }>(
       `/projects/${projectId}/mockups/${response.body.data!.mockupId}`,
       { token: session.token },
     );
@@ -497,6 +506,8 @@ describe('screen mockups', () => {
     // A string inside the card belongs to the card, which is what the editor highlights by.
     expect(detail.body.data!.markers.filter((marker) => marker.component === 'policy-card').length).toBeGreaterThan(0);
     expect(detail.body.data!.mockup.components.map((item) => item.name)).toEqual(['navbar', 'policy-card', 'primary-button']);
+    // The same report comes back when the editor opens the screen later.
+    expect(detail.body.data!.mockup.report.findings.length).toBeGreaterThan(0);
   }, 60_000);
 
   it('refuses frames together with a single-screen input, so the board is unambiguous', async () => {

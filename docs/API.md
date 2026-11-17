@@ -170,6 +170,14 @@ public 路由不受影响，负载均衡仍可探测。
 指向平台尚未导入的 Key 的标记会照常保存并在响应里列为 `markers.unmatched` —— 草图通常画在导入
 之前，编辑器把它显示为「平台没有这个 Key」，而不是假装那处不存在。
 
+响应里的 `report` 是**平台看过自己画出来的那张图之后**的结论，不是对入参的复述：`stats` 给出图上真实的
+数量（`pictures` / `placeholders` / `sourceColours` / `frames` / `markers` / `missingKeys` / `components`），
+`findings` 逐条列出看图才看得出来的问题，每条都带 `advice`（指名要改哪个字段或用哪条命令）。
+这些失败本来都是静默的——上传照样成功，只是图上看不出是哪个页面——所以这是调用端唯一的反馈回路。
+`clean: true` 表示没话说。详情接口同样返回它；对在这次改动之前上传的行，`report` 由存下来的图懒算，
+不需要重传。判定写在 `@localehub/contracts` 的 `analyzeSketch`，与 MCP 是同一份。
+
+
 `?:projectId` 必须属于调用方所在组织：不属于或不存在一律 404（不会写入任何行；`(project_id,
 platform, name)` 的唯一索引不按租户隔离，放行会让他人永久占住一个屏幕名）。上传的 JSON 请求体在这一条
 路由上放宽到 4 MB（其余路由仍是默认的 100 kB），超限返回 413 而不是 500。

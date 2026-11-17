@@ -392,6 +392,31 @@ localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表 -
 
 两个方向都行：先传草图、key 还没导入（\`unmatched\` 会列出来）可以，导入后自动对上；先导入再传草图也可以，
 这时 \`matchedKeys\` 直接就是全部。草图不是导入的前置条件。
+
+## 7. 传完先看 \`report\`，再决定下一次怎么传
+
+返回值里的 \`report\` 是平台**看过自己画出来的图之后**说的话，不是对你输入的复述：\`stats\` 是图上真实有的数量
+（\`pictures\` 画出来的图片/图标、\`placeholders\` 空占位框、\`sourceColours\` 页面自己贡献的颜色、\`frames\`、\`markers\`、
+\`missingKeys\`、\`components\`），\`findings\` 是逐条发现的问题，每条都带 \`advice\`（要说清改哪个字段、用哪条命令）。
+\`clean: true\` 就是没话说。
+
+看懂它的关键在于：这些失败**不会报错**——上传一样成功，只是图上看不出来，所以只有 \`report\` 会告诉你。
+
+| finding | 图上看是什么样 | 下一次怎么传 |
+| --- | --- | --- |
+| \`NO_PICTURES\` | 一个图片/图标都没有 | 行内 \`<svg>\` 会直接画出来；位图内联成 \`data:image/…\`；仓库里的图用 \`localehub mockup --page\`（自动内联小图） |
+| \`PLACEHOLDER_PICTURES\` | 若干灰底斜线占位框 | 同上；占位框是因为图片只有 URL，平台不联网取图 |
+| \`NO_SOURCE_COLOURS\` | 全是平台默认的黑白灰，看不出是哪个 App | 颜色所在的样式表用 \`css\` 字段一起传（\`:root\` 变量会解析），或 \`theme: {"accent": "品牌色", "background": "底色"}\`；class 写成 Tailwind 的也能读到 |
+| \`IDENTICAL_FRAMES\` | 几帧一模一样 | 帧画的是不同状态（空列表 / 加载中 / 校验失败 / 禁用），重复的删掉 |
+| \`MISSING_KEYS\` | 标记指向平台没有的 key | 不是错误：\`import_translations\` 之后自动对上；要一开始就对，给元素写 \`data-key\` |
+| \`NO_COMPONENTS\` | 图例是空的，编辑器里没法按组件筛 | JSX 用组件名，HTML 用类名或 \`data-component="PrimaryButton"\` |
+
+只有这六条：报告只说自己**在图上看得见**的事，不会猜。自己传 \`image_base64\` + \`markers\` 时，平台手里只有那张图，
+没有图上元素的坐标，所以判断不了圈得准不准——这正是 \`html\` / \`ui\` 更省事的地方：圈在哪由平台自己算。
+
+**先看 \`report\`，再决定重传**：有 \`NO_PICTURES\` / \`NO_SOURCE_COLOURS\` / \`IDENTICAL_FRAMES\` 这三条时，
+图基本没达到「看得出是哪个页面」的要求，值得改输入再传一次（同名重传是整体替换，不留旧版本，所以直接改就行）。
+\`clean: true\` 或只剩 \`MISSING_KEYS\` 就可以继续下一步，不必为了好看反复重传。
 `;
 
 /**
@@ -415,6 +440,8 @@ export function remoteSketchPrompt(args: { projectId?: string; page?: string } =
     '   分表的项目还要给 namespace（iOS 的 Localizable / InfoPlist）。',
     '5. 调 upload_screen_mockup：三种输入选一种（html / ui / image_base64+markers），不要传 markers 配 html 或 ui；name 用页面名，不要用版本号。',
     '6. 把返回值里的 markers.total / markers.matchedKeys / markers.unmatched 报给我：unmatched 说明这些 key 还没导入，先传草图没问题，导入后会自动对上。',
+    '7. 读同一个返回值里的 report：它是平台看过自己画出来的图之后的结论（stats 里 pictures / placeholders / sourceColours / frames 是图上真实的数量，findings 每条带 advice）。',
+    '   出现 NO_PICTURES、PLACEHOLDER_PICTURES、NO_SOURCE_COLOURS、IDENTICAL_FRAMES 时，图还没达到「看得出是哪个页面」，按 advice 改输入（内联图片、补 css 或 theme、删掉重复的帧）后同名重传，再把新的 report 报给我；clean 或只剩 MISSING_KEYS 就可以收工。',
     '',
     '注意：upload_screen_mockup 没有 dry run，同名屏幕会被整体替换（含旧标记），上传前把屏幕名与端再确认一遍。',
   ].join('\n');

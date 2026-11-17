@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ErrorCode, LocaleHubError, Role, type PlatformName } from '@localehub/contracts';
 import { assertRole, type ActorContext } from '@localehub/permissions';
+import { analyzeSketch, type MockupReport } from '@localehub/contracts';
 import { listScreenMockups, resolveMockupInput, resolveScreenMarkers, upsertScreenMockup } from '@localehub/domain';
 import { PrismaService } from '../../common/prisma.service';
 import { AuditService } from '../../common/audit.service';
@@ -86,6 +87,8 @@ export class MockupsService {
           contentHash: true,
           // The component numbering the picture carries, so the editor lists the same numbers.
           legend: true,
+          // What is missing from the sketch, written when it was uploaded.
+          report: true,
           createdAt: true,
           updatedAt: true,
           markers: {
@@ -115,6 +118,14 @@ export class MockupsService {
         locale,
       });
 
+      // A sketch uploaded before the report existed carries an empty one: analyse it now, from the
+      // bytes, and leave the row alone — a read stays a read. The next upload of the same screen
+      // stores it.
+      const stored = mockup.report as unknown as MockupReport | null;
+      const report = stored?.findings
+        ? stored
+        : await this.analyzeStored(actor, projectId, mockupId, markers, mockup.legend as unknown as { name: string }[]);
+
       return {
         mockup: {
           id: mockup.id,
@@ -131,11 +142,42 @@ export class MockupsService {
           markerCount: markers.length,
           // The component numbering, exactly as the picture's badges show it.
           components: mockup.legend,
+          report,
           imagePath: `/projects/${projectId}/mockups/${mockup.id}/image`,
         },
         locale,
         markers,
       };
+    });
+  }
+
+  /**
+   * The report for a sketch that was uploaded before there was one.
+   *
+   * Reads the stored bytes, which is exactly why new uploads compute it once and keep it.
+   */
+  private async analyzeStored(
+    actor: ActorContext,
+    projectId: string,
+    mockupId: string,
+    markers: readonly { key: string; namespace: string; frame: string | null; component: string | null; text: string | null; platform: string | null }[],
+    legend: { name: string }[],
+  ): Promise<MockupReport> {
+    const row = await this.prisma.tenant.withOrganization(actor.organizationId, (tx) =>
+      tx.screenMockup.findFirst({ where: { id: mockupId, projectId }, select: { image: true } }),
+    );
+    if (!row) throw new LocaleHubError(ErrorCode.NOT_FOUND, `Mockup ${mockupId} not found`, 404);
+    return analyzeSketch({
+      svg: Buffer.from(row.image).toString('utf8'),
+      markers: markers.map((marker) => ({
+        key: marker.key,
+        namespace: marker.namespace,
+        frame: marker.frame,
+        component: marker.component,
+        text: marker.text,
+        missing: marker.platform === null,
+      })),
+      legend,
     });
   }
 

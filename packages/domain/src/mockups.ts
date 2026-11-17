@@ -5,6 +5,7 @@ import {
   MAX_MARKERS_PER_MOCKUP,
   MAX_MOCKUP_BYTES,
   MAX_MOCKUP_DIMENSION,
+  analyzeSketch,
   canonicalizeLocaleTag,
   defaultViewport,
   detectImageType,
@@ -17,6 +18,7 @@ import {
   type MockupMarkerInput,
   type PlatformName,
   type ReviewStatus,
+  type MockupReport,
   type UiLegendItem,
   type UiSpec,
   type UiTheme,
@@ -436,6 +438,8 @@ export interface UpsertScreenMockupResult {
   };
   /** The component numbering the picture carries, for the list the editor shows beside it. */
   components: UiLegendItem[];
+  /** What is missing from the sketch, with advice — the same report the editor shows. */
+  report: MockupReport;
   /** What the editor adds to a relative path to fetch the image. */
   imagePath: string;
 }
@@ -498,8 +502,35 @@ export async function upsertScreenMockup(
     );
   }
 
+  // What a reader would notice is missing, computed from the picture that was just drawn: an image
+  // slot that came out as a placeholder, a page that contributed no colour of its own, frames that are
+  // copies. It is stored with the sketch so the editor can show it without re-reading the bytes.
+  const keyNames = [...new Set(markers.map((marker) => marker.key))];
+  const keys = await tx.translationKey.findMany({
+    // `archivedAt: null`, like every other key read in the codebase. An archived key was dropped from
+    // the repository, so a marker pointing at it is pointing at something the editor will not list —
+    // counting it as matched told the caller a key was imported when it had been removed.
+    where: { projectId: input.projectId, key: { in: keyNames }, archivedAt: null },
+    select: { key: true, namespace: { select: { name: true } } },
+  });
+  const known = new Set(keys.map((row) => `${row.namespace.name}\u0000${row.key}`));
+
+  const report = analyzeSketch({
+    svg: input.image.bytes.toString('utf8'),
+    markers: markers.map((marker) => ({
+      key: marker.key,
+      namespace: marker.namespace,
+      frame: marker.frame ?? null,
+      component: marker.component ?? null,
+      text: marker.text ?? null,
+      missing: !known.has(`${marker.namespace}\u0000${marker.key}`),
+    })),
+    legend: input.legend ?? [],
+  });
+
   const data = {
     legend: (input.legend ?? []) as unknown as Prisma.InputJsonValue,
+    report: report as unknown as Prisma.InputJsonValue,
     organizationId: input.organizationId,
     projectId: input.projectId,
     name: input.name,
@@ -536,14 +567,14 @@ export async function upsertScreenMockup(
         await tx.$queryRaw<{ id: string }[]>`
           INSERT INTO screen_mockups (
             id, organization_id, project_id, name, platform, locale,
-            width, height, mime_type, byte_size, content_hash, image, legend, created_by_id,
+            width, height, mime_type, byte_size, content_hash, image, legend, report, created_by_id,
             created_at, updated_at
           )
           VALUES (
             gen_random_uuid(), ${data.organizationId}::uuid, ${data.projectId}::uuid, ${data.name},
             ${data.platform}::text::"PlatformKind", ${data.locale},
             ${data.width}, ${data.height}, ${data.mimeType}, ${data.byteSize},
-            ${data.contentHash}, ${data.image}, ${JSON.stringify(data.legend)}::jsonb, ${data.createdById}::uuid,
+            ${data.contentHash}, ${data.image}, ${JSON.stringify(data.legend)}::jsonb, ${JSON.stringify(data.report)}::jsonb, ${data.createdById}::uuid,
             now(), now()
           )
           ON CONFLICT (project_id, platform, name) DO UPDATE SET
@@ -556,6 +587,7 @@ export async function upsertScreenMockup(
             content_hash = EXCLUDED.content_hash,
             image = EXCLUDED.image,
             legend = EXCLUDED.legend,
+            report = EXCLUDED.report,
             created_by_id = EXCLUDED.created_by_id,
             updated_at = now()
           RETURNING id
@@ -582,16 +614,6 @@ export async function upsertScreenMockup(
   // (This lookup used to be textual for a second, worse reason: entries lost their platform on the
   // way in, so every key was stored as `web` and matching by platform failed for every honest sketch.
   // Fixed — see `scanEntrySchema` — but the lookup still does not filter on it, for the reason above.)
-  const keyNames = [...new Set(markers.map((marker) => marker.key))];
-  const keys = await tx.translationKey.findMany({
-    // `archivedAt: null`, like every other key read in the codebase. An archived key was dropped from
-    // the repository, so a marker pointing at it is pointing at something the editor will not list —
-    // counting it as matched told the caller a key was imported when it had been removed.
-    where: { projectId: input.projectId, key: { in: keyNames }, archivedAt: null },
-    select: { key: true, namespace: { select: { name: true } } },
-  });
-  const known = new Set(keys.map((row) => `${row.namespace.name}\u0000${row.key}`));
-
   const unmatched: UnmatchedMarker[] = [];
   const seen = new Set<string>();
   for (const marker of markers) {
@@ -645,6 +667,8 @@ export async function upsertScreenMockup(
       frames: summarizeFrames(markers),
     },
     components: input.legend ?? [],
+    // The guidance a caller needs to fix its own upload: the agent reads this and corrects the next one.
+    report,
     // Relative to the API base, not absolute: the browser client is handed `/api/v1/...` and adds its
     // own base, so an absolute path here produced `/api/v1/api/v1/...` and a 404 the dialog could
     // only report as a broken sketch.
@@ -725,6 +749,10 @@ export interface ResolvedMarker {
   height: number | null;
   /** The text drawn in the sketch, as the uploader saw it. */
   text: string | null;
+  /** The frame (state) the marker is in, on a board that shows several. */
+  frame: string | null;
+  /** The component the marker's element belongs to, matching a number in the legend. */
+  component: string | null;
   note: string | null;
   /** The platform the key was actually found on; `null` when the key is not in the project. */
   platform: string | null;

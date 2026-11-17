@@ -884,6 +884,8 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       '也可以传 ui（按元素描述页面，text/button/input/row…）；或者传 image_base64（SVG/PNG/JPEG，自己画的图）＋ markers。' +
       '传 ui 时，节点上的 text 就是界面上显示的文字，默认作为 key（可用 key 覆盖）；key 还没导入也照存，' +
       '会在返回值里以 markers.unmatched 报告，而不是拒绝。同名屏幕再传一次是整体替换（没有 dry run）。' +
+      '返回值里的 report 是平台看过自己画出来的图之后的结论（stats 是图上真实的数量，findings 每条带 advice），' +
+      'NO_PICTURES / NO_SOURCE_COLOURS / IDENTICAL_FRAMES 这几条说明图没还原到位，按 advice 改输入后同名重传。' +
       '节点表、key/namespace 的来源、上限，以及「让 CLI 从页面源码生成这份描述」见资源 localehub://screen-sketch-guide。',
     async (input: {
       project_id: string;
@@ -986,7 +988,12 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
         // A marker pointing at a key the platform has not imported is normal — the sketch is often
         // drawn while the repository is still being read — so the response says what to do about it
         // rather than treating it as a failure.
-        nextSteps: result.markers.unmatched.length
+        // The platform's own reading of what it just drew: the agent reads this and fixes the next
+        // upload, which is the whole point of saying it here rather than in a document.
+        report: result.report,
+        nextSteps: [
+          ...result.report.findings.map((finding) => `${finding.title}——${finding.advice}`),
+          ...(result.markers.unmatched.length
           ? [
               `有 ${result.markers.unmatched.length} 个标记指向平台上还没有的 key：${result.markers.unmatched
                 .slice(0, 5)
@@ -994,7 +1001,8 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
                 .join('、')}${result.markers.unmatched.length > 5 ? ' 等' : ''}。`,
               '用 import_translations 把对应的语言文件导入后，这些标记会自动对上译文，不需要重新上传草图。',
             ]
-          : ['草图已保存。在翻译编辑器里点「界面草图」可以并排查看，点标记或条目会互相跳转。'],
+          : ['草图已保存。在翻译编辑器里点「界面草图」可以并排查看，点标记或条目会互相跳转。']),
+        ],
       };
     },
   );

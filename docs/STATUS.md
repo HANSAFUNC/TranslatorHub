@@ -1503,6 +1503,57 @@ namespace（空的 `web` 行已删），`platform=web` 查询返回 0 条。
 **验证**：402 单元（新增 2 条：图片与说明一起写出、预览态 `uploaded: null`）+ 170 集成测试；
 `localehub://screen-sketch-guide`、`docs/QUICKSTART.md`、`docs/MCP.md` 都补了这张表。
 
+### 1.46 引导工具：传完自己看 `report`，知道哪里没还原
+
+用户说：「内容还是没色彩和图片素材 而且关联联动也有问题 圈中的地方要是红色的不要表在空间上 只是把控件圈住就好
+你看看怎么做引导工具」。前两件在 1.42–1.44 已经改过（颜色/图片、标记圈控件、引线拉出各状态文案），
+用户仍然看到同样的图——**因为失败是静默的**：图上传成功，只是画出来的东西不对，调用端没有任何反馈，
+于是同一个 Agent 会一直用同一种方式重传。这一轮补的就是这个反馈回路。
+
+**报告读的是画出来的那张图，不是调用端的输入。** 这是关键：读输入只能检查「你有没有传 css」，
+读输出才能说「这张图上没有任何图片、颜色全是平台默认、两帧一模一样」——后者才是人看图时的判断，
+而且对**已经上传的**草图同样有效（老数据懒算，不用重传）。
+
+`packages/contracts/src/mockup-report.ts` 的 `analyzeSketch({svg, markers, legend})`：
+
+- `stats`：图上真实的数量——`pictures`（内嵌矢量 + 内联位图）、`placeholders`（灰底斜线占位框）、
+  `sourceColours`（平台调色板之外的颜色，也就是页面自己贡献的）、`frames`、`markers`、`missingKeys`、`components`。
+- `findings`：六条，每条带 `title`（人话）与 `advice`（**要说清改哪个字段、用哪条命令**）。
+  `FINDING_CODES` 既是类型也是运行期列表，好让「每条都可达、每条教程里都有」能被测试钉住。
+
+| code | 图上是什么样 | advice 指向 |
+| --- | --- | --- |
+| `NO_PICTURES` | 一个素材都没有 | 行内 `<svg>` 直接画；位图内联 `data:`；`localehub mockup --page` 自动内联 |
+| `PLACEHOLDER_PICTURES` | 若干灰底斜线框 | 同上（占位框＝图片只有 URL，平台不联网取图） |
+| `NO_SOURCE_COLOURS` | 全是平台默认黑白灰 | `css` 字段传样式表（解析 `:root`）或 `theme: {accent, background}` |
+| `IDENTICAL_FRAMES` | 几帧一模一样 | 帧要画不同状态；重复的删掉 |
+| `MISSING_KEYS` | 标记指向平台没有的 key | 不是错误：`import_translations` 后自动对上，或写 `data-key` |
+| `NO_COMPONENTS` | 图例空 | 组件名：JSX 组件名 / 类名 / `data-component` |
+
+刻意**没有**「标记没圈准」这条：自己传 `image_base64` + `markers` 时平台手里只有那张图，
+没有图上元素的坐标，判断不了圈得准不准——报告只说自己看得见的事，不猜。教程里也是这么写的。
+
+**它出现在四个地方**，因为调用端、人、和下一次上传分别需要它：
+
+1. `upload_screen_mockup` 的返回值（API 与 Remote MCP 同一份，由 `upsertScreenMockup` 在画完之后算出来并存进
+   `screen_mockups.report`）；MCP 的 `nextSteps` 直接把 `findings` 的标题列出来。
+2. `localehub mockup` 打印出来，写进 `.localehub/mockups/<名字>.json`。
+3. 编辑器草图对话框顶部的琥珀色横幅：逐条列出「哪里没还原 + 怎么改」，不用去翻 API 返回值。
+4. `localehub://screen-sketch-guide` 新增 §7「传完先看 `report`，再决定下一次怎么传」（含上面这张表），
+   `upload-screen-sketch` prompt 第 7 步要求 Agent 读完报告、按 advice 改输入后**同名重传**再做下一步；
+   只要 `NO_PICTURES` / `NO_SOURCE_COLOURS` / `IDENTICAL_FRAMES` 还在，就说明图没达到「看得出是哪个页面」。
+
+**关联联动的问题**（用户同一条消息里提的）：标记的身份原本只有 `key + namespace`，而一屏多帧时同一个 key
+在每一帧都有一个标记，编辑器的 selected/dimmed 状态把它们当成同一个，点一帧会亮起所有帧。
+现在 `markerKey` 是 `namespace \x1f key \x1f frame`，帧之间不再串。
+
+**验证**：410 → 419 单元（新增 `packages/contracts/src/__tests__/mockup-report.test.ts`：8 条行为 +
+3 条「每条 code 都可达、教程里都有、advice 都能落地」）；`scripts/check-mcp-sketch-guide.mjs` 增加
+「教程讲了 report」「教程列全六个 code」「prompt 让 Agent 读 report」三项，对真实 MCP 跑通；
+集成测试新增 `NO_PICTURES` / `NO_SOURCE_COLOURS` 与 detail 的 `report` 断言。
+浏览器实测：用没有图片、没有颜色、两帧重复的页面传一张草图，API 报出全部五条 finding，
+编辑器横幅逐条渲染出来，控制台零报错。
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |
