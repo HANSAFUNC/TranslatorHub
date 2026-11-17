@@ -57,6 +57,10 @@ describe('the Remote MCP tool registry', () => {
 
     expect(Object.keys(schema.properties).sort()).toEqual([
       'css',
+      // The replica: the page kept whole rather than redrawn. Its description is the only place a
+      // caller learns that scripts travel but do not run — and that positions are measured by the
+      // browser, so there are no coordinates to hand in.
+      'document',
       'frames',
       'height',
       'html',
@@ -78,6 +82,12 @@ describe('the Remote MCP tool registry', () => {
     // them gets a 422 whose wording is identical on the REST route, so it is worth pinning here.
     expect(schema.properties.html!.description).toContain('只解析');
     expect(schema.properties.html!.description).toContain('三选一');
+    // The two halves of a whole page, which is what a caller who wants a replica has to know before
+    // it sends one: what "no scripts" means for the data on it, and that it does not measure anything.
+    expect(schema.properties.html!.description).toContain('整页');
+    expect(schema.properties.document!.description).toContain('data-key');
+    expect(schema.properties.document!.description).toContain('不跑脚本');
+    expect(schema.properties.document!.description).toContain('动态数据除外');
     expect(schema.properties.namespace!.description).toContain('ui.root.namespace');
     // The two fields that decide whether a transcribed screen looks like the app or like a grey
     // wireframe: the stylesheet its colours live in, and the brand colour it does not carry.

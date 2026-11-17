@@ -3,6 +3,7 @@ import { McpScope } from './roles';
 import { localeTagSchema, platformSchema } from './schemas';
 import { MAX_MARKERS_PER_MOCKUP, MAX_MOCKUP_BYTES, MAX_MOCKUP_REQUEST_BYTES, markerSchema } from './mockup';
 import { MAX_UI_HTML_CHARS, MAX_MOCKUP_FRAMES, uiSpecSchema, uiThemeSchema } from './ui-spec';
+import { MAX_DOCUMENT_CHARS } from './mockup-document';
 
 /**
  * Canonical registry of the Remote MCP's tools. Shared by the server, the API's discovery
@@ -315,12 +316,25 @@ export const remoteToolSchemas = {
     html: z
       .string()
       .min(1)
-      .max(MAX_UI_HTML_CHARS)
+      .max(MAX_DOCUMENT_CHARS)
       .optional()
       .describe(
-        '页面源码（HTML，或 JSX/TSX 源码）：平台从中解析出界面元素树，自己排版、画图并算坐标，' +
-          '颜色与组件外观按 class（含 Tailwind）、inline style 与 <style> 规则还原。只解析，不渲染、不执行脚本、不联网取资源。' +
+        '页面源码。**片段**（一个组件文件、一段结构）走重画：平台解析成元素树、自己排版画图并算坐标，' +
+          '颜色与组件外观按 class（含 Tailwind）、inline style 与 <style> 规则还原，只解析、不渲染、不执行脚本、不联网。' +
+          '**整页**（带 <!doctype html> 或 <html>）走复刻：原文存下来，编辑器在沙箱里照着渲染，' +
+          '样式与素材按页面自己的来，还原度最高——素材要么内联成 data: URI，要么是能公开访问的 https 地址。' +
           '想让 iOS 的多张字符串表各归各位，配合 namespace 使用。与 ui / image_base64 三选一。',
+      ),
+    document: z
+      .string()
+      .min(1)
+      .max(MAX_DOCUMENT_CHARS)
+      .optional()
+      .describe(
+        '整页复刻（与 html 传整页同一件事，这里是显式写法）：把页面的完整 HTML 交上来，平台原样存下并交给浏览器渲染，' +
+          '不重画、不取图、不跑脚本。标记来自元素上的 data-key / data-i18n-key——位置由浏览器量，不用你给坐标。' +
+          '脚本不会执行（沙箱里没有 allow-scripts），所以由接口填的数据不会出现，这正是「动态数据除外」；' +
+          '要展示某个状态就把那个状态写成静态 HTML（或作为一帧）。',
       ),
     namespace: z
       .string()
@@ -345,15 +359,16 @@ export const remoteToolSchemas = {
       .array(
         z.object({
           title: z.string().min(1).max(60).describe('这个状态的名字：默认 / 空 / 加载中 / 校验失败…'),
-          html: z.string().min(1).max(MAX_UI_HTML_CHARS).optional(),
+          html: z.string().max(MAX_DOCUMENT_CHARS).optional(),
           ui: uiSpecSchema.optional(),
+          document: z.string().max(MAX_DOCUMENT_CHARS).optional(),
         }),
       )
       .max(MAX_MOCKUP_FRAMES)
       .optional()
       .describe(
         '一个屏幕的多个状态，各占一帧、排在同一张画布上：译者能看到同一个 key 在每种状态下读起来是什么样（或者根本不出现）。' +
-          '每帧给 html 或 ui 之一；给了 frames 就不要再传 ui / html / image_base64。' +
+          '每帧给 html（整页则整帧复刻）或 ui 之一；给了 frames 就不要再传 ui / html / image_base64。' +
           '一帧一个状态，别把同一状态拆开——帧多到看不清时，挑真正影响译文的那几个。',
       ),
     ui: uiSpecSchema.optional().describe(

@@ -3737,8 +3737,7 @@
                         },
                         "html": {
                           "type": "string",
-                          "minLength": 1,
-                          "maxLength": 1000000
+                          "maxLength": 3000000
                         },
                         "ui": {
                           "type": "object",
@@ -3949,6 +3948,10 @@
                             "root"
                           ],
                           "additionalProperties": false
+                        },
+                        "document": {
+                          "type": "string",
+                          "maxLength": 3000000
                         }
                       },
                       "required": [
@@ -4170,8 +4173,11 @@
                   },
                   "html": {
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 1000000
+                    "maxLength": 3000000
+                  },
+                  "document": {
+                    "type": "string",
+                    "maxLength": 3000000
                   },
                   "namespace": {
                     "type": "string",
@@ -4431,6 +4437,80 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 64
+            }
+          }
+        ]
+      }
+    },
+    "/projects/{projectId}/mockups/{mockupId}/document": {
+      "get": {
+        "operationId": "Mockups_document",
+        "tags": [
+          "界面草图"
+        ],
+        "summary": "GET /projects/{projectId}/mockups/{mockupId}/document",
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Envelope with `data`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHENTICATED / INVALID_TOKEN / TOKEN_EXPIRED"
+          },
+          "403": {
+            "description": "ROLE_INSUFFICIENT / SCOPE_INSUFFICIENT / PROJECT_ACCESS_DENIED"
+          },
+          "404": {
+            "description": "NOT_FOUND"
+          },
+          "422": {
+            "description": "VALIDATION_ERROR"
+          }
+        },
+        "x-localehub-auth": {
+          "public": false,
+          "role": null,
+          "scopes": [],
+          "enforcedBy": "authentication"
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mockupId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "frame",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 60
             }
           }
         ]

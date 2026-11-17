@@ -331,6 +331,7 @@ describe('the example in the sketch guide', () => {
     // caller pastes it: into the resolver, which parses it and draws it.
     const example = exampleFromGuide() as { html: string; platform: string; namespace?: string };
     const { image, markers } = resolveMockupInput({ html: example.html, platform: example.platform, namespace: example.namespace ?? null });
+    if (!image) throw new Error('the fragment example should have been drawn, not kept as a page');
     expect(markers.map((marker) => marker.text)).toEqual(['练习', '下一步']);
     // The button names its key rather than defaulting to its text, which is the one thing markup
     // cannot say by itself.
@@ -356,7 +357,23 @@ describe('the example in the sketch guide', () => {
 
     const described = parsed.find((example) => 'ui' in example) as { ui: { root: { type: string } } };
     expect(described.ui.root.type).toBe('screen');
+
+    // The replica example: a whole page, and a caller has to be able to paste it as it stands. What it
+    // promises is checked by actually routing it — a page in `document` must not be redrawn.
+    const replica = parsed.find((example) => 'document' in example) as { document: string; platform: string };
+    expect(replica.document.startsWith('<!doctype html>')).toBe(true);
+    const resolved = resolveMockupInput({ document: replica.document, platform: replica.platform });
+    expect(resolved.image).toBeNull();
+    expect(resolved.document?.frames).toHaveLength(1);
+    // Two keys in the markup, and — the promise that makes this path worth having — the position is
+    // not the caller's problem: the browser measures it, so nothing here carries a rectangle.
+    expect(resolved.document && markersOf(resolved)).toEqual(['policy.title', 'policy.view']);
   });
+
+  /** The keys a resolved upload would mark, whichever path it took. */
+  function markersOf(resolved: ReturnType<typeof resolveMockupInput>): string[] {
+    return resolved.markers.map((marker) => marker.key);
+  }
 });
 
 describe('the sketch prompt', () => {

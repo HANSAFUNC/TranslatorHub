@@ -68,6 +68,7 @@ git diff          # 只应包含预期的语言文件条目
 | 文件 | 提交吗 | 内容 |
 | --- | --- | --- |
 | `config.yaml` | **要** | project id、语言目录、端点映射、workspace 白名单。没有它，换台机器／换个人就接不上 |
+| `mockups/*.html` + `*.json` | **要** | 整页复刻生成的页面（`--page` 指到一整页 `.html` 时），加同一份说明。浏览器照它渲染，标记由浏览器实测 |
 | `mockups/*.svg` + `*.json` | **要** | `localehub mockup --page` 生成并上传的那张图，加一份说明（哪一页、多少标记、平台的校验和）。审查 PR 时能看到 Agent 往平台上放了什么；图或页面变了就重跑一次，别手改 |
 | `state.json` | 不要 | 本机的同步游标与历史（已 gitignore） |
 | `backups/` / `cache/` / `patches/` / `*.local.yaml` | 不要 | 本地回滚、缓存、本地覆盖（已 gitignore） |

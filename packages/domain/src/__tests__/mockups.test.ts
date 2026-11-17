@@ -142,11 +142,24 @@ describe('decodeMockupImage', () => {
  * through, so it is where "the platform draws it" has to behave identically for both — including
  * the one thing a caller cannot see: which platform decides the canvas.
  */
+/**
+ * The drawn path, with the picture asserted present.
+ *
+ * `resolveMockupInput` now returns either a picture the platform drew or a page it is holding, and a
+ * test about drawing has to say which one it expects — otherwise a change that silently routed a
+ * description to the replica path would leave these passing on a null picture.
+ */
+function drawn(input: Parameters<typeof resolveMockupInput>[0]) {
+  const resolved = resolveMockupInput(input);
+  if (!resolved.image) throw new Error('expected the platform to draw a picture');
+  return { ...resolved, image: resolved.image };
+}
+
 describe('resolveMockupInput', () => {
   const page = { root: { type: 'screen' as const, children: [{ type: 'text' as const, text: '下一步' }] } };
 
   it('draws a screen from a description and computes its markers', () => {
-    const { image, markers } = resolveMockupInput({ ui: page });
+    const { image, markers } = drawn({ ui: page });
     expect(image.mimeType).toBe('image/svg+xml');
     expect(markers).toHaveLength(1);
     expect(markers[0]!.key).toBe('下一步');
@@ -156,23 +169,23 @@ describe('resolveMockupInput', () => {
     // The sketch guide tells a caller to send only `root`, because the screen's identity — name,
     // platform, locale — comes from the call. Before this, that advice produced an iOS screen laid
     // out on a 1280×800 web canvas.
-    const { image } = resolveMockupInput({ ui: page, platform: 'ios' });
+    const { image } = drawn({ ui: page, platform: 'ios' });
     expect(image.width).toBe(390);
     expect(image.height).toBe(844);
 
-    const web = resolveMockupInput({ ui: page, platform: 'web' });
+    const web = drawn({ ui: page, platform: 'web' });
     expect(web.image.width).toBe(1280);
   });
 
   it('lets the description’s own platform win, since saying it twice means meaning it', () => {
-    const { image } = resolveMockupInput({ ui: { ...page, platform: 'android' }, platform: 'ios' });
+    const { image } = drawn({ ui: { ...page, platform: 'android' }, platform: 'ios' });
     expect(image.width).toBe(412);
   });
 
   it('refuses both inputs, and neither, with a sentence that names the alternatives', () => {
-    expect(() => resolveMockupInput({ ui: page, imageBase64: base64(png(4, 4)) })).toThrow(/不要同时传/);
-    expect(() => resolveMockupInput({ html: '<div><p>你好</p></div>', ui: page })).toThrow(/三种输入选一种/);
-    expect(() => resolveMockupInput({})).toThrow(/传 ui/);
+    expect(() => drawn({ ui: page, imageBase64: base64(png(4, 4)) })).toThrow(/不要同时传/);
+    expect(() => drawn({ html: '<div><p>你好</p></div>', ui: page })).toThrow(/三种输入选一种/);
+    expect(() => drawn({})).toThrow(/传 ui/);
   });
 });
 
@@ -194,7 +207,7 @@ describe('resolveMockupInput from html', () => {
     </div></body>`;
 
   it('draws the page and gets its strings, without executing anything it contains', () => {
-    const { image, markers } = resolveMockupInput({ html: page, platform: 'ios' });
+    const { image, markers } = drawn({ html: page, platform: 'ios' });
     expect(image.mimeType).toBe('image/svg+xml');
     // One marker per visible string; the script body is not copy and is not in the picture.
     expect(markers.map((marker) => marker.key)).toEqual(['课程详情', '开始练习']);
@@ -205,18 +218,18 @@ describe('resolveMockupInput from html', () => {
   });
 
   it('carries the page’s colours into the picture', () => {
-    const { image } = resolveMockupInput({ html: page });
+    const { image } = drawn({ html: page });
     const svg = image.bytes.toString('utf8');
     expect(svg).toContain('#2563eb'); // the button, from `bg-blue-600`
     expect(svg).toContain('#f8fafc'); // the card, from its own rule
   });
 
   it('stamps a namespace on every marker, the way the CLI’s --namespace does', () => {
-    const { markers } = resolveMockupInput({ html: page, namespace: 'Localizable' });
+    const { markers } = drawn({ html: page, namespace: 'Localizable' });
     expect(markers.every((marker) => marker.namespace === 'Localizable')).toBe(true);
   });
 
   it('refuses a source with nothing to draw, in the caller’s terms', () => {
-    expect(() => resolveMockupInput({ html: 'export const x = 1;' })).toThrow(/没有找到任何界面元素/);
+    expect(() => drawn({ html: 'export const x = 1;' })).toThrow(/没有找到任何界面元素/);
   });
 });

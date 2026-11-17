@@ -138,10 +138,11 @@ public 路由不受影响，负载均衡仍可探测。
 | GET    | `/projects/:projectId/mockups`                | READONLY                 | 屏幕列表（不含图片字节）；`?key=&namespace=` 时每行附 `containsKey` |
 | GET    | `/projects/:projectId/mockups/:mockupId`      | READONLY                 | 标记（含源文与 `?locale=` 的译文），按阅读顺序排序          |
 | GET    | `/projects/:projectId/mockups/:mockupId/image`| READONLY                 | 图片字节（非 JSON 信封）；带 ETag，可 304                  |
+| GET    | `/projects/:projectId/mockups/:mockupId/document` | READONLY             | 整页复刻的页面本身（`text/html`，`?frame=` 选状态）；带 ETag 与 `sandbox allow-same-origin` 的 CSP |
 | POST   | `/projects/:projectId/mockups`                | DEVELOPER + `sync.push`  | 上传/替换屏幕（`imageBase64` + `markers`，或 `ui` 由平台绘制） |
 | DELETE | `/projects/:projectId/mockups/:mockupId`      | DEVELOPER + `sync.push`  | 删除屏幕（标记随外键级联）                                 |
 
-上传有三种输入，选一种（`frames` 与另外三种互斥）：
+上传有四种输入，选一种（`frames` 与另外三种互斥）：
 
 - **`frames`**：一个屏幕的多个状态，各占一帧排在同一张画布上（`[{title, html|ui}]`，最多 8 帧）。平台横向排开、
   每帧上方写状态名，`markers[].frame` 记住每条文案落在哪一帧，`components` 给出组件的编号清单
@@ -153,14 +154,20 @@ public 路由不受影响，负载均衡仍可探测。
   排版、绘制、算坐标。颜色与组件外观读自 class（含 Tailwind 全套调色板）、inline style 与 `<style>` 规则。
   **只解析**：不渲染、不执行脚本、不联网取资源，`<script>`/注释里的文字不会被当成文案。元素上的
   `data-key` / `data-i18n-key` 指定 key，否则以文案本身为 key；`namespace` 字段整棵树继承。
+- **`document`**（整页复刻，还原度最高）：页面的完整 HTML。平台**不重画**：原文存下来，编辑器在沙箱里照着渲染，
+  所以配色、圆角、字体、图片、背景全是页面自己的。传给整页的 `html`（带 `<!doctype html>` 或 `<html>`）与 `document` 等价，
+  返回值里 `kind` 为 `document`、`imagePath` 指向 `/document`。两条硬规则：**素材要跟页面上来**（本地文件内联成
+  `data:` URI，或写成能公开访问的 `https` 地址——平台自己从不联网取资源），**脚本不会执行**（沙箱里没有
+  `allow-scripts`），所以由接口填的数据不出现，这就是「动态数据除外」。标记来自元素上的 `data-key` /
+  `data-i18n-key`：坐标由看图的浏览器实测，接口里存的坐标是 0（表示「等浏览器量」）。
 - **`ui`**：界面的结构描述（元素树）。平台据此排版、绘制 SVG，并**自己算出每个标记**——图片与坐标
   出自同一次排版，所以不可能互相矛盾。坐标、图片大小这些容易传错的东西都不再需要调用方提供。
   `ui.root` 的 `namespace` 会被整棵树继承；节点上的 `text` 是默认 key，可用 `key` 覆盖；
   节点可带 `style`（颜色/圆角/字号字重/间距/阴影/对齐）。两层上限：嵌套 24 层、每个屏幕 600 个元素。
 
 `ui` 也是「从页面源码生成草图」的落点：`localehub mockup --page <file>` 读本地页面的 JSX/HTML，
-生成这份描述并（加 `--confirm` 时）上传。两个入口共用 `resolveMockupInput`，所以「两个都传」或
-「都没传」在两边得到同一句话。
+生成这份描述并（加 `--confirm` 时）上传；`--page` 指到一整页 `.html` 时改走 `document`（并把本地素材内联进去），
+`--document` 可以强制。两个入口共用 `resolveMockupInput`，所以「两个都传」或「都没传」在两边得到同一句话。
 
 上传的校验与 MCP 的 `upload_screen_mockup` 完全同一份实现（`@localehub/domain`）：坐标是
 相对图片的比例（0~1）而不是像素，格式由字节判断而不是 `mime_type`，SVG 内的
@@ -169,6 +176,10 @@ public 路由不受影响，负载均衡仍可探测。
 
 指向平台尚未导入的 Key 的标记会照常保存并在响应里列为 `markers.unmatched` —— 草图通常画在导入
 之前，编辑器把它显示为「平台没有这个 Key」，而不是假装那处不存在。
+
+整页复刻的响应里，`report` 读的是**那一页自己**（不是画出来的图）：`stats.keys` 是标记命中的 key 数、
+`inlineAssets`/`remoteAssets`/`localAssets` 是素材去向、`scripts` 是脚本数，findings 包括 `NO_KEYS`、
+`ASSETS_NOT_INLINED`、`NO_STYLE`、`REMOTE_ASSETS`、`SCRIPTS_NOT_RUN`。
 
 响应里的 `report` 是**平台看过自己画出来的那张图之后**的结论，不是对入参的复述：`stats` 给出图上真实的
 数量（`pictures` / `placeholders` / `sourceColours` / `frames` / `markers` / `missingKeys` / `components`），

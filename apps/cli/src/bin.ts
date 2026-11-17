@@ -50,10 +50,19 @@ const HELP = `localehub <command>
 
   mockup --page <file> [--name <screen>] [--platform web] [--locale zh-CN]
          [--namespace <ns>] [--keys <json-file>] [--css <file>] [--accent <color>]
-         [--background <color>] [--width <px>] [--height <px>] [--confirm]
-      Generate a screen sketch from a page's code — every string on the page becomes a marker at the
-      position the layout gives it — and, with --confirm, upload it so translators see it next to the
-      translations. Without --confirm it writes the sketch to .localehub/mockups/ and uploads nothing.
+         [--background <color>] [--width <px>] [--height <px>] [--document] [--confirm]
+      Make a screen out of a page, and with --confirm upload it so translators see it next to the
+      translations.
+
+      A whole page (.html with a doctype or <html>) is *kept*: the markup is stored with its assets
+      inlined and the editor renders it in a sandboxed frame, so the picture is the page itself and
+      not a redrawing of it. Scripts travel but never run — dynamic data is simply absent.
+
+      A fragment (a component file, a snippet) is *redrawn*: the platform lays it out and draws a
+      sketch, with every string becoming a marker at the position the layout gives it. Use --document
+      to force the replica path for a page whose doctype was stripped.
+
+      Either way the output goes to .localehub/mockups/ and nothing is uploaded without --confirm.
 
   patch
       Write a git patch of the current working tree (never commits).
@@ -169,13 +178,22 @@ async function main(): Promise<void> {
         keys,
         width: flags.width ? Number(flags.width) : undefined,
         height: flags.height ? Number(flags.height) : undefined,
+        // A whole page is detected from the file itself; this forces the replica path for a page
+        // whose doctype was stripped on the way into the repository.
+        document: flags.document === undefined ? undefined : flagBool(flags, 'document'),
         confirm: flagBool(flags, 'confirm'),
         replace: flags.replace === undefined ? undefined : flagBool(flags, 'replace'),
       });
       if (json) return output(result);
-      process.stdout.write(
-        `${result.name} · ${result.platform} · ${result.locale} · ${(result.canvas as {width:number}).width}×${(result.canvas as {height:number}).height}\n`,
-      );
+      if (result.kind === 'document') {
+        process.stdout.write(
+          `${result.name} · ${result.platform} · ${result.locale} · 整页复刻（浏览器渲染，脚本不执行）\n`,
+        );
+      } else {
+        process.stdout.write(
+          `${result.name} · ${result.platform} · ${result.locale} · ${(result.canvas as {width:number}).width}×${(result.canvas as {height:number}).height}\n`,
+        );
+      }
       process.stdout.write(`  ${result.strings} 个字符串 → ${result.markers} 个标记\n`);
       for (const key of result.keys as string[]) process.stdout.write(`    ${key}\n`);
       process.stdout.write(`  草图：${result.svgPath}\n`);

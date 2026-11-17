@@ -1079,7 +1079,23 @@ model ScreenMockup {
   mimeType       String       @map("mime_type")
   byteSize       Int          @map("byte_size")
   contentHash    String       @map("content_hash")
-  image          Bytes
+  /**
+   * The picture, for a sketch the platform drew. Null on a replica: the page is the artefact.
+   *
+   * Two kinds of screen share this row because they answer the same question and are read by the same
+   * editor, and because a screen genuinely can be either one over its life — a caller that starts with
+   * a redrawn `html` sketch and later uploads the whole page under the same name is replacing it, not
+   * creating a second screen.
+   */
+  image          Bytes?
+  /**
+   * The page itself, for a replica: `{ frames: [{ title, html }] }`, stored as it was sent.
+   *
+   * Scripts are kept in the markup and never executed — the editor renders this in a sandboxed frame
+   * without `allow-scripts`, and the API serves it under a `sandbox` CSP. The replica is the page's
+   * appearance, not its behaviour, which is what "动态数据除外" means in practice.
+   */
+  document       Json?
   /**
    * The component numbering drawn on the picture.
    *

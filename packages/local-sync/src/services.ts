@@ -32,7 +32,8 @@ import { executeApply, planApply, toApplyReportPayload } from './apply';
 import { scanAndCollect, type ScanSummary } from './scan';
 import { analyzeSketch } from '@localehub/contracts';
 
-import { inlineLocalImages, readPageFile } from './ui-extract';
+import { analyzeDocument, documentMarkers, isFullDocument } from '@localehub/contracts';
+import { inlineLocalImages, inlinePageAssets, readPageFile } from './ui-extract';
 import { StateStore } from './state';
 
 export interface ServiceContext {
@@ -441,6 +442,159 @@ export class LocalSyncServices {
    * config as an SVG so it can be looked at first, which is the same "look before you write" rule the
    * sync commands follow.
    */
+  /**
+   * A whole page, kept as it is.
+   *
+   * This is the highest-fidelity path there is, and it is deliberately the one the CLI takes when the
+   * file is a page: the platform stores the markup and the editor renders it in a sandboxed frame, so
+   * the picture a translator sees is the caller's own page instead of the platform's approximation of
+   * it. What the CLI adds is the part only a checkout can do — the page's assets come along, inlined,
+   * because `./logo.png` means nothing to a browser pointed at the platform.
+   *
+   * Scripts travel with the page and never run: the replica is the page's appearance, not its
+   * behaviour, so anything filled in by a fetch is simply absent (动态数据除外).
+   */
+  private async generateReplicaMockup(
+    input: {
+      page: string;
+      name?: string;
+      platform?: string;
+      locale?: string;
+      namespace?: string;
+      width?: number;
+      height?: number;
+      confirm?: boolean;
+      replace?: boolean;
+    },
+    read: { source: string; fileName: string },
+  ): Promise<OperationResult> {
+    const config = this.config().config;
+    const guard = this.workspace();
+    const assets = inlinePageAssets(guard, read.source, read.fileName);
+    const html = assets.source;
+    const name = input.name ?? read.fileName.split('/').pop()!.replace(/\.[^.]+$/, '');
+    const locale = input.locale ?? config.project.sourceLocale;
+    const platform = input.platform ?? config.project.platforms?.[0] ?? 'web';
+    const document = { frames: [{ title: '默认', html }] };
+    const markers = documentMarkers(document, { namespace: input.namespace ?? null });
+    const legend: { index: number; name: string; count: number }[] = [];
+    for (const marker of markers) {
+      if (!marker.component) continue;
+      const existing = legend.find((item) => item.name === marker.component);
+      if (existing) existing.count += 1;
+      else legend.push({ index: legend.length + 1, name: marker.component, count: 1 });
+    }
+
+    const outDir = join(guard.root, '.localehub', 'mockups');
+    mkdirSync(outDir, { recursive: true });
+    const stem = name.replace(/[^\p{L}\p{N}._-]+/gu, '-');
+    const htmlPath = join(outDir, `${stem}.html`);
+    const manifestPath = join(outDir, `${stem}.json`);
+    writeFileSync(htmlPath, html, 'utf8');
+
+    const report = analyzeDocument({
+      document,
+      markers: markers.map((marker) => ({
+        key: marker.key,
+        namespace: marker.namespace,
+        frame: marker.frame,
+        component: marker.component,
+        text: marker.text,
+        missing: false,
+      })),
+      legend,
+    });
+
+    const writeManifest = (uploaded: { mockupId: string; checksum: string } | null): void => {
+      writeFileSync(
+        manifestPath,
+        `${JSON.stringify(
+          {
+            $comment:
+              '由 localehub mockup 生成；这份 .html 就是上传到平台的整页复刻，浏览器照它渲染。' +
+              '要改就改页面源码再跑一次，不要手改这里的文件。',
+            kind: 'document',
+            projectId: this.projectId(),
+            name,
+            platform,
+            locale,
+            namespace: input.namespace ?? null,
+            page: read.fileName,
+            frames: document.frames.map((frame) => frame.title),
+            markers: markers.length,
+            components: legend,
+            inlinedAssets: assets.inlined.length,
+            skippedAssets: assets.skipped,
+            uploaded,
+            generatedAt: new Date().toISOString(),
+          },
+          null,
+          2,
+        )}\n`,
+        'utf8',
+      );
+    };
+    writeManifest(null);
+
+    const skipped = assets.skipped.map((entry) => `没有内联 ${entry.ref}：${entry.why}（复刻里会是破图）`);
+    const summary = {
+      page: read.fileName,
+      name,
+      platform,
+      locale,
+      kind: 'document' as const,
+      frames: document.frames.map((frame) => frame.title),
+      markers: markers.length,
+      components: legend,
+      htmlPath: relative(guard.root, htmlPath),
+      manifestPath: relative(guard.root, manifestPath),
+      inlinedAssets: assets.inlined.length,
+      skippedAssets: assets.skipped,
+      warnings: [...skipped, ...(markers.length ? [] : ['整页里没有一处 data-key：标记落不到元素上，译文挂不上去'])],
+      report,
+      uploaded: false as boolean,
+      requiresConfirmation: !input.confirm,
+    };
+
+    if (!input.confirm) {
+      return {
+        ...summary,
+        message:
+          `生成了一份整页复刻（${markers.length} 个标记，写到这里：${summary.htmlPath}）。` +
+          '要提交到平台，加 --confirm；提交后编辑器在沙箱里照页面渲染，标记落在元素自己身上。' +
+          (report.findings.length
+            ? `\n可以先改这些：\n${report.findings.map((finding) => `  · ${finding.title}——${finding.advice}`).join('\n')}`
+            : ''),
+      };
+    }
+
+    const result = await this.client().uploadScreenMockup(this.projectId(), {
+      name,
+      platform,
+      locale,
+      document: html,
+      ...(input.namespace ? { namespace: input.namespace } : {}),
+      replace: input.replace ?? true,
+    });
+    writeManifest({ mockupId: result.mockupId, checksum: result.image.checksum });
+
+    return {
+      ...summary,
+      uploaded: true,
+      requiresConfirmation: false,
+      mockupId: result.mockupId,
+      replaced: result.replaced,
+      matchedKeys: result.markers.matchedKeys,
+      unmatched: result.markers.unmatched,
+      imagePath: result.imagePath,
+      message:
+        `已提交整页复刻：${result.markers.total} 个标记，${result.markers.matchedKeys} 个对上了平台的 Key` +
+        (result.markers.unmatched.length
+          ? `，${result.markers.unmatched.length} 个还没有导入（编辑器会显示「平台没有这个 Key」）。`
+          : '。'),
+    };
+  }
+
   async generateScreenMockup(input: {
     page: string;
     name?: string;
@@ -454,12 +608,19 @@ export class LocalSyncServices {
     theme?: { accent?: string; background?: string };
     width?: number;
     height?: number;
+    /** Force the replica path for a page whose doctype was stripped, or to skip the detection. */
+    document?: boolean;
     confirm?: boolean;
     replace?: boolean;
   }): Promise<OperationResult> {
     const config = this.config().config;
     const guard = this.workspace();
     const read = readPageFile(guard, input.page);
+    // A whole page is not redrawn: it is stored and rendered. Detected from the file itself, so
+    // `localehub mockup --page index.html` does the right thing without a second flag, and
+    // `--document` forces it for a page whose doctype was stripped.
+    if (input.document || isFullDocument(read.source)) return this.generateReplicaMockup(input, read);
+
     // The page's pictures come along, base64'd, so the sketch shows them instead of a grey frame.
     const pictures = inlineLocalImages(guard, read.source, read.fileName);
     const source = pictures.source;

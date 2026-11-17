@@ -893,12 +893,20 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       platform?: string;
       locale: string;
       ui?: UiSpec;
-      /** The page's own source, parsed into the same element tree `ui` describes. */
+      /**
+       * The page's own source.
+       *
+       * A fragment is parsed into the same element tree `ui` describes and redrawn; a whole page (a
+       * doctype or `<html>`) is kept as sent and rendered in the editor's sandboxed frame, scripts
+       * and all — they never run.
+       */
       html?: string;
+      /** The page kept whole, which is what a full-page `html` means implicitly. */
+      document?: string;
       /** Default namespace for an `html` upload. */
       namespace?: string;
       /** A screen's states, each its own frame on one canvas. */
-      frames?: { title: string; html?: string; ui?: UiSpec }[];
+      frames?: { title: string; html?: string; ui?: UiSpec; document?: string }[];
       /** The page's stylesheet, when its colours live in another file. */
       css?: string;
       /** Brand colours, for a screen whose own source carries none. */
@@ -926,7 +934,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       // should be refused without holding a database connection, and both error messages already say
       // what to change. `ui` is rendered here, so the stored picture and the stored markers come from
       // one pass over one description.
-      const { image, markers: resolvedMarkers, legend } = resolveMockupInput({
+      const { image, document, markers: resolvedMarkers, legend, width, height } = resolveMockupInput({
         imageBase64: input.image_base64 ?? null,
         mimeType: input.mime_type ?? null,
         width: input.width ?? null,
@@ -934,6 +942,8 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
         markers: input.markers,
         ui: input.ui ?? null,
         html: input.html ?? null,
+        // A whole page — or an explicit `document` — is stored and rendered rather than redrawn.
+        document: input.document ?? null,
         frames: input.frames ?? null,
         namespace: input.namespace ?? null,
         css: input.css ?? null,
@@ -951,6 +961,9 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
           platform: (input.platform ?? 'web') as never,
           locale: input.locale,
           image,
+          document,
+          width,
+          height,
           // `namespace` carries a schema default, and a client is free to omit it; filling it here
           // means the domain function always receives the shape its type declares.
           markers: resolvedMarkers,
@@ -975,11 +988,11 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
           // The format the server read from the bytes, and what the caller called it. Recorded on
           // purpose: a caller that keeps declaring the wrong type is worth noticing.
           detectedMimeType: result.image.mimeType,
-          declaredMimeType: image.declaredMimeType,
-          // How the screen got here: drawn by the caller, rendered from a description, or read out of
-          // the page's own source. Recorded so "which callers still hand-measure coordinates" stays
-          // answerable from the audit trail.
-          source: input.ui ? 'ui' : input.html ? 'html' : 'image',
+          declaredMimeType: image?.declaredMimeType ?? null,
+          // How the screen got here: drawn by the caller, rendered from a description, read out of the
+          // page's own source, or the page itself. Recorded so "which callers still hand-measure
+          // coordinates" stays answerable from the audit trail.
+          source: input.ui ? 'ui' : input.document || result.kind === 'document' ? 'document' : input.html ? 'html' : 'image',
         },
       });
 

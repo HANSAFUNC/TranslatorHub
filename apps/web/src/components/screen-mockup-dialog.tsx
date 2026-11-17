@@ -13,7 +13,7 @@ import { EmptyState } from '@/components/empty-state';
 import { ErrorAlert } from '@/components/error-alert';
 import { StatusBadge } from '@/components/status-badge';
 import { useAsync, timeAgo } from '@/components/use-async';
-import { fetchObjectUrl, get, type MockupDetail, type MockupMarker, type MockupSummary } from '@/lib/api';
+import { API_BASE, fetchObjectUrl, get, type MockupDetail, type MockupMarker, type MockupSummary } from '@/lib/api';
 import { localeDisplayName } from '@localehub/contracts/locale';
 import { cn } from '@/lib/utils';
 
@@ -187,9 +187,87 @@ export function ScreenMockupDialog({
     [projectId, open, mockupId, locale],
   );
 
-  const { url: imageUrl, error: imageError } = useObjectUrl(open && detail ? detail.mockup.imagePath : null);
+  /** A replica has no picture of ours to fetch: the page travels to the frame below. */
+  const isReplica = detail?.mockup.kind === 'document';
+  const { url: imageUrl, error: imageError } = useObjectUrl(
+    open && detail && !isReplica ? detail.mockup.imagePath : null,
+  );
 
   const markers = useMemo(() => detail?.markers ?? [], [detail]);
+
+  /**
+   * The replica's frame, and what the browser measured inside it.
+   *
+   * A page's layout belongs to a browser, and the platform is not one — so a replica's markers carry
+   * no coordinates at all. The frame is rendered here, and its elements are measured here, which is
+   * also the only way a box can be right for a font the platform has never seen. The measurement lands
+   * in fractions of the page, the same coordinate system a drawn sketch uses, so everything downstream
+   * (rendering, zooming, linking a marker to a row) is the same code.
+   */
+  const replicaFrameRef = useRef<HTMLIFrameElement | null>(null);
+  const replicaFrames = useMemo(() => detail?.mockup.frames ?? [], [detail]);
+  const [replicaFrame, setReplicaFrame] = useState<string | null>(null);
+  const [measured, setMeasured] = useState<{
+    width: number;
+    height: number;
+    /**
+     * One entry per place the marker appears.
+     *
+     * A key can legitimately be on a page twice — a label repeated in two rows — and collapsing those
+     * into one union rectangle would draw a box over everything between them.
+     */
+    boxes: Map<string, { x: number; y: number; width: number; height: number }[]>;
+  } | null>(null);
+
+  useEffect(() => {
+    setReplicaFrame(replicaFrames[0] ?? null);
+    setMeasured(null);
+  }, [detail?.mockup.id, replicaFrames]);
+
+  const replicaViewport = useMemo(() => {
+    const width = detail?.mockup.width ?? 390;
+    const height = detail?.mockup.height ?? 800;
+    return { width, height };
+  }, [detail?.mockup.width, detail?.mockup.height]);
+
+  /** Read the rendered page: its size, and the rectangle of every element that names a key. */
+  const measureReplica = useCallback(() => {
+    const doc = replicaFrameRef.current?.contentDocument;
+    const root = doc?.documentElement;
+    if (!doc || !root) return;
+    const width = Math.max(1, root.scrollWidth);
+    const height = Math.max(1, root.scrollHeight);
+    const boxes = new Map<string, { x: number; y: number; width: number; height: number }[]>();
+    const attributes = ['data-key', 'data-i18n-key', 'i18n-key', 'data-i18n'];
+    for (const node of doc.querySelectorAll(attributes.map((name) => `[${name}]`).join(','))) {
+      const key = attributes.map((name) => node.getAttribute(name)?.trim()).find(Boolean);
+      if (!key) continue;
+      // Which marker this element is: the same key in the frame on screen. An element that declares
+      // its own namespace picks the marker in it, so a project with two `.strings` tables that both
+      // hold `title` measures the right one.
+      const declared = node.getAttribute('data-namespace')?.trim();
+      const inFrame = markers.filter(
+        (marker) => marker.key === key && (!replicaFrame || !marker.frame || marker.frame === replicaFrame),
+      );
+      const marker = (declared ? inFrame.find((candidate) => (candidate.namespace || '') === declared) : undefined) ?? inFrame[0];
+      if (!marker) continue;
+      const rect = node.getBoundingClientRect();
+      const identity = markerKey(marker);
+      const list = boxes.get(identity) ?? [];
+      list.push({
+        x: rect.left / width,
+        y: rect.top / height,
+        width: rect.width / width,
+        height: rect.height / height,
+      });
+      boxes.set(identity, list);
+    }
+    setMeasured({ width, height, boxes });
+  }, [markers, replicaFrame]);
+
+  useEffect(() => {
+    if (!isReplica) setMeasured(null);
+  }, [isReplica]);
 
   /**
    * The picture's own pixel size, which is what the canvas scales.
@@ -198,10 +276,14 @@ export function ScreenMockupDialog({
    * of it, so a re-layout would move the text out from under its boxes.
    */
   const natural = useMemo(() => {
+    // A replica's size is not stored anywhere: a responsive page is as wide as the viewport it is
+    // laid out at and as tall as its content, and only a browser knows the second number. Until the
+    // frame has loaded, the stored viewport stands in so the canvas has something to reserve.
+    if (isReplica) return measured ? { width: measured.width, height: measured.height } : replicaViewport;
     const width = detail?.mockup.width;
     const height = detail?.mockup.height;
     return width && height ? { width, height } : null;
-  }, [detail?.mockup.width, detail?.mockup.height]);
+  }, [detail?.mockup.width, detail?.mockup.height, isReplica, measured, replicaViewport]);
 
   /**
    * The state (frame) or component the reader has picked out.
@@ -217,14 +299,21 @@ export function ScreenMockupDialog({
 
   /** The states this board shows, in the order the picture draws them (markers are in reading order). */
   const frames = useMemo(() => {
+    // A replica lists its states from the document itself — the caller sent them in order, and a state
+    // with no keys at all is still a state worth showing. A drawn sketch can only list the states its
+    // markers are in, because the picture is the only thing that knows them.
+    if (isReplica && replicaFrames.length) return replicaFrames;
     const seen: string[] = [];
     for (const marker of markers) if (marker.frame && !seen.includes(marker.frame)) seen.push(marker.frame);
     return seen;
-  }, [markers]);
+  }, [markers, isReplica, replicaFrames]);
 
   const components = detail?.mockup.components ?? [];
 
   const isDimmed = (marker: MockupMarker): boolean => {
+    // A replica shows one state at a time, so everything belonging to another state is beside the
+    // point while it is on screen.
+    if (isReplica && replicaFrame && marker.frame && marker.frame !== replicaFrame) return true;
     if (!highlight) return false;
     return highlight.kind === 'frame' ? marker.frame !== highlight.value : marker.component !== highlight.value;
   };
@@ -273,10 +362,16 @@ export function ScreenMockupDialog({
             </DialogTitle>
             <DialogDescription className="truncate">
               {detail
-                ? `${detail.mockup.name} · ${detail.mockup.platform} · 草图语言 ${detail.mockup.locale}${
-                    detail.mockup.width ? ` · ${detail.mockup.width}×${detail.mockup.height}` : ''
+                ? `${detail.mockup.name} · ${detail.mockup.platform} · ${detail.mockup.locale}${
+                    detail.mockup.kind === 'document'
+                      ? ` · 整页复刻${isReplica && measured ? ` · ${measured.width}×${measured.height}` : ''}${
+                          replicaFrames.length > 1 ? ` · ${replicaFrames.length} 个状态` : ''
+                        }`
+                      : ` · 草图${detail.mockup.width ? ` ${detail.mockup.width}×${detail.mockup.height}` : ''}`
                   } · 更新于 ${timeAgo(detail.mockup.updatedAt)}`
-                : '左侧是调用端上传的界面草图，右侧是对应译文；点标记或条目会互相跳转'}
+                : isReplica
+                  ? '左侧是调用端上传的整页复刻（沙箱渲染，脚本不执行），右侧是对应译文；点标记或条目会互相跳转'
+                  : '左侧是调用端上传的界面草图，右侧是对应译文；点标记或条目会互相跳转'}
             </DialogDescription>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -373,10 +468,19 @@ export function ScreenMockupDialog({
                           <button
                             key={frame}
                             type="button"
-                            onClick={() => setHighlight(highlight?.kind === 'frame' && highlight.value === frame ? null : { kind: 'frame', value: frame })}
+                            /* A drawn board is one picture, so picking a state dims the others. A replica
+                               is a pile of pages, so picking a state shows that one — there is no picture
+                               holding them side by side to dim. */
+                            onClick={() =>
+                              isReplica
+                                ? setReplicaFrame(frame)
+                                : setHighlight(highlight?.kind === 'frame' && highlight.value === frame ? null : { kind: 'frame', value: frame })
+                            }
                             className={cn(
                               'rounded-full border px-2 py-0.5 text-xs transition-colors',
-                              highlight?.kind === 'frame' && highlight.value === frame ? 'border-primary bg-primary text-primary-foreground' : 'hover:bg-muted',
+                              (isReplica ? replicaFrame === frame : highlight?.kind === 'frame' && highlight.value === frame)
+                                ? 'border-primary bg-primary text-primary-foreground'
+                                : 'hover:bg-muted',
                             )}
                           >
                             {frame}
@@ -415,12 +519,28 @@ export function ScreenMockupDialog({
                       </span>
                     ) : null}
                     {!frames.length && !components.length ? (
-                      <span className="text-muted-foreground text-xs">拖动平移，滚轮缩放</span>
+                      <span className="text-muted-foreground text-xs">
+                        {isReplica ? '标记位置由浏览器实测。拖动平移，滚轮缩放' : '拖动平移，滚轮缩放'}
+                      </span>
                     ) : null}
                   </>
                 }
               >
-                {imageUrl ? (
+                {isReplica ? (
+                  /* The page itself, in a frame that cannot run anything. `allow-same-origin` and
+                     nothing else: no scripts, no forms, no popups — while still letting this component
+                     (its parent) read the rendered elements to place the markers, which is the only
+                     way a page can be measured without the platform running a browser. */
+                  <iframe
+                    ref={replicaFrameRef}
+                    key={replicaFrame ?? replicaFrames[0] ?? 'frame'}
+                    title={`${detail.mockup.name} 复刻`}
+                    sandbox="allow-same-origin"
+                    src={`${API_BASE}${detail.mockup.imagePath}${replicaFrame ? `?frame=${encodeURIComponent(replicaFrame)}` : ''}`}
+                    onLoad={measureReplica}
+                    className="absolute inset-0 h-full w-full rounded-md border-0 bg-white"
+                  />
+                ) : imageUrl ? (
                   <img src={imageUrl} alt={`${detail.mockup.name} 界面草图`} className="absolute inset-0 h-full w-full rounded-md" />
                 ) : (
                   <Skeleton className="absolute inset-0" />
@@ -430,43 +550,52 @@ export function ScreenMockupDialog({
                     const identity = markerKey(marker);
                     const isActive = identity === activeKey;
                     const untranslated = marker.source !== null && (!marker.entry || !marker.entry.value);
-                    const anchored = Boolean(marker.width || marker.height);
-                    return (
-                      <button
-                        key={marker.id}
-                        type="button"
-                        data-marker={identity}
-                        onClick={() => select(identity)}
-                        title={`${marker.key}${marker.frame ? `
+                    // A replica's box is wherever the browser found the element. Until the frame has
+                    // loaded there is nowhere to draw it — and a marker with no element on the page
+                    // at all stays in the list beside, which is how a key that is not really on this
+                    // screen becomes visible instead of silently absent.
+                    const boxes = isReplica
+                      ? (measured?.boxes.get(identity) ?? [])
+                      : [{ x: marker.x, y: marker.y, width: marker.width, height: marker.height }];
+                    return boxes.map((box, occurrence) => {
+                      const anchored = Boolean(box.width || box.height);
+                      return (
+                        <button
+                          key={`${marker.id}-${occurrence}`}
+                          type="button"
+                          data-marker={identity}
+                          onClick={() => select(identity)}
+                          title={`${marker.key}${marker.frame ? `
 状态：${marker.frame}` : ''}${marker.text ? `
 草图：${marker.text}` : ''}`}
-                        style={{
-                          left: `${marker.x * 100}%`,
-                          top: `${marker.y * 100}%`,
-                          width: marker.width ? `${marker.width * 100}%` : undefined,
-                          height: marker.height ? `${marker.height * 100}%` : undefined,
-                        }}
-                        className={cn(
-                          'absolute rounded-[3px] border text-left transition',
-                          anchored ? 'flex items-start' : 'size-4 -translate-x-1/2 -translate-y-1/2 rounded-full',
-                          isDimmed(marker) ? 'opacity-20' : '',
-                          isActive
-                            ? 'border-primary bg-primary/30 ring-primary ring-2'
-                            : untranslated
-                              ? 'border-amber-500 bg-amber-400/30 hover:bg-amber-400/45'
-                              : 'border-primary/70 bg-primary/20 hover:bg-primary/35',
-                        )}
-                      >
-                        <span
+                          style={{
+                            left: `${box.x * 100}%`,
+                            top: `${box.y * 100}%`,
+                            width: box.width ? `${box.width * 100}%` : undefined,
+                            height: box.height ? `${box.height * 100}%` : undefined,
+                          }}
                           className={cn(
-                            'rounded-[3px] px-1 text-[10px] font-medium leading-4 tabular-nums',
-                            isActive ? 'bg-primary text-primary-foreground' : 'bg-primary/80 text-primary-foreground',
+                            'absolute rounded-[3px] border text-left transition',
+                            anchored ? 'flex items-start' : 'size-4 -translate-x-1/2 -translate-y-1/2 rounded-full',
+                            isDimmed(marker) ? 'opacity-20' : '',
+                            isActive
+                              ? 'border-primary bg-primary/30 ring-primary ring-2'
+                              : untranslated
+                                ? 'border-amber-500 bg-amber-400/30 hover:bg-amber-400/45'
+                                : 'border-primary/70 bg-primary/20 hover:bg-primary/35',
                           )}
                         >
-                          {index + 1}
-                        </span>
-                      </button>
-                    );
+                          <span
+                            className={cn(
+                              'rounded-[3px] px-1 text-[10px] font-medium leading-4 tabular-nums',
+                              isActive ? 'bg-primary text-primary-foreground' : 'bg-primary/80 text-primary-foreground',
+                            )}
+                          >
+                            {index + 1}
+                          </span>
+                        </button>
+                      );
+                    });
                   })}
                 </div>
               </SketchCanvas>

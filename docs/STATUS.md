@@ -1554,6 +1554,43 @@ namespace（空的 `web` 行已删），`platform=web` 查询返回 0 条。
 浏览器实测：用没有图片、没有颜色、两帧重复的页面传一张草图，API 报出全部五条 finding，
 编辑器横幅逐条渲染出来，控制台零报错。
 
+### 1.47 整页复刻：不重画，把页面本身交给浏览器
+
+用户说：「素材还是没上传上来 不要 svg 啊 直接完整的 html+素材完整复刻 动态数据除外」。上一轮的答案是**提高重画的
+保真度**（读页面的颜色、内联图片、组件外观），但重画永远是近似：字体是平台的、渐变阴影是估的、图标要内联成 SVG。
+用户要的是那一页本身——所以这一轮加的是第二条路，**`document`：整页复刻**。
+
+**平台不画，浏览器画。** 整页（`document`，或 `html` 里带 `<!doctype html>`／`<html>`——碎片仍然走重画，片段没有文档
+可言）原文存进 `screen_mockups.document`（JSONB，`{frames:[{title,html}]}`，`image` 因此可以为空），编辑器在
+`<iframe sandbox="allow-same-origin">` 里照它渲染。没有 `allow-scripts`，所以 `<script>`、`onclick`、`javascript:`
+都不执行——**页面是被看，不会动**，由接口填的数据自然不出现，这就是「动态数据除外」。API 端同一份 CSP
+（`default-src 'none'` + `img-src data: blob: https:` + `sandbox allow-same-origin`）是第二道，直接导航过去也一样安全；
+`allow-same-origin` 保留下来是给父窗口量元素用的。
+
+**素材怎么跟着走**（平台从不联网取资源，这是设计）：本地文件内联成 `data:`（`localehub mockup --page` 对整页会自动内联
+`<link rel=stylesheet>`→`<style>`、`<img src>`、`srcset`、CSS `url()`，且 CSS 里的相对地址按**样式表自己的目录**解析——
+按页面目录解析会把背景图内联错），或者写成浏览器能取的 `https` 地址。实测：上传一页自带样式表 + 内联 SVG 图标的
+页面，浏览器里读到按钮底色 `rgb(48,110,238)`、卡片圆角 `14px`、图片 `naturalWidth` 非零，脚本没跑。
+
+**标记怎么落**：整页里没有坐标可存，所以标记来自 `data-key` / `data-i18n-key`，矩形由**渲染这一页的浏览器实测**
+（编辑器读 `contentDocument` 量每个元素，换算成与重画路径相同的比例坐标），因此排版变了、字体没加载完，框仍落在元素上；
+同一个 key 在同一页出现两次会画两个框，而不是一个把两者都罩住的并集。这一轮同时修掉了**画布与右侧列表的单向联动**：
+`SketchCanvas` 在 `pointerdown` 就 `setPointerCapture`，把后续的 click 重定向到了画布本身，于是点标记永远不会触发
+标记的 onClick（行→标记是好的，标记→行never）。改成**超过 4px 抖动才捕获**，两个方向都通。
+
+**引导**（用户上一轮的要求）在两条路上都给了：`analyzeDocument` 读**页面自己**并给出 `NO_KEYS`、`ASSETS_NOT_INLINED`、
+`NO_STYLE`、`REMOTE_ASSETS`、`SCRIPTS_NOT_RUN`、`NO_PICTURES` 六条，每条带改法；`localehub://screen-sketch-guide`
+新增 §0（整页 vs 片段的选择）与 §8（什么时候用、素材对照表、脚本不执行、状态与坐标），工具描述与 prompt 同步。
+
+**踩到并修掉的坑**：`screen_mockups` 的 raw `INSERT … ON CONFLICT DO UPDATE` 在去掉 `RETURNING id` 之后**照样写入、
+却返回空结果**——诊断过程中一路排除参数、RLS、冲突路径之后才在编译产物里看见模板里少了那行。现在这段代码把
+空结果当错误抛出（附注释说明为什么），不再让它变成三行之后一个「Cannot read properties of undefined」。
+
+**验证**：427 单元（新增 `mockup-document` 的读页与素材分类、`analyzeDocument` 六条 finding、`page-assets` 的
+内联三条）+ 172 集成（整页上传→`kind: document`→`/document` 返回 `text/html` 且 CSP 不含 `allow-scripts`→`/image`
+对复刻返回 409；无 key 的整页被拒并指名 `data-key`）；`scripts/check-replica.mjs` 在真实浏览器里跑通：
+页面自身样式生效、素材解码、标记与元素位置一致、点标记→右侧行高亮、切状态换页、控制台零报错。
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

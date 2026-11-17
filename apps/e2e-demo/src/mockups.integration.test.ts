@@ -81,6 +81,8 @@ interface UploadResult {
   mockupId: string;
   name: string;
   replaced: boolean;
+  /** Which artefact the platform stored: a picture it drew, or the page the caller sent. */
+  kind: 'image' | 'document';
   image: { mimeType: string; byteSize: number; width: number | null; height: number | null; checksum: string };
   markers: {
     total: number;
@@ -89,7 +91,7 @@ interface UploadResult {
     frames: { title: string; markers: number }[];
   };
   components: { index: number; name: string; count: number }[];
-  report: { findings: { code: string; title: string; advice: string }[]; clean: boolean };
+  report: { findings: { code: string; title: string; advice: string }[]; clean: boolean; stats?: Record<string, number> };
   imagePath: string;
 }
 
@@ -454,6 +456,86 @@ describe('screen mockups', () => {
     expect(svg).not.toContain('window.tracked');
     expect(svg).not.toContain('<script');
   }, 60_000);
+
+  it('keeps a whole page as it was sent, and serves it back as a page', async () => {
+    // The replica path: a full document is not read into an element tree and redrawn — it is stored
+    // and rendered by a browser. The two things that has to be true of it are what this checks: the
+    // markup survives verbatim (scripts included, so the page is the caller's page), and the platform
+    // serves it under a policy that makes it a picture rather than a program.
+    const html = `<!doctype html><html lang="en"><head><style>.card{background:#f8fafc;border-radius:12px}</style></head>
+      <body><div class="card" data-component="policy-card">
+        <h1 data-key="checkout.title">Checkout</h1>
+        <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=" alt="">
+        <button data-key="checkout.pay">Pay now</button>
+        <script>window.tracked = true</script>
+      </div></body></html>`;
+    const response = await call<UploadResult>(`/projects/${projectId}/mockups`, {
+      method: 'POST',
+      token: session.token,
+      body: { name: 'checkout-replica', platform: 'web', locale: 'en-US', document: html, replace: true },
+    });
+    expect(response.status, JSON.stringify(response.body.error)).toBe(201);
+    expect(response.body.data!.kind).toBe('document');
+    expect(response.body.data!.imagePath).toMatch(/\/document$/);
+    // Two keys in the markup, both already imported: the replica's markers come from the attributes.
+    expect(response.body.data!.markers.total).toBe(2);
+    expect(response.body.data!.markers.matchedKeys).toBe(2);
+    expect(response.body.data!.markers.unmatched).toEqual([]);
+
+    const detail = await call<{ mockup: { kind: string; frames: string[]; imagePath: string }; markers: { key: string; component: string | null }[] }>(
+      `/projects/${projectId}/mockups/${response.body.data!.mockupId}`,
+      { token: session.token },
+    );
+    expect(detail.body.data!.mockup.kind).toBe('document');
+    expect(detail.body.data!.mockup.frames).toEqual(['默认']);
+    // The component the markup named is what the legend beside the page is built from.
+    expect(detail.body.data!.markers.map((marker) => marker.component)).toEqual(['policy-card', 'policy-card']);
+
+    const page = await fetch(`${API_BASE}${response.body.data!.imagePath}`, {
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(page.status).toBe(200);
+    expect(page.headers.get('content-type')).toContain('text/html');
+    const served = await page.text();
+    // Verbatim: the stylesheet, the inlined picture and the script all travelled, because what the
+    // caller sent is what the page is. The script never runs — that is the policy's job below.
+    expect(served).toContain('.card{background:#f8fafc');
+    expect(served).toContain('data:image/svg+xml;base64,');
+    expect(served).toContain('window.tracked');
+    const policy = page.headers.get('content-security-policy') ?? '';
+    expect(policy).toContain('sandbox allow-same-origin');
+    expect(policy).not.toContain('allow-scripts');
+    expect(policy).toContain("default-src 'none'");
+
+    // The image route says where to look instead of answering with something that is not an image.
+    const asImage = await fetch(`${API_BASE}/projects/${projectId}/mockups/${response.body.data!.mockupId}/image`, {
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(asImage.status).toBe(409);
+
+    // And it is the report that tells the caller what the page still needs: this one brought its own
+    // style and its picture, so the only thing left to say is that the script will not run.
+    const report = response.body.data!.report as { findings: { code: string }[]; stats: { keys?: number; scripts?: number } };
+    expect(report.stats.keys).toBe(2);
+    expect(report.stats.scripts).toBe(1);
+    expect(report.findings.map((finding) => finding.code)).toEqual(['SCRIPTS_NOT_RUN']);
+  }, 60_000);
+
+  it('refuses a page with no keys to hang translations on, and says what to add', async () => {
+    const response = await call(`/projects/${projectId}/mockups`, {
+      method: 'POST',
+      token: session.token,
+      body: {
+        name: 'checkout-no-keys',
+        platform: 'web',
+        locale: 'en-US',
+        document: '<!doctype html><html><body><p>没有 key 的页面</p></body></html>',
+        replace: true,
+      },
+    });
+    expect(response.status).toBe(422);
+    expect(JSON.stringify(response.body.error)).toContain('data-key');
+  }, 30_000);
 
   it('draws a screen’s states as frames on one canvas, and keeps the components it is made of', async () => {
     // The whole point of a board: a translator sees that the same key reads differently — or is not

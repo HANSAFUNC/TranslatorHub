@@ -293,7 +293,7 @@ Token 推得上去、落不下来——这正是规格要的分离。
 | `localehub://import-guide` | 完整上传教程：调用形状、逐条规则、实测边界、推荐顺序、`.strings` 解析坑 | Agent 按需读取 |
 | `localehub://screen-sketch-guide` | 界面草图教程：三种输入、节点表、key/namespace 从哪来、上限、两件不可逆的事、CLI 从源码生成的做法，以及 §7「传完先看 `report`」的逐条对照表 | Agent 按需读取 |
 | `import-localization-files` 提示词 | 七步流程，供人在客户端里直接唤起 | 人（斜杠命令） |
-| `upload-screen-sketch` 提示词 | 七步流程：把页面转成 HTML → 上报标记 → 读 `report`，没还原到位就按 advice 改输入后重传 | 人（斜杠命令） |
+| `upload-screen-sketch` 提示词 | 七步流程：整页复刻或页面转 HTML → 上报标记 → 读 `report`，没还原到位就按 advice 改输入后重传 | 人（斜杠命令） |
 | 工具与字段的 `description` | 每个字段在什么情况下会出错（如 `platform` 默认 `web`，iOS 必须显式传） | 随 `tools/list` 一起下发 |
 
 关键一条：**字段描述随 schema 走，所以默认值也能被解释**。`platform` 的 schema 现在是
@@ -477,6 +477,22 @@ localehub mockup --page src/app/projects/page.tsx --name 项目列表 --confirm 
   （此前还有第二个、更糟的原因：条目在入库路上丢掉了 platform，任何调用方填的端都到不了 key 的身份上，
   库里所有 key 都是 `web`——`project_platforms` 为 `ios` 的「高研院iOS」，2,791 条 key 一条 `ios` 都没有。
   已修并回填，见 `docs/STATUS.md` §1.39；上面的匹配规则不变，但理由只剩前面那一条。）
+
+**整页复刻（`document`）：平台不重画，原件交给浏览器。** 传整页 HTML 时（`document`，或 `html` 里带
+`<!doctype html>`／`<html>` 的整页），平台把原文存下来，编辑器在一个沙箱 `<iframe sandbox="allow-same-origin">`
+里照它渲染——**没有 `allow-scripts`，所以脚本、事件属性、`javascript:` 都不会执行**，页面只是被看，不会动。
+配色、圆角、字体、阴影、背景都是页面自己的，这正是「还原度」的来源；代价是本能行为（由接口填的数据）不出现，
+所以某个状态要展示就把那个状态写成静态 HTML 或作为一帧——「动态数据除外」。
+
+素材只能跟着页面上来，平台从不联网取资源：本地文件要内联成 `data:` URI（`localehub mockup --page` 会自动内联
+`<link rel=stylesheet>`、`<img src>`、`srcset`、CSS `url()`，并把样式表变成 `<style>`），或者写成浏览器能取的
+`https` 地址（内网、要登录、已下线的地址都会是破图）。标记来自元素上的 `data-key` / `data-i18n-key`：**坐标由
+渲染这一页的浏览器实测**，接口里存的坐标是 0（「等浏览器量」），编辑器量到元素矩形后再换算成比例——所以排版变了、
+字体没加载完，框依然落在元素上。
+
+响应里的 `report` 在整页这条路上读的是页面自己：`NO_KEYS`（一处 `data-key` 都没有，标记无处可落）、
+`ASSETS_NOT_INLINED`（相对路径素材没人能解析）、`NO_STYLE`（样式表没跟着上来）、`REMOTE_ASSETS`（看图的人要能访问
+那个域名）、`SCRIPTS_NOT_RUN`（脚本不会跑，动态数据除外）、`NO_PICTURES`。每条都带改法，Agent 按它改输入再同名重传。
 
 编辑器那一侧：翻译编辑器标题栏的「界面草图」按钮打开一个 90% 视口的详情页，左边是按标记框住的界面，
 右边是该语言下的同一批条目，**两边双向联动**（点标记跳到条目、点条目点亮标记），编号是它们之间的暗号。

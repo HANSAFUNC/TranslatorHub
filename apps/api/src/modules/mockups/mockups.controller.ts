@@ -7,6 +7,7 @@ import {
   localeTagSchema,
   markerSchema,
   platformSchema,
+  MAX_DOCUMENT_CHARS,
   MAX_MOCKUP_FRAMES,
   MAX_UI_HTML_CHARS,
   uiSpecSchema,
@@ -29,6 +30,11 @@ const listSchema = z.object({
   namespace: z.string().max(255).optional(),
 });
 
+const documentSchema = z.object({
+  /** Which state to serve. Omitted means the first frame the caller sent. */
+  frame: z.string().max(60).optional(),
+});
+
 const detailSchema = z.object({
   /** The locale whose translations the marker should be joined with. Omitted means source text only. */
   locale: localeTagSchema.optional(),
@@ -49,15 +55,33 @@ const uploadSchema = z.object({
    * and the reason a translator can see what a key reads like when the list is empty.
    */
   frames: z
-    .array(z.object({ title: z.string().min(1).max(60), html: z.string().min(1).max(MAX_UI_HTML_CHARS).optional(), ui: uiSpecSchema.optional() }))
+    .array(
+      z.object({
+        title: z.string().min(1).max(60),
+        html: z.string().max(MAX_DOCUMENT_CHARS).optional(),
+        ui: uiSpecSchema.optional(),
+        document: z.string().max(MAX_DOCUMENT_CHARS).optional(),
+      }),
+    )
     .max(MAX_MOCKUP_FRAMES)
     .optional(),
   ui: uiSpecSchema.optional(),
   /**
-   * The page's own source. Parsed, never rendered — the same scanner the CLI runs on a checkout, so
-   * a page uploaded here and a page uploaded by `localehub mockup --page` produce the same picture.
+   * The page's own source.
+   *
+   * A fragment (a component file, a snippet) is parsed and redrawn — never rendered, never executed —
+   * with the same scanner the CLI runs on a checkout. A whole page (a doctype or `<html>`) is *kept*:
+   * stored as sent and rendered by the editor in a sandboxed frame, which is what makes the replica a
+   * replica instead of the platform's approximation of one.
    */
-  html: z.string().min(1).max(MAX_UI_HTML_CHARS).optional(),
+  html: z.string().max(MAX_DOCUMENT_CHARS).optional(),
+  /**
+   * The page kept whole, which is the explicit spelling of the same thing a full-page `html` means.
+   *
+   * Scripts in it travel but never run: the replica is the page's appearance, not its behaviour, so
+   * anything that would have been filled in by a fetch is simply absent — 动态数据除外.
+   */
+  document: z.string().max(MAX_DOCUMENT_CHARS).optional(),
   /** Default namespace for an `html` upload; the same thing as `ui.root.namespace`. */
   namespace: z.string().max(255).optional(),
   /** The page's stylesheet when it lives in another file; see the MCP tool for why it matters. */
@@ -157,6 +181,55 @@ export class MockupsController {
     response.setHeader('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
     response.setHeader('cross-origin-resource-policy', 'cross-origin');
     response.end(bytes);
+  }
+
+  /**
+   * The page itself, for the frame the editor renders.
+   *
+   * Raw HTML, one frame at a time (`?frame=<title>`, default the first). The headers are the security
+   * boundary, not decoration: `sandbox` without `allow-scripts` means nothing in the markup can run
+   * even if a browser navigates here directly, `allow-same-origin` is what lets the editor measure the
+   * elements to place its markers, and the `img-src`/`style-src` allowlist lets the page paint itself
+   * with inlined assets or ones the *viewer's* browser fetches — the platform never fetches anything.
+   */
+  @RawResponse()
+  @Get(':mockupId/document')
+  async document(
+    @Actor() actor: ActorContext,
+    @Param('projectId') projectId: string,
+    @Param('mockupId') mockupId: string,
+    @Query(zodBody(documentSchema)) query: z.infer<typeof documentSchema>,
+    @Res() response: Response,
+  ) {
+    const frame = await this.mockups.documentFrame(actor, projectId, mockupId, query.frame ?? null);
+    const etag = `"${frame.contentHash.slice(0, 28)}-${frame.index}"`;
+    response.setHeader('etag', etag);
+    response.setHeader('cache-control', 'private, no-cache');
+    if (response.req.headers['if-none-match'] === etag) {
+      response.status(304).end();
+      return;
+    }
+    const body = Buffer.from(frame.html, 'utf8');
+    response.setHeader('content-type', 'text/html; charset=utf-8');
+    response.setHeader('content-length', String(body.length));
+    response.setHeader('x-content-type-options', 'nosniff');
+    response.setHeader('cross-origin-resource-policy', 'cross-origin');
+    response.setHeader(
+      'content-security-policy',
+      [
+        "default-src 'none'",
+        // The page's own look: its inlined assets, its styles, and — deliberately — images, fonts and
+        // media it points at on the public internet. What the platform will not do is fetch them.
+        "img-src data: blob: https:",
+        "style-src 'unsafe-inline' data: https:",
+        "font-src data: https:",
+        "media-src data: blob: https:",
+        "form-action 'none'",
+        "base-uri 'none'",
+        'sandbox allow-same-origin',
+      ].join('; '),
+    );
+    response.status(200).end(body);
   }
 
   @Post()

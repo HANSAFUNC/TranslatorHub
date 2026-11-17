@@ -225,6 +225,14 @@ export class ApiClient {
       platform?: string;
       locale: string;
       ui?: unknown;
+      /** The page's source: a fragment is redrawn, a whole page is kept and rendered instead. */
+      html?: string;
+      /** The page kept whole, for a replica. What a full-page `html` means implicitly. */
+      document?: string;
+      namespace?: string;
+      css?: string;
+      theme?: { accent?: string; background?: string };
+      frames?: { title: string; html?: string; ui?: unknown; document?: string }[];
       imageBase64?: string;
       mimeType?: string;
       width?: number;
@@ -238,8 +246,11 @@ export class ApiClient {
     platform: string;
     locale: string;
     replaced: boolean;
+    /** Which artefact the platform stored: a picture it drew, or the page itself. */
+    kind: 'image' | 'document';
     image: { mimeType: string; byteSize: number; width: number | null; height: number | null; checksum: string };
     markers: { total: number; matchedKeys: number; unmatched: { key: string; namespace: string; reason: string }[] };
+    report?: unknown;
     imagePath: string;
   }> {
     return this.request('POST', `/projects/${projectId}/mockups`, body);

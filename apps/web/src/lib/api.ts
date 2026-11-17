@@ -276,6 +276,14 @@ export interface MockupSummary {
   name: string;
   platform: string;
   locale: string;
+  /**
+   * Which artefact this screen is.
+   *
+   * `image` is a sketch the platform drew from a description; `document` is the page itself, stored as
+   * the caller sent it. The dialog renders the first with an `<img>` and the second in a sandboxed
+   * frame — and only the second has to measure anything, because only it was laid out by a browser.
+   */
+  kind: 'image' | 'document';
   width: number | null;
   height: number | null;
   mimeType: string;
@@ -290,6 +298,11 @@ export interface MockupSummary {
   components?: { index: number; name: string; count: number }[];
   /** Present on the detail response: what the platform found wrong with the sketch. */
   report?: MockupReport;
+  /**
+   * The states a replica holds, in the order the caller sent them. Empty for a drawn sketch, whose
+   * states are frames inside one picture instead.
+   */
+  frames?: string[];
   updatedAt: string;
   imagePath: string;
   /** Present when the list was asked about a specific key. */

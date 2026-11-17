@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ErrorCode, LocaleHubError, Role, type PlatformName } from '@localehub/contracts';
 import { assertRole, type ActorContext } from '@localehub/permissions';
-import { analyzeSketch, type MockupReport } from '@localehub/contracts';
+import { analyzeDocument, analyzeSketch, type MockupDocument, type MockupReport } from '@localehub/contracts';
 import { listScreenMockups, resolveMockupInput, resolveScreenMarkers, upsertScreenMockup } from '@localehub/domain';
 import { PrismaService } from '../../common/prisma.service';
 import { AuditService } from '../../common/audit.service';
@@ -58,7 +58,10 @@ export class MockupsService {
         ...mockup,
         // Relative to the API base. The MCP server and the API are addressed differently by different
         // clients, so an absolute path would be right for exactly one of them.
-        imagePath: `/projects/${projectId}/mockups/${mockup.id}/image`,
+        //
+        // The path follows the kind: a drawn sketch is fetched as an image, a replica as a page. One
+        // field rather than a kind check in every client.
+        imagePath: `/projects/${projectId}/mockups/${mockup.id}/${mockup.kind === 'document' ? 'document' : 'image'}`,
         ...(filters.key ? { containsKey: containing.has(mockup.id) } : {}),
       }));
     });
@@ -89,6 +92,9 @@ export class MockupsService {
           legend: true,
           // What is missing from the sketch, written when it was uploaded.
           report: true,
+          // Present only for a replica, and only to say how many states it holds: the markup itself
+          // travels on its own endpoint, one frame at a time.
+          document: true,
           createdAt: true,
           updatedAt: true,
           markers: {
@@ -118,13 +124,23 @@ export class MockupsService {
         locale,
       });
 
+      const document = mockup.document as unknown as MockupDocument | null;
+      const kind = document ? 'document' : 'image';
+
       // A sketch uploaded before the report existed carries an empty one: analyse it now, from the
-      // bytes, and leave the row alone — a read stays a read. The next upload of the same screen
+      // artefact, and leave the row alone — a read stays a read. The next upload of the same screen
       // stores it.
       const stored = mockup.report as unknown as MockupReport | null;
       const report = stored?.findings
         ? stored
-        : await this.analyzeStored(actor, projectId, mockupId, markers, mockup.legend as unknown as { name: string }[]);
+        : await this.analyzeStored(
+            actor,
+            projectId,
+            mockupId,
+            markers,
+            mockup.legend as unknown as { name: string }[],
+            kind,
+          );
 
       return {
         mockup: {
@@ -140,10 +156,15 @@ export class MockupsService {
           createdAt: mockup.createdAt,
           updatedAt: mockup.updatedAt,
           markerCount: markers.length,
-          // The component numbering, exactly as the picture's badges show it.
+          // Which artefact this screen is, so the editor renders a page as a page.
+          kind,
+          // A replica's states, in the order the caller sent them: the editor switches between them.
+          frames: document ? document.frames.map((frame) => frame.title) : [],
+          // The component numbering, exactly as the picture's badges show it (for a replica: read from
+          // the markup's own class and data-component names).
           components: mockup.legend,
           report,
-          imagePath: `/projects/${projectId}/mockups/${mockup.id}/image`,
+          imagePath: `/projects/${projectId}/mockups/${mockup.id}/${kind === 'document' ? 'document' : 'image'}`,
         },
         locale,
         markers,
@@ -162,23 +183,69 @@ export class MockupsService {
     mockupId: string,
     markers: readonly { key: string; namespace: string; frame: string | null; component: string | null; text: string | null; platform: string | null }[],
     legend: { name: string }[],
+    kind: 'image' | 'document',
   ): Promise<MockupReport> {
     const row = await this.prisma.tenant.withOrganization(actor.organizationId, (tx) =>
-      tx.screenMockup.findFirst({ where: { id: mockupId, projectId }, select: { image: true } }),
+      tx.screenMockup.findFirst({ where: { id: mockupId, projectId }, select: { image: true, document: true } }),
     );
     if (!row) throw new LocaleHubError(ErrorCode.NOT_FOUND, `Mockup ${mockupId} not found`, 404);
-    return analyzeSketch({
-      svg: Buffer.from(row.image).toString('utf8'),
-      markers: markers.map((marker) => ({
-        key: marker.key,
-        namespace: marker.namespace,
-        frame: marker.frame,
-        component: marker.component,
-        text: marker.text,
-        missing: marker.platform === null,
-      })),
-      legend,
-    });
+    const reportMarkers = markers.map((marker) => ({
+      key: marker.key,
+      namespace: marker.namespace,
+      frame: marker.frame,
+      component: marker.component,
+      text: marker.text,
+      missing: marker.platform === null,
+    }));
+    if (kind === 'document') {
+      return analyzeDocument({ document: row.document as unknown as MockupDocument, markers: reportMarkers, legend });
+    }
+    return analyzeSketch({ svg: Buffer.from(row.image ?? new Uint8Array()).toString('utf8'), markers: reportMarkers, legend });
+  }
+
+  /**
+   * The page of one frame, for the editor's sandboxed frame.
+   *
+   * The markup is served as-is, under a CSP that makes it a picture: `sandbox` without `allow-scripts`
+   * means nothing in it can run, `default-src 'none'` with an `img-src`/`style-src` allowlist means it
+   * can paint itself (locally inlined assets, or ones the *viewer's* browser fetches from the internet
+   * — the platform never does) and do nothing else. `allow-same-origin` is what lets the editor, which
+   * is the frame's parent, measure the elements to place its markers; scripts stay off, so the page
+   * cannot reach back into the app even though the origin matches.
+   */
+  async documentFrame(actor: ActorContext, projectId: string, mockupId: string, frame: string | null) {
+    assertRole(actor, projectId, Role.READONLY);
+    const row = await this.prisma.tenant.withOrganization(actor.organizationId, (tx) =>
+      tx.screenMockup.findFirst({ where: { id: mockupId, projectId }, select: { document: true, contentHash: true } }),
+    );
+    if (!row) throw new LocaleHubError(ErrorCode.NOT_FOUND, `Mockup ${mockupId} not found`, 404);
+    const document = row.document as unknown as MockupDocument | null;
+    if (!document?.frames?.length) {
+      throw new LocaleHubError(
+        ErrorCode.VALIDATION_ERROR,
+        `Mockup ${mockupId} is a drawn sketch, not a page: fetch its image instead`,
+        409,
+      );
+    }
+    const index = frame ? document.frames.findIndex((candidate) => candidate.title === frame) : 0;
+    if (index < 0) {
+      throw new LocaleHubError(
+        ErrorCode.NOT_FOUND,
+        `Mockup ${mockupId} has no frame named ${frame}. It has: ${document.frames.map((f) => f.title).join(', ')}`,
+        404,
+      );
+    }
+    return { html: document.frames[index]!.html, title: document.frames[index]!.title, contentHash: row.contentHash, index };
+  }
+
+  /** What the document route needs to answer `If-None-Match`, without pulling the markup back out. */
+  async documentMeta(actor: ActorContext, projectId: string, mockupId: string) {
+    assertRole(actor, projectId, Role.READONLY);
+    const mockup = await this.prisma.tenant.withOrganization(actor.organizationId, (tx) =>
+      tx.screenMockup.findFirst({ where: { id: mockupId, projectId }, select: { contentHash: true, document: true } }),
+    );
+    if (!mockup) throw new LocaleHubError(ErrorCode.NOT_FOUND, `Mockup ${mockupId} not found`, 404);
+    return { contentHash: mockup.contentHash, isDocument: Boolean(mockup.document) };
   }
 
   /**
@@ -210,7 +277,15 @@ export class MockupsService {
       }),
     );
     if (!mockup) throw new LocaleHubError(ErrorCode.NOT_FOUND, `Mockup ${mockupId} not found`, 404);
-    return mockup;
+    if (!mockup.image) {
+      // A replica has no picture of ours: it is the page, and rendering it is the browser's job.
+      throw new LocaleHubError(
+        ErrorCode.VALIDATION_ERROR,
+        `Mockup ${mockupId} is a page, not a picture: fetch /document instead`,
+        409,
+      );
+    }
+    return { ...mockup, image: mockup.image };
   }
 
   /**
@@ -224,7 +299,7 @@ export class MockupsService {
     assertRole(actor, projectId, Role.DEVELOPER);
     // Either a picture the caller drew, or a description the platform draws. Same resolver as the MCP
     // tool, so "you sent neither / both" reads identically on both surfaces.
-    const { image, markers, legend } = resolveMockupInput({
+    const { image, document, markers, legend, width, height } = resolveMockupInput({
       imageBase64: body.imageBase64 ?? null,
       mimeType: body.mimeType ?? null,
       width: body.width ?? null,
@@ -232,6 +307,8 @@ export class MockupsService {
       markers: body.markers,
       ui: body.ui ?? null,
       html: body.html ?? null,
+      // A whole page (or an explicit `document`) is kept as it was sent rather than redrawn.
+      document: body.document ?? null,
       frames: body.frames ?? null,
       namespace: body.namespace ?? null,
       css: body.css ?? null,
@@ -249,6 +326,9 @@ export class MockupsService {
         platform: body.platform ?? 'web',
         locale: body.locale,
         image,
+        document,
+        width,
+        height,
         markers,
         legend,
         replace: body.replace ?? true,
@@ -271,10 +351,12 @@ export class MockupsService {
         unmatched: result.markers.unmatched.length,
         bytes: result.image.byteSize,
         via: 'api',
+        // Which artefact this was, so the audit log can tell a page from a picture.
+        kind: result.kind,
         // The same two fields the MCP tool records, so "which callers keep declaring the wrong type"
         // has one answer across both surfaces rather than only the agent-written half.
         detectedMimeType: result.image.mimeType,
-        declaredMimeType: image.declaredMimeType,
+        declaredMimeType: image?.declaredMimeType ?? null,
       },
     });
 

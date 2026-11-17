@@ -43,6 +43,10 @@
     "./ui-extract": {
       "types": "./dist/ui-extract.d.ts",
       "default": "./dist/ui-extract.js"
+    },
+    "./mockup-document": {
+      "types": "./dist/mockup-document.d.ts",
+      "default": "./dist/mockup-document.js"
     }
   }
 }

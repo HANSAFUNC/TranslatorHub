@@ -9,11 +9,16 @@ import {
   canonicalizeLocaleTag,
   defaultViewport,
   detectImageType,
+  analyzeDocument,
+  documentMarkers,
   extractUiSpec,
   imageDimensions,
+  isFullDocument,
+  normalizeDocument,
   isValidLocaleTag,
   normalizeMarker,
   renderUiSketch,
+  type MockupDocument,
   type MockupImageType,
   type MockupMarkerInput,
   type PlatformName,
@@ -234,14 +239,6 @@ export function renderMockupSpec(spec: UiSpec): { image: DecodedMockupImage; mar
 }
 
 /**
- * The one place that decides which of the two input shapes a caller used.
- *
- * `upload_screen_mockup` accepts either a picture (`image_base64` + `markers`) or a description
- * (`ui`), and so does `POST /projects/:projectId/mockups`. Resolving the pair here keeps the two
- * surfaces from disagreeing about what is required — a caller that sends neither, or both, gets the
- * same sentence whichever door it came through.
- */
-/**
  * Which scanner to read a page's source with.
  *
  * Both are tolerant and both handle the other's input, so this only has to be right about the
@@ -252,9 +249,123 @@ function sourceNameFor(source: string): string {
   return /<!doctype\s+html|<html[\s>]|<body[\s>]|<head[\s>]/i.test(source) ? 'page.html' : 'page.tsx';
 }
 
+/**
+ * The one place that decides which input a caller used, and what the platform does with it.
+ *
+ * There are three, and the difference between the last two is the whole point of this dispatcher:
+ *
+ *   - `image_base64` + `markers` — the caller drew the picture and measured the coordinates.
+ *   - `ui` — the caller described the screen; the platform lays it out and draws it.
+ *   - `html` — the page's source. A *fragment* (a component file, a snippet) is read into the same
+ *     element tree as `ui` and redrawn. A *whole page* is not redrawn at all: the markup is stored and
+ *     the editor renders it, because a redrawn page is the platform's approximation of a screen, and
+ *     an approximation is exactly what "还原度不够" means. Pass `document: true` to ask for the
+ *     replica explicitly (a fragment can then still be framed by a document shell of the caller's
+ *     choosing).
+ *
+ * `frames` carries the states for either kind: each frame is a screen of its own, on one board.
+ */
+export interface ResolvedMockupInput {
+  /** The picture, when the platform drew one. A replica has none. */
+  image: DecodedMockupImage | null;
+  /** The page, when the caller sent one. A drawn sketch has none. */
+  document: MockupDocument | null;
+  markers: MockupMarkerInput[];
+  legend: UiLegendItem[];
+  /**
+   * The size the screen is shown at, which is the picture's own size for a drawn sketch and the
+   * platform's viewport for a replica.
+   *
+   * A replica's height is advisory: the page is as tall as its content, and the editor measures that
+   * when it renders. The width is not advisory — a responsive page laid out at the wrong width is a
+   * different screen — so it comes from the platform the mockup is filed under.
+   */
+  width: number | null;
+  height: number | null;
+}
+
+/** Does this upload want the page kept whole (replica) rather than redrawn? */
+function wantsDocument(input: {
+  document?: string | null;
+  html?: string | null;
+  frames?: readonly { title: string; html?: string | null; document?: string | null }[] | null;
+}): boolean {
+  if (input.document) return true;
+  if (input.frames?.length) {
+    const pages = input.frames.filter((frame) => frame.html || frame.document);
+    // Every state has to be a page. One fragment among them has no document to display, and mixing
+    // the two would silently store a board with a state missing from it.
+    return pages.length > 0 && pages.every((frame) => Boolean(frame.document) || isFullDocument(frame.html ?? ''));
+  }
+  // A single `html` that is a whole page is a replica by default: a caller that hands over a complete
+  // document is asking for that page, not for a wireframe of it. This is what makes the common path
+  // right without a new required field.
+  return Boolean(input.html) && isFullDocument(input.html!);
+}
+
+/**
+ * A replica's markers: the keys named in the markup, with no coordinates.
+ *
+ * Coordinates are deliberately absent rather than zero. The layout belongs to a browser, and the
+ * editor has one: it measures the rendered elements and draws the boxes there. Storing a rectangle
+ * the platform guessed would be worse than storing none, because it would look like a measurement.
+ */
+function resolveDocumentInput(
+  input: {
+    document?: string | null;
+    html?: string | null;
+    frames?: readonly { title: string; html?: string | null; document?: string | null }[] | null;
+    namespace?: string | null;
+    platform?: string | null;
+  },
+): ResolvedMockupInput {
+  const document = normalizeDocument({
+    document: input.document ?? null,
+    html: input.document ? null : (input.html ?? null),
+    frames: input.frames ?? null,
+  });
+  if (!document.frames.length) {
+    throw new LocaleHubError(ErrorCode.VALIDATION_ERROR, '缺少页面：document 或 html 里没有任何内容。', 422);
+  }
+  const markers: MockupMarkerInput[] = documentMarkers(document, { namespace: input.namespace ?? null }).map(
+    (marker) => ({
+      key: marker.key,
+      namespace: marker.namespace,
+      text: marker.text,
+      frame: marker.frame,
+      // The replica's boxes come from the browser that renders it, so there is no rectangle here: a
+      // zero-size marker at the origin is "measured later", and the editor never draws it as if it
+      // were placed. `x`/`y` are required by the wire schema; 0 is their neutral value.
+      x: 0,
+      y: 0,
+      ...(marker.component ? { component: marker.component } : {}),
+    }),
+  );
+  if (!markers.length) {
+    throw new LocaleHubError(
+      ErrorCode.VALIDATION_ERROR,
+      '这一页里没有一处 data-key（或 data-i18n-key）：复刻的页面靠元素上的 key 属性把译文挂到界面上，' +
+        '至少给一个元素写上 data-key="checkout.pay"。',
+      422,
+    );
+  }
+  // The legend of a replica is its components, numbered in first-appearance order like a drawn board.
+  const legend: UiLegendItem[] = [];
+  for (const marker of markers) {
+    if (!marker.component) continue;
+    const existing = legend.find((item) => item.name === marker.component);
+    if (existing) existing.count += 1;
+    else legend.push({ index: legend.length + 1, name: marker.component, count: 1 });
+  }
+  const viewport = defaultViewport(input.platform ?? undefined);
+  return { image: null, document, markers, legend, width: viewport.width, height: viewport.height };
+}
+
 export function resolveMockupInput(input: {
   imageBase64?: string | null;
   mimeType?: string | null;
+  /** The page kept whole, for a replica. See `ResolvedMockupInput` for why this is not `html`. */
+  document?: string | null;
   width?: number | null;
   height?: number | null;
   /** Required with `imageBase64`; ignored with `ui`, where the platform derives them. */
@@ -280,7 +391,7 @@ export function resolveMockupInput(input: {
    * them together is what lets a translator see that the same key reads differently — or does not
    * appear at all — in each state, instead of trusting one picture to stand for all of them.
    */
-  frames?: readonly { title: string; html?: string | null; ui?: UiSpec | null }[] | null;
+  frames?: readonly { title: string; html?: string | null; ui?: UiSpec | null; document?: string | null }[] | null;
   /**
    * The screen's platform, used only to pick the canvas size when the `ui` description does not
    * carry one of its own.
@@ -290,7 +401,11 @@ export function resolveMockupInput(input: {
    * what the sketch guide tells a caller to do, because the screen's identity comes from the call.
    */
   platform?: string | null;
-}): { image: DecodedMockupImage; markers: MockupMarkerInput[]; legend: UiLegendItem[] } {
+}): ResolvedMockupInput {
+  // A whole page is not read into an element tree at all: it is stored and rendered. Everything below
+  // is the drawn path, which is what a fragment, a `ui` description and a hand-drawn picture take.
+  if (wantsDocument(input)) return resolveDocumentInput(input);
+
   const hasImage = Boolean(input.imageBase64);
   const hasUi = Boolean(input.ui);
   const hasHtml = Boolean(input.html);
@@ -333,7 +448,14 @@ export function resolveMockupInput(input: {
       root: { type: 'canvas', children: frames },
     };
     const rendered = renderMockupSpec(spec);
-    return { image: rendered.image, markers: rendered.markers, legend: rendered.legend };
+    return {
+      image: rendered.image,
+      document: null,
+      markers: rendered.markers,
+      legend: rendered.legend,
+      width: rendered.image.width,
+      height: rendered.image.height,
+    };
   }
 
   if (hasHtml) {
@@ -350,7 +472,14 @@ export function resolveMockupInput(input: {
       root,
     };
     const rendered = renderMockupSpec(spec);
-    return { image: rendered.image, markers: rendered.markers, legend: rendered.legend };
+    return {
+      image: rendered.image,
+      document: null,
+      markers: rendered.markers,
+      legend: rendered.legend,
+      width: rendered.image.width,
+      height: rendered.image.height,
+    };
   }
 
   if (hasUi) {
@@ -362,7 +491,14 @@ export function resolveMockupInput(input: {
       ...(input.theme && !input.ui!.theme ? { theme: input.theme } : {}),
     };
     const rendered = renderMockupSpec(spec);
-    return { image: rendered.image, markers: rendered.markers, legend: rendered.legend };
+    return {
+      image: rendered.image,
+      document: null,
+      markers: rendered.markers,
+      legend: rendered.legend,
+      width: rendered.image.width,
+      height: rendered.image.height,
+    };
   }
 
   if (!hasImage) {
@@ -394,9 +530,12 @@ export function resolveMockupInput(input: {
       width: input.width ?? null,
       height: input.height ?? null,
     }),
+    document: null,
     markers,
     // A hand-drawn picture has no components to number; the legend is what a description produces.
     legend: [],
+    width: null,
+    height: null,
   };
 }
 
@@ -407,7 +546,13 @@ export interface UpsertScreenMockupInput {
   name: string;
   platform: PlatformName;
   locale: string;
-  image: DecodedMockupImage;
+  /** The picture, for a sketch the platform drew. Mutually exclusive with `document`. */
+  image: DecodedMockupImage | null;
+  /** The page kept whole, for a replica. Stored as sent; scripts in it never run. */
+  document?: MockupDocument | null;
+  /** The size the screen is shown at: the picture's, or the platform's viewport for a page. */
+  width?: number | null;
+  height?: number | null;
   markers: MockupMarkerInput[];
   /** The component numbering drawn on the picture, stored so the editor lists the same numbers. */
   legend?: UiLegendItem[];
@@ -428,6 +573,8 @@ export interface UpsertScreenMockupResult {
   platform: string;
   locale: string;
   replaced: boolean;
+  /** Which artefact the row holds: a picture the platform drew, or the page itself. */
+  kind: 'image' | 'document';
   image: { mimeType: string; byteSize: number; width: number | null; height: number | null; checksum: string };
   markers: {
     total: number;
@@ -471,7 +618,10 @@ export async function upsertScreenMockup(
       422,
     );
   }
-  assertMockupDimensions(input.image);
+  if (!input.image && !input.document) {
+    throw new LocaleHubError(ErrorCode.VALIDATION_ERROR, 'A mockup needs a picture or a page', 422);
+  }
+  if (input.image) assertMockupDimensions(input.image);
 
   // The project has to exist *inside this tenant's scope* before anything is written against it.
   //
@@ -487,7 +637,13 @@ export async function upsertScreenMockup(
   }
 
   const markers = input.markers.map(normalizeMarker);
-  const checksum = createHash('sha256').update(input.image.bytes).digest('hex');
+  // The artefact's bytes are what the checksum describes, whichever kind it is: for a replica that is
+  // the markup, so re-uploading the same page under the same name is recognisably the same screen.
+  const payload = input.image
+    ? input.image.bytes
+    : Buffer.from(JSON.stringify(input.document), 'utf8');
+  const checksum = createHash('sha256').update(payload).digest('hex');
+  const mimeType = input.image ? input.image.mimeType : 'text/html';
 
   const existing = await tx.screenMockup.findFirst({
     where: { projectId: input.projectId, platform: input.platform as never, name: input.name },
@@ -515,18 +671,21 @@ export async function upsertScreenMockup(
   });
   const known = new Set(keys.map((row) => `${row.namespace.name}\u0000${row.key}`));
 
-  const report = analyzeSketch({
-    svg: input.image.bytes.toString('utf8'),
-    markers: markers.map((marker) => ({
-      key: marker.key,
-      namespace: marker.namespace,
-      frame: marker.frame ?? null,
-      component: marker.component ?? null,
-      text: marker.text ?? null,
-      missing: !known.has(`${marker.namespace}\u0000${marker.key}`),
-    })),
-    legend: input.legend ?? [],
-  });
+  // What a reader would notice is missing, computed from the artefact that was just stored: for a
+  // drawn sketch that is the picture (a placeholder, no colour of the page's own, copied frames); for
+  // a replica it is the page itself (a relative asset nothing can resolve, a state with no key, a
+  // script that will not run). One report shape, two readers.
+  const reportMarkers = markers.map((marker) => ({
+    key: marker.key,
+    namespace: marker.namespace,
+    frame: marker.frame ?? null,
+    component: marker.component ?? null,
+    text: marker.text ?? null,
+    missing: !known.has(`${marker.namespace}\u0000${marker.key}`),
+  }));
+  const report = input.image
+    ? analyzeSketch({ svg: input.image.bytes.toString('utf8'), markers: reportMarkers, legend: input.legend ?? [] })
+    : analyzeDocument({ document: input.document!, markers: reportMarkers, legend: input.legend ?? [] });
 
   const data = {
     legend: (input.legend ?? []) as unknown as Prisma.InputJsonValue,
@@ -536,15 +695,16 @@ export async function upsertScreenMockup(
     name: input.name,
     platform: input.platform as never,
     locale,
-    width: input.image.width,
-    height: input.image.height,
-    mimeType: input.image.mimeType,
-    byteSize: input.image.bytes.length,
+    width: input.image ? input.image.width : (input.width ?? null),
+    height: input.image ? input.image.height : (input.height ?? null),
+    mimeType,
+    byteSize: payload.length,
     contentHash: checksum,
     // `Uint8Array` rather than the `Buffer` we validated: Prisma 6 types a Bytes column as
     // `Uint8Array<ArrayBuffer>`, and a Buffer's backing store is `ArrayBufferLike`, which includes
     // SharedArrayBuffer. One copy per upload is cheaper than fighting the variance.
-    image: new Uint8Array(input.image.bytes),
+    image: input.image ? new Uint8Array(input.image.bytes) : null,
+    document: (input.document ?? null) as unknown as Prisma.InputJsonValue,
     createdById: input.userId,
   };
 
@@ -562,19 +722,19 @@ export async function upsertScreenMockup(
   //     their own delete instead of nesting, and the statement below is atomic by construction.
   //
   //     Column order follows `data`; the bytea is passed as-is and the enums cast from text.
-  const mockupId = input.replace
-    ? (
-        await tx.$queryRaw<{ id: string }[]>`
+  let mockupId: string;
+  if (input.replace) {
+    const inserted = await tx.$queryRaw<{ id: string }[]>`
           INSERT INTO screen_mockups (
             id, organization_id, project_id, name, platform, locale,
-            width, height, mime_type, byte_size, content_hash, image, legend, report, created_by_id,
+            width, height, mime_type, byte_size, content_hash, image, document, legend, report, created_by_id,
             created_at, updated_at
           )
           VALUES (
             gen_random_uuid(), ${data.organizationId}::uuid, ${data.projectId}::uuid, ${data.name},
             ${data.platform}::text::"PlatformKind", ${data.locale},
             ${data.width}, ${data.height}, ${data.mimeType}, ${data.byteSize},
-            ${data.contentHash}, ${data.image}, ${JSON.stringify(data.legend)}::jsonb, ${JSON.stringify(data.report)}::jsonb, ${data.createdById}::uuid,
+            ${data.contentHash}, ${data.image}, ${JSON.stringify(data.document)}::jsonb, ${JSON.stringify(data.legend)}::jsonb, ${JSON.stringify(data.report)}::jsonb, ${data.createdById}::uuid,
             now(), now()
           )
           ON CONFLICT (project_id, platform, name) DO UPDATE SET
@@ -586,14 +746,29 @@ export async function upsertScreenMockup(
             byte_size = EXCLUDED.byte_size,
             content_hash = EXCLUDED.content_hash,
             image = EXCLUDED.image,
+            document = EXCLUDED.document,
             legend = EXCLUDED.legend,
             report = EXCLUDED.report,
             created_by_id = EXCLUDED.created_by_id,
             updated_at = now()
           RETURNING id
-        `
-      )[0]!.id
-    : (await tx.screenMockup.create({ data, select: { id: true } })).id;
+        `;
+    // `RETURNING id` is what makes this statement answer with the row it wrote. Without it the insert
+    // still lands and the result is empty — which reads as a failure three lines further on, as a
+    // TypeError about reading `id` of undefined, saying nothing about the cause. So an empty answer is
+    // treated as what it is: the statement did not do what this code believes it does.
+    const row = inserted[0];
+    if (!row) {
+      throw new LocaleHubError(
+        ErrorCode.INTERNAL_ERROR,
+        'The screen was written but the database returned no row for it; refusing to continue with an unknown id',
+        500,
+      );
+    }
+    mockupId = row.id;
+  } else {
+    mockupId = (await tx.screenMockup.create({ data, select: { id: true } })).id;
+  }
 
   // Markers of a replaced screen go before the new ones arrive, outside the upsert for the reason
   // above. A freshly inserted row has none, so this is a no-op on the create path.
@@ -652,11 +827,12 @@ export async function upsertScreenMockup(
     platform: input.platform,
     locale,
     replaced: Boolean(existing),
+    kind: input.image ? 'image' : 'document',
     image: {
-      mimeType: input.image.mimeType,
-      byteSize: input.image.bytes.length,
-      width: input.image.width,
-      height: input.image.height,
+      mimeType,
+      byteSize: payload.length,
+      width: input.image ? input.image.width : (input.width ?? null),
+      height: input.image ? input.image.height : (input.height ?? null),
       checksum,
     },
     markers: {
@@ -672,7 +848,10 @@ export async function upsertScreenMockup(
     // Relative to the API base, not absolute: the browser client is handed `/api/v1/...` and adds its
     // own base, so an absolute path here produced `/api/v1/api/v1/...` and a 404 the dialog could
     // only report as a broken sketch.
-    imagePath: `/projects/${input.projectId}/mockups/${mockupId}/image`,
+    //
+    // A replica has no picture: `imagePath` points at the page instead, so a caller that renders
+    // "whatever this screen is" needs one field rather than a kind check.
+    imagePath: `/projects/${input.projectId}/mockups/${mockupId}/${input.image ? 'image' : 'document'}`,
   };
 }
 
@@ -693,6 +872,8 @@ export interface ScreenMockupSummary {
   name: string;
   platform: string;
   locale: string;
+  /** A picture the platform drew, or the page itself. Decides what a client renders. */
+  kind: 'image' | 'document';
   width: number | null;
   height: number | null;
   mimeType: string;
@@ -721,6 +902,9 @@ export async function listScreenMockups(
       mimeType: true,
       byteSize: true,
       updatedAt: true,
+      // Only whether a page is there, not the markup: the list says which kind each screen is, and a
+      // JSONB column of megabytes is not what "does this screen exist" costs.
+      document: true,
       _count: { select: { markers: true } },
     },
     orderBy: [{ updatedAt: 'desc' }, { name: 'asc' }],
@@ -730,6 +914,7 @@ export async function listScreenMockups(
     name: row.name,
     platform: row.platform as string,
     locale: row.locale,
+    kind: row.document ? ('document' as const) : ('image' as const),
     width: row.width,
     height: row.height,
     mimeType: row.mimeType,
