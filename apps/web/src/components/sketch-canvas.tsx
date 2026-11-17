@@ -28,6 +28,7 @@ export function SketchCanvas({
   height,
   label,
   controls,
+  onScaleChange,
   children,
 }: {
   width: number;
@@ -35,6 +36,14 @@ export function SketchCanvas({
   label: string;
   /** The state and component chips, drawn as a bar under the canvas. */
   controls?: ReactNode;
+  /**
+   * How much the picture is currently shrunk or grown on screen.
+   *
+   * Reported because some things drawn over the picture must *not* scale with it: a number label is
+   * read, not measured, so it stays the same size at "fit" and at 400% — which means whoever draws it
+   * has to know the factor to divide by.
+   */
+  onScaleChange?: (scale: number) => void;
   children: ReactNode;
 }) {
   const paneRef = useRef<HTMLDivElement>(null);
@@ -63,6 +72,12 @@ export function SketchCanvas({
 
   const fit = pane.width > 0 && pane.height > 0 ? Math.min((pane.width - 32) / width, (pane.height - 32) / height) : 1;
   const scale = fit * zoom;
+
+  // Reported in an effect rather than during render: the callback sets state in the parent, and a
+  // parent that re-renders while this component is rendering is a React error, not a preference.
+  useEffect(() => {
+    onScaleChange?.(scale);
+  }, [onScaleChange, scale]);
 
   const zoomBy = useCallback(
     (factor: number, at?: { x: number; y: number }) => {

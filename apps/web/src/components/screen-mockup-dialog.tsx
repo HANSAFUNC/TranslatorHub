@@ -82,6 +82,19 @@ function useObjectUrl(path: string | null): { url: string | null; error: unknown
 }
 
 /**
+ * The number's own size, in the picture's pixels.
+ *
+ * Not a fraction: a badge is a printed label, so it is the same size on screen whatever the screen is
+ * — a phone sketch and a 1440-wide replica get the same chip. It is in the picture's coordinate space
+ * because that is what the canvas scales, so zooming in grows it with the picture like the annotation
+ * it is.
+ */
+const BADGE_WIDTH = 17;
+const BADGE_HEIGHT = 17;
+/** Clearance between a number and the outline it belongs to, in screen pixels. */
+const BADGE_GAP = 2;
+
+/**
  * The identity the two panes agree on: a key plus its namespace.
  *
  * Nothing invisible in the separator. The DOM attributes below are read back with `CSS.escape`, which
@@ -204,6 +217,8 @@ export function ScreenMockupDialog({
    * in fractions of the page, the same coordinate system a drawn sketch uses, so everything downstream
    * (rendering, zooming, linking a marker to a row) is the same code.
    */
+  /** What the canvas is currently scaled by, so the number labels can stay a constant screen size. */
+  const [canvasScale, setCanvasScale] = useState(1);
   const replicaFrameRef = useRef<HTMLIFrameElement | null>(null);
   const replicaFrames = useMemo(() => detail?.mockup.frames ?? [], [detail]);
   const [replicaFrame, setReplicaFrame] = useState<string | null>(null);
@@ -317,6 +332,81 @@ export function ScreenMockupDialog({
     if (!highlight) return false;
     return highlight.kind === 'frame' ? marker.frame !== highlight.value : marker.component !== highlight.value;
   };
+
+  /**
+   * Where each number goes: outside its box, and never on top of another number.
+   *
+   * The number used to sit inside the box, over the very text it was pointing at — which is what made
+   * a marked-up screen unreadable: the annotation covered the thing it annotated, and two boxes close
+   * together put their numbers on top of each other. So the box is now a bare red outline and the
+   * number is placed *outside* it, in the first position that collides with neither another number nor
+   * the box it belongs to. Positions are fractions of the stage, like everything else here, with the
+   * badge's own size expressed in the picture's pixels so it stays the same size on screen.
+   */
+  const badgePlacements = useMemo(() => {
+    const placements = new Map<string, { x: number; y: number }>();
+    if (!natural) return placements;
+    // The stage is scaled to fit, so a badge sized in the picture's pixels would come out 9px wide on
+    // a tall page — the label has to be the same size on screen whatever the zoom, which means its
+    // picture-space size is its screen size divided by the current scale.
+    const width = BADGE_WIDTH / canvasScale / natural.width;
+    const height = BADGE_HEIGHT / canvasScale / natural.height;
+    const taken: { x: number; y: number; width: number; height: number }[] = [];
+
+    const entries: { key: string; box: { x: number; y: number; width: number | null; height: number | null } }[] = [];
+    for (const marker of markers) {
+      const identity = markerKey(marker);
+      const boxes = isReplica
+        ? (measured?.boxes.get(identity) ?? [])
+        : [{ x: marker.x, y: marker.y, width: marker.width, height: marker.height }];
+      boxes.forEach((box, occurrence) => entries.push({ key: `${marker.id}-${occurrence}`, box }));
+    }
+    // Reading order, so the numbers run the way the eye does.
+    entries.sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x);
+
+    const boxesOfOthers = entries.map((entry) => ({
+      x: entry.box.x,
+      y: entry.box.y,
+      width: entry.box.width ?? 0,
+      height: entry.box.height ?? 0,
+    }));
+
+    for (const entry of entries) {
+      const boxWidth = entry.box.width ?? 0;
+      const boxHeight = entry.box.height ?? 0;
+      // A hair of clearance, so the number reads as a label *beside* the outline rather than as part
+      // of it — touching is not overlapping, but at 18px it looks like a mistake.
+      const gap = BADGE_GAP / canvasScale / natural.height;
+      const candidates = [
+        { x: entry.box.x, y: entry.box.y - height - gap }, // above the box, outside it
+        { x: entry.box.x + boxWidth - width, y: entry.box.y - height - gap }, // above, at its right edge
+        { x: entry.box.x, y: entry.box.y + boxHeight + gap }, // below the box
+        { x: entry.box.x + boxWidth - width, y: entry.box.y + boxHeight + gap }, // below, at its right edge
+        { x: entry.box.x, y: entry.box.y }, // inside, only when the stage leaves no room outside
+      ];
+      // The best candidate is the one that covers the least: never another number (four times as bad —
+      // a number hidden behind a number is a number lost), and preferably not another control's
+      // outline either. Off the stage at all is worst, because there it cannot be read.
+      const share = (
+        a: { x: number; y: number; width: number; height: number },
+        b: { x: number; y: number; width: number; height: number },
+      ): number =>
+        Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)) *
+        Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+      const cost = (candidate: { x: number; y: number }): number => {
+        const rect = { ...candidate, width, height };
+        const outside =
+          Math.max(0, -candidate.x) + Math.max(0, -candidate.y) + Math.max(0, candidate.x + width - 1) + Math.max(0, candidate.y + height - 1);
+        const onBadge = taken.reduce((sum, other) => sum + share(rect, other), 0);
+        const onBox = boxesOfOthers.reduce((sum, other) => sum + share(rect, other), 0);
+        return outside * 1000 + onBadge * 4 + onBox * 3;
+      };
+      const chosen = candidates.reduce((best, candidate) => (cost(candidate) < cost(best) ? candidate : best), candidates[0]!);
+      taken.push({ ...chosen, width, height });
+      placements.set(entry.key, chosen);
+    }
+    return placements;
+  }, [markers, isReplica, measured, natural, canvasScale]);
 
   /** Which key the panes agree is current: the marker list, or the entry the editor had selected. */
   const activeKey = useMemo(() => {
@@ -459,6 +549,7 @@ export function ScreenMockupDialog({
                 width={natural.width}
                 height={natural.height}
                 label={`${detail.mockup.name} ${mockupId ?? ''}`}
+                onScaleChange={setCanvasScale}
                 controls={
                   <>
                     {frames.length > 1 ? (
@@ -523,6 +614,12 @@ export function ScreenMockupDialog({
                         {isReplica ? '标记位置由浏览器实测。拖动平移，滚轮缩放' : '拖动平移，滚轮缩放'}
                       </span>
                     ) : null}
+                    <span className="text-muted-foreground flex items-center gap-1.5 text-xs">
+                      <span className="inline-block size-2 rounded-full bg-red-500" />
+                      待译
+                      <span className="bg-amber-500 inline-block size-2 rounded-full" />
+                      译文还是空的
+                    </span>
                   </>
                 }
               >
@@ -549,6 +646,9 @@ export function ScreenMockupDialog({
                   {markers.map((marker, index) => {
                     const identity = markerKey(marker);
                     const isActive = identity === activeKey;
+                    // "This one still needs a translation" is a property of the entry, not of the
+                    // outline — so it colours the number outside the box, where it cannot hide the
+                    // text the outline is drawn around.
                     const untranslated = marker.source !== null && (!marker.entry || !marker.entry.value);
                     // A replica's box is wherever the browser found the element. Until the frame has
                     // loaded there is nowhere to draw it — and a marker with no element on the page
@@ -558,42 +658,60 @@ export function ScreenMockupDialog({
                       ? (measured?.boxes.get(identity) ?? [])
                       : [{ x: marker.x, y: marker.y, width: marker.width, height: marker.height }];
                     return boxes.map((box, occurrence) => {
+                      const key = `${marker.id}-${occurrence}`;
                       const anchored = Boolean(box.width || box.height);
-                      return (
-                        <button
-                          key={`${marker.id}-${occurrence}`}
-                          type="button"
-                          data-marker={identity}
-                          onClick={() => select(identity)}
-                          title={`${marker.key}${marker.frame ? `
+                      const badge = badgePlacements.get(key);
+                      const title = `${marker.key}${marker.frame ? `
 状态：${marker.frame}` : ''}${marker.text ? `
-草图：${marker.text}` : ''}`}
-                          style={{
-                            left: `${box.x * 100}%`,
-                            top: `${box.y * 100}%`,
-                            width: box.width ? `${box.width * 100}%` : undefined,
-                            height: box.height ? `${box.height * 100}%` : undefined,
-                          }}
-                          className={cn(
-                            'absolute rounded-[3px] border text-left transition',
-                            anchored ? 'flex items-start' : 'size-4 -translate-x-1/2 -translate-y-1/2 rounded-full',
-                            isDimmed(marker) ? 'opacity-20' : '',
-                            isActive
-                              ? 'border-primary bg-primary/30 ring-primary ring-2'
-                              : untranslated
-                                ? 'border-amber-500 bg-amber-400/30 hover:bg-amber-400/45'
-                                : 'border-primary/70 bg-primary/20 hover:bg-primary/35',
-                          )}
-                        >
-                          <span
+草图：${marker.text}` : ''}`;
+                      return (
+                        <span key={key}>
+                          {/* A bare outline: nothing is painted over the screen, so the control it
+                              marks is still readable — which is the whole point of marking it. */}
+                          <button
+                            type="button"
+                            data-marker={identity}
+                            onClick={() => select(identity)}
+                            title={title}
+                            style={{
+                              left: `${box.x * 100}%`,
+                              top: `${box.y * 100}%`,
+                              width: box.width ? `${box.width * 100}%` : undefined,
+                              height: box.height ? `${box.height * 100}%` : undefined,
+                            }}
                             className={cn(
-                              'rounded-[3px] px-1 text-[10px] font-medium leading-4 tabular-nums',
-                              isActive ? 'bg-primary text-primary-foreground' : 'bg-primary/80 text-primary-foreground',
+                              'absolute rounded-[4px] border-2 border-red-500 bg-transparent text-left transition',
+                              anchored ? '' : 'size-4 -translate-x-1/2 -translate-y-1/2 rounded-full',
+                              isDimmed(marker) ? 'opacity-20' : 'hover:bg-red-500/10',
+                              isActive ? 'border-red-600 ring-2 ring-red-500/40' : '',
                             )}
-                          >
-                            {index + 1}
-                          </span>
-                        </button>
+                          />
+                          {badge ? (
+                            /* The number, outside the outline and, as far as the stage allows, off
+                               every other number. Clicking it selects the same entry the box does. */
+                            <button
+                              type="button"
+                              data-badge={identity}
+                              onClick={() => select(identity)}
+                              title={title}
+                              style={{
+                                left: `${badge.x * 100}%`,
+                                top: `${badge.y * 100}%`,
+                                width: BADGE_WIDTH / canvasScale,
+                                height: BADGE_HEIGHT / canvasScale,
+                                fontSize: Math.max(8, 11 / canvasScale),
+                              }}
+                              className={cn(
+                                'absolute flex items-center justify-center rounded-full font-semibold leading-none text-white tabular-nums shadow-sm ring-1 ring-white/70 transition',
+                                untranslated ? 'bg-amber-500' : 'bg-red-500',
+                                isDimmed(marker) ? 'opacity-20' : 'hover:brightness-110',
+                                isActive ? 'ring-2 ring-red-500/50' : '',
+                              )}
+                            >
+                              {index + 1}
+                            </button>
+                          ) : null}
+                        </span>
                       );
                     });
                   })}
