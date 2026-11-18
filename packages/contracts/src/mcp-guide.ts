@@ -453,6 +453,7 @@ localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表 -
 | \`NO_PICTURES\` | 整页里没有任何图片、图标或背景图 | 与重画那条同义：图的地址要么内联、要么是浏览器能取到的地址 |
 | \`DRAWN_SHAPES\` | 整页的图全是手画的形状，一张真素材都没有 → 看着像线框图 | 从工程里取真素材内联（见 §9）：iOS 的 \`Assets.xcassets\`、Android 的 \`res/drawable*\`、Flutter 的 \`assets/\`；矢量图标要照抄工程里的 \`path\`，不要自己画一个像的 |
 | \`FLOW_LAYOUT\` | 整页用 flex/grid 排的，没有一处绝对定位 → 浏览器替你重排了一遍 | 每个元素按工程给的坐标写成 \`position:absolute\` + \`left/top/width/height\`（见 §9 第一条） |
+| \`CLIPPED_BOX\` | 固定高度 + overflow:hidden，排到盒子外面的内容**图上不存在** | 内容多高盒子就多高，不要收口（§9 S2）；这一条丢掉的文案后面找不回来 |
 
 只有这些：报告只说自己**看得见**的事，不会猜。自己传 \`image_base64\` + \`markers\` 时，平台手里只有那张图，
 没有图上元素的坐标，所以判断不了圈得准不准——片段与 \`ui\` 由平台排版时算，整页由浏览器渲染时实测，
@@ -489,24 +490,47 @@ localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表 -
 **位置不用你给**：编辑器渲染这一帧时，自己量每个 \`data-key\` 元素的矩形并画框。所以整页这条路，
 返回值里的标记坐标一律是 0——那不是「在上角」，是「等浏览器量」。
 
-## 9. 素材和布局从工程里读出来，不要照着印象画
+## 9. 复刻的交付标准（S1–S10）：不要照着印象画，数值和素材都从工程里读
 
 **这一节是「还原度」的全部**。平台收到的是 HTML，读不懂 Swift / Kotlin / Dart / JSX——**能读懂工程的只有你**。
-你用眼睛估一个「差不多」的界面，译者看到的就是一张线框图：灰色圆角条代表文字、几个手画的形状代表图标、
-头像是个色块。这正是 \`DRAWN_SHAPES\` 要拦下的东西。
+你按印象估一个「差不多」的界面，译者看到的就是一张线框图。以下是这一页**必须满足的标准**，逐条对照；
+括号里是平台用来判定它的 finding。
 
-三条硬规矩：
+**画布**
 
-1. **每个元素绝对定位，坐标照抄工程的数值。** 容器 \`position:relative\`（尺寸就是那一屏，ios 390×844、
-   android 412×915、web 1280×800），里面的每个元素 \`position:absolute\` + \`left/top/width/height\`——
-   工程里的 Auto Layout \`frame\`、\`layout_*\`、Flutter 的 \`padding\`/\`SizedBox\`、RN \`StyleSheet\` 的数值就是这些数。
-   **不要用 flex/grid/流式排版**去"排得差不多"：浏览器的排版引擎不是设备的那个，字体、字号、行高只要差一点，
-   整块就挪走，而且错得不明显——平台会报 \`FLOW_LAYOUT\`。绝对定位还有一个好处：**错得看得见**。框重叠、
-   该贴边的地方有缝、内容超出屏幕，你自己一看就知道，而不是交给别人猜。
-2. **图从工程的资源目录里取原件**，内联成 \`data:\` URI。自己画的形状只有在工程里本来就是这个矢量（比如一个
-   vector drawable 的 \`<path>\`）时才允许——照抄那份 \`path\`，不要照着截图重画一个像的。
-3. **文字按工程的字号/字重/行高写**，别用浏览器的默认 14px：整屏的字号层次（10/11/12/13/14/17/20）是设计的一部分，
-   差一档看着就不像。
+- **S1** 一屏一帧；画布尺寸 = 那一屏（ios 390×844、android 412×915、web 1280×800）。
+- **S2 画布不许裁掉内容。** 内容多高，盒子就多高；不要用 \`height:844px\` + \`overflow:hidden\` 收口。
+  被裁掉的文案**在渲染之前就没了**，图和列表都找不回来。（\`CLIPPED_BOX\`）
+- **S3** 每一帧的内容都在画布之内，没有元素被排到画面之外。
+
+**布局**
+
+- **S4 每个元素绝对定位。** 容器 \`position:relative\`，元素 \`position:absolute\` + \`left/top/width/height\`，
+  数值取自工程：Auto Layout 的 \`frame\`、\`layout_*\`、Flutter 的 \`padding\`/\`SizedBox\`、RN \`StyleSheet\` 里就是这些数。
+  **不许用 flex/grid/流式排版**——浏览器的排版引擎不是设备的那个，字体字号差一点整块就挪走，而且错得不明显。
+  （\`FLOW_LAYOUT\`）
+- **S5 每个盒子容得下它自己的文字。** 宽度宁可写大一号，也不许文字被截断、换行、压到旁边的元素上。
+- **S6** 默认不重叠；原界面本来就重叠的，用 \`z-index\` 写清楚。
+
+**文案**
+
+- **S7 每个要翻译的字符串都挂 \`data-key\`**，值是**工程里的真实 key**，不是原文。（\`NO_KEYS\`）
+- **S8** 不翻译的东西**不要**挂 key：数字、\`3/5\`、\`12\`、\`—\`、\`（由接口下发）\` 这类占位。
+- **S9** 字号、字重、行高、颜色按工程写，不要用浏览器默认的 14px。（\`NO_STYLE\`）
+
+**素材**
+
+- **S10 图片和图标从工程的资源目录取原件**，内联成 \`data:\` URI；矢量图标照抄工程里的 \`path\`，
+  不要照着截图重画一个像的。（\`DRAWN_SHAPES\`、\`ASSETS_NOT_INLINED\`）
+
+**上传前自检（必做）**：在浏览器里打开这份 HTML，和原界面并排，**每个状态都看一遍**，回答四个问题：
+
+1. 有没有内容被滚出画面或者被容器裁掉了？（S2、S3）
+2. 有没有文字被自己的盒子截断，或者压到别的元素上？（S5、S6）
+3. 有没有该是图的地方是一个灰块或手画的形状？（S10）
+4. 有没有元素跑到画布外面去了？（S3）
+
+四个都答「没有」才传。传完读 \`report\`：还有 finding 就照 \`advice\` 改，同名重传。
 
 | 技术栈 | 布局数值在哪 | 图在哪 | 颜色/字号在哪 |
 | --- | --- | --- | --- |
@@ -533,24 +557,32 @@ export function remoteSketchPrompt(args: { projectId?: string; page?: string } =
   return [
     `把 ${page} 的界面草图传到 LocaleHub（${project}），让译者在编辑器里对着界面看译文。`,
     '',
+    '**交付标准 S1–S10 是硬性的，逐条对照；不满足就不要传。** 完整版在 localehub://screen-sketch-guide 的 §9。',
+    '',
     '按这个顺序做，不要跳步：',
-    '1. 读 localehub://screen-sketch-guide，它是这个流程的权威说明（§9 有逐栈对照表：布局数值在哪、图在哪、颜色在哪）。',
+    '1. 读 localehub://screen-sketch-guide。§9 是交付标准（每条后面括号里是平台用来判定它的 finding），§7 是 finding 对照表。',
     '2. 能跑命令就用：localehub mockup --page <页面文件> --name <屏幕名> 先生成预览，把「哪些字符串变成了标记、用了哪些颜色」报给我确认，再加 --confirm 上传。',
     '3. 不能跑命令，就交那一屏**真实的 HTML**：upload_screen_mockup 传 document（整页，平台不重画，编辑器照浏览器的方式渲染）。',
-    '   原生界面也一样——布局数值和图片都在工程里（Auto Layout 约束 / layout_* / Flutter 的 padding / RN 的 StyleSheet），',
-    '   照抄数值、把资源目录里的图内联成 data: URI。**每个元素写成绝对定位**（容器 position:relative、元素 position:absolute + left/top/width/height），',
-    '   不要用 flex/grid 让浏览器替你排：字体差一点整块就挪走，平台会报 FLOW_LAYOUT。**不要照着眼睛写一份示意图**：灰条当文字、手画的形状当图标，',
-    '   传上来就是一张线框图，译者认不出是哪个页面。文案要落到 key 上就给元素加 data-key。',
+    '   原生界面也一样——布局数值和图片都在工程里（Auto Layout 约束 / layout_* / Flutter 的 padding / RN 的 StyleSheet）。写的时候按标准：',
+    '   · 画布尺寸就是那一屏，**内容多高盒子就多高**：不要 height:844px + overflow:hidden，排到盒子外面的内容在图上不存在（CLIPPED_BOX）；',
+    '   · 每个元素 position:absolute + left/top/width/height，数值照抄工程，**不要用 flex/grid 让浏览器替你排**（FLOW_LAYOUT）；',
+    '   · 每个盒子容得下它自己的文字，宁可写大一号，不许文字被截断或压到旁边的元素上；',
+    '   · 每个要翻译的字符串挂 data-key，值是**工程里的真实 key**；数字、「3/5」「—」这类不翻译的不要挂；',
+    '   · 图片和图标从工程资源目录取原件、内联成 data: URI，矢量照抄工程里的 path，**不要照着眼睛画一个像的**（DRAWN_SHAPES）。',
     '4. 调 get_project 确认 sourceLocale 与 platforms；草图的 locale 用 sourceLocale，platform 用页面所属的端（ios / android / web），',
     '   分表的项目还要给 namespace（iOS 的 Localizable / InfoPlist）。',
     '5. 调 upload_screen_mockup：整页传 document（首选）；只有一段代码时传 html 片段或 ui；',
     '   自己画的图（设计稿、截图）才用 image_base64 + markers，并且只有这一种才要给标记。',
     '   不要传 markers 配 html / ui / document——坐标由平台排版时算、或由浏览器渲染时量，给了也不会采用；',
     '   一次只用一种输入，name 用页面名，不要用版本号。',
-    '6. 把返回值里的 markers.total / markers.matchedKeys / markers.unmatched 报给我：unmatched 说明这些 key 还没导入，先传草图没问题，导入后会自动对上。',
-    '7. 读同一个返回值里的 report：它是平台看过这一页之后的结论（stats 里 pictures / shapes / placeholders / sourceColours / frames 是页面上真实的数量，findings 每条带 advice）。',
-    '   DRAWN_SHAPES（图全是手画的形状）、NO_PICTURES、PLACEHOLDER_PICTURES、NO_SOURCE_COLOURS、IDENTICAL_FRAMES 都说明还没达到「看得出是哪个页面」，',
-    '   按 advice 改输入（从工程里取真图内联、补 css 或 theme、删掉重复的帧）后同名重传，再把新的 report 报给我；clean 或只剩 MISSING_KEYS 就可以收工。',
+    '6. **上传前自检（必做，不是可选）**：在浏览器里打开这份 HTML，和原界面并排，**每个状态**看一遍，四个问题都答「没有」才传——',
+    '   有没有内容被容器裁掉或者滚出画面？有没有文字被自己的盒子截断、或者压到别的元素上？',
+    '   有没有该是图的地方是一个灰块或手画的形状？有没有元素跑到画布外面？',
+    '7. 把返回值里的 markers.total / markers.matchedKeys / markers.unmatched 报给我：unmatched 说明这些 key 还没导入，先传草图没问题，导入后会自动对上。',
+    '8. 读同一个返回值里的 report：它是平台看过这一页之后的结论（stats 里 pictures / shapes / positioned / flow / clipped 是页面上真实的数量，findings 每条带 advice）。',
+    '   CLIPPED_BOX（内容被裁掉）、DRAWN_SHAPES（图全是手画的形状）、FLOW_LAYOUT（用 flex/grid 重排的）、NO_PICTURES、PLACEHOLDER_PICTURES、',
+    '   NO_SOURCE_COLOURS、IDENTICAL_FRAMES 都说明还没达到「看得出是哪个页面」，按 advice 改输入后同名重传，再把新的 report 报给我；',
+    '   clean 或只剩 MISSING_KEYS 就可以收工。',
     '',
     '注意：upload_screen_mockup 没有 dry run，同名屏幕会被整体替换（含旧标记），上传前把屏幕名与端再确认一遍。',
   ].join('\n');

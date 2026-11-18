@@ -882,6 +882,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       '**首选传 document**（整页 HTML）：平台不重画，原文存下来，编辑器在沙箱里照浏览器的方式渲染——' +
       '配色、圆角、字体、阴影、图片全是页面自己的，还原度最高；素材要内联成 data: URI（本地文件）或写成公开的 https 地址。' +
       '只有一段代码、没有整页时才传 html 片段或 ui（近似，不是复刻）；image_base64 + markers 只用于设计稿与截图。' +
+      '**内容多高盒子就多高**：不要用固定 height + overflow:hidden 收口——排到盒子外面的文案在图上不存在，后面找不回来（CLIPPED_BOX）。' +
       '**每个元素绝对定位**：容器 position:relative、元素 position:absolute + left/top/width/height，坐标照抄工程的数值；' +
       '不要用 flex/grid 让浏览器替你排——字体差一点整块就挪走，平台会报 FLOW_LAYOUT。' +
       '**不要照着眼睛画一张像那个界面的图**：灰条当文字、手画的形状当图标，传上来就是线框图，平台会报 DRAWN_SHAPES。' +
@@ -890,7 +891,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       'key 从元素上的 data-key / data-i18n-key 来，整页的标记位置由浏览器实测、不用你给坐标；' +
       'key 还没导入也照存，会在返回值里以 markers.unmatched 报告，而不是拒绝。同名屏幕再传一次是整体替换（没有 dry run）。' +
       '返回值里的 report 是平台看过这一页之后的结论（stats 里 pictures 是页面带来的图、shapes 是手画的形状，findings 每条带 advice），' +
-      'DRAWN_SHAPES / FLOW_LAYOUT / NO_PICTURES / ASSETS_NOT_INLINED / NO_STYLE / NO_SOURCE_COLOURS / IDENTICAL_FRAMES 都说明还没还原到位，' +
+      'CLIPPED_BOX / DRAWN_SHAPES / FLOW_LAYOUT / NO_PICTURES / ASSETS_NOT_INLINED / NO_STYLE / NO_SOURCE_COLOURS / IDENTICAL_FRAMES 都说明还没还原到位，' +
       '按 advice 改输入后同名重传。节点表、key/namespace 的来源、上限，以及「让 CLI 从页面源码生成」见 localehub://screen-sketch-guide。',
     async (input: {
       project_id: string;

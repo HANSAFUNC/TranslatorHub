@@ -204,6 +204,22 @@ describe('every finding is reachable and explained', () => {
       markers: [{ key: 'a', text: '我的', component: 'card' }],
       legend: [{ name: 'card' }],
     },
+    CLIPPED_BOX: {
+      svg: '',
+      document: {
+        frames: [
+          {
+            title: '默认',
+            html:
+              '<html><head><style>.screen{position:relative;height:844px;overflow:hidden}</style></head><body>' +
+              '<img src="data:image/png;base64,AA">' +
+              '<span data-key="a">我的</span></body></html>',
+          },
+        ],
+      },
+      markers: [{ key: 'a', text: '我的', component: 'card' }],
+      legend: [{ name: 'card' }],
+    },
   };
 
   /** Whichever reader the scenario is for: a picture goes to one, a page to the other. */
@@ -327,6 +343,53 @@ describe('what the document report notices', () => {
     expect(report.stats.pictures).toBe(0);
     expect(report.stats.shapes).toBe(1);
     expect(report.findings.map((entry) => entry.code)).not.toContain('NO_PICTURES');
+  });
+
+  it('says a box with a fixed height and hidden overflow loses whatever does not fit', () => {
+    // The defect that cost 64% of a real screen's copy: the page declared `.screen{height:844px;
+    // overflow:hidden}` and laid its content out to 1507px, so everything below the fold was gone —
+    // 27 of 42 markers sat outside the box. It is worth its own warning because *nothing downstream can
+    // recover it*: the picture is the only artefact, and the content was discarded before it was drawn.
+    // The declaration is checkable even though the overflow is not (that needs a layout engine).
+    const report = analyzeDocument({
+      document: {
+        frames: [
+          {
+            title: '默认',
+            html:
+              '<html><head><style>.screen{position:relative;width:390px;height:844px;overflow:hidden}' +
+              '.nav{height:91px;overflow:hidden}.title{position:absolute;left:16px;top:60px}</style></head>' +
+              '<body><div class="screen"><div class="nav"></div><div class="title" data-key="home.title">我的</div></div></body></html>',
+          },
+        ],
+      },
+      markers: [{ key: 'home.title', text: '我的', component: 'card' }],
+      legend: [{ name: 'card' }],
+    });
+    const finding = report.findings.find((entry) => entry.code === 'CLIPPED_BOX')!;
+    expect(finding.count).toBe(2);
+    expect(finding.advice).toContain('overflow');
+    expect(report.stats.clipped).toBe(2);
+  });
+
+  it('stays quiet when a page lets its content decide the height', () => {
+    const report = analyzeDocument({
+      document: {
+        frames: [
+          {
+            title: '默认',
+            html:
+              '<html><head><style>.screen{position:relative;width:390px}</style>' +
+              '<style>.title{position:absolute;left:16px;top:60px}</style></head>' +
+              '<body><div class="screen"><div class="title" data-key="home.title">我的</div></div></body></html>',
+          },
+        ],
+      },
+      markers: [{ key: 'home.title', text: '我的', component: 'card' }],
+      legend: [{ name: 'card' }],
+    });
+    expect(report.findings.map((entry) => entry.code)).not.toContain('CLIPPED_BOX');
+    expect(report.stats.clipped).toBe(0);
   });
 
   it('says a page laid out by flow is a re-composition, not the screen', () => {

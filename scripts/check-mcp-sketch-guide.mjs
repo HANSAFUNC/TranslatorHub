@@ -118,6 +118,16 @@ check(
   'the guide says where the project keeps its pictures',
 );
 check(guideText.includes('不要照着印象画'), 'the guide says not to draw the screen from memory');
+// The standard the uploader is held to, pinned so a rewrite of the guide cannot quietly drop a rule.
+check(
+  ['S1', 'S2', 'S4', 'S5', 'S7', 'S10'].every((rule) => guideText.includes(rule)),
+  'the guide carries the numbered delivery standard',
+);
+check(guideText.includes('CLIPPED_BOX'), 'the guide names the finding for a box that hides its content');
+check(
+  guideText.includes('内容多高') && guideText.includes('overflow'),
+  'the standard says the canvas must not clip its content',
+);
 
 const prompts = (await client.listPrompts()).prompts.map((row) => row.name);
 check(prompts.includes('upload-screen-sketch'), 'the sketch prompt is registered', prompts.join(', '));
@@ -126,6 +136,11 @@ const promptText = String(rendered.messages[0]?.content?.text ?? '');
 check(promptText.includes('localehub://screen-sketch-guide'), 'the prompt sends the agent to the guide');
 check(promptText.includes('不要传 markers'), 'the prompt says not to hand-roll markers');
 check(promptText.includes('report'), 'the prompt tells the agent to read the report back');
+check(
+  promptText.includes('自检') && promptText.includes('四个问题'),
+  'the prompt makes the pre-upload self-check a step',
+);
+check(promptText.includes('CLIPPED_BOX') && promptText.includes('FLOW_LAYOUT'), 'the prompt names the findings that gate an upload');
 // The prompt used to say "平台只解析、不渲染" and offer three inputs with no `document` — which is what
 // an uploading agent read as permission to hand-write a wireframe.
 check(promptText.includes('document'), 'the prompt routes the agent to the replica path');

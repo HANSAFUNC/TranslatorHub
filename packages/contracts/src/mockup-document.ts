@@ -233,6 +233,17 @@ export interface DocumentAssetCounts {
   positioned: number;
   /** `display: flex` / `grid` declarations: elements placed by the layout engine, not by a number. */
   flow: number;
+  /**
+   * Boxes that hide whatever does not fit them: a fixed pixel `height` together with `overflow: hidden`.
+   *
+   * The one defect a picture cannot recover from. A real screen arrived with `.screen{height:844px;
+   * overflow:hidden}` and content laid out to 1507px, so 27 of its 42 marked strings sat outside the box
+   * and were discarded *before* anything was drawn — 64% of the copy, invisible to every later check
+   * because the only artefact left is the picture. The declaration is visible in the markup even though
+   * the overflow is not: finding what actually spilled needs a layout engine, and this is the warning
+   * that says to go and look.
+   */
+  clipped: number;
   /** Distinct colours the page names, so "it arrived monochrome" is answerable. */
   colours: number;
 }
@@ -260,7 +271,7 @@ function classifyAsset(reference: string): 'inline' | 'remote' | 'local' {
  * report's job is to say which ones are missing, not to have an opinion about the others.
  */
 export function documentAssets(document: MockupDocument): DocumentAssetCounts {
-  const counts: DocumentAssetCounts = { inline: 0, remote: 0, local: 0, scripts: 0, styles: 0, pictures: 0, shapes: 0, positioned: 0, flow: 0, colours: 0 };
+  const counts: DocumentAssetCounts = { inline: 0, remote: 0, local: 0, scripts: 0, styles: 0, pictures: 0, shapes: 0, positioned: 0, flow: 0, clipped: 0, colours: 0 };
   const colours = new Set<string>();
   for (const frame of document.frames) {
     const html = frame.html;
@@ -282,6 +293,16 @@ export function documentAssets(document: MockupDocument): DocumentAssetCounts {
     ].join('\n');
     counts.positioned += (css.match(/position\s*:\s*(?:absolute|fixed)\b/gi) ?? []).length;
     counts.flow += (css.match(/display\s*:\s*(?:inline-)?(?:flex|grid)\b/gi) ?? []).length;
+    // A box that hides its overflow *and* has a fixed height is a box whose content can be discarded.
+    // Counted per declaration block rather than per property: `height` and `overflow` only clip together
+    // when they sit on the same rule. `!important` and stray whitespace are tolerated; a `height` in
+    // another unit is not a fixed pixel height and is left alone.
+    for (const block of css.split('}')) {
+      const [, declarations = ''] = block.includes('{') ? [block.slice(0, block.indexOf('{')), block.slice(block.indexOf('{') + 1)] : ['', block];
+      if (!/overflow\s*:\s*hidden/i.test(declarations)) continue;
+      if (!/height\s*:\s*\d+(?:\.\d+)?px/i.test(declarations)) continue;
+      counts.clipped += 1;
+    }
     for (const match of html.matchAll(/(?:src|href|poster)\s*=\s*["']([^"']*)["']/gi)) {
       const value = match[1]!;
       // A link to another page is not an asset; only what the browser would fetch to paint the frame.

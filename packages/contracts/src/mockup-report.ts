@@ -55,6 +55,7 @@ export const FINDING_CODES = [
   'NO_STYLE',
   'DRAWN_SHAPES',
   'FLOW_LAYOUT',
+  'CLIPPED_BOX',
 ] as const;
 
 export type FindingCode = (typeof FINDING_CODES)[number];
@@ -98,6 +99,8 @@ export interface MockupReportStats {
    */
   positioned?: number;
   flow?: number;
+  /** Boxes with a fixed height and `overflow: hidden`: whatever does not fit them is not in the picture. */
+  clipped?: number;
 }
 
 export interface MockupReport {
@@ -398,6 +401,27 @@ export function analyzeDocument(input: {
     });
   }
 
+  // The one kind of loss nothing downstream can undo. Every other finding describes something a reader
+  // can still see in the picture; this one describes copy that was thrown away before the picture was
+  // drawn — a screen arrived with a 844px box hiding its overflow and 1507px of content, and 27 of its 42
+  // marked strings were simply gone. Whether anything actually spilled needs a layout engine; that a box
+  // *can* spill is right here in the declarations, which is why this is a warning to go and look.
+  if (assets.clipped > 0) {
+    findings.push({
+      code: 'CLIPPED_BOX',
+      severity: 'warning',
+      count: assets.clipped,
+      title: `${assets.clipped} 处盒子设了固定高度 + overflow:hidden：排到它外面的内容，图上不存在`,
+      advice:
+        '这一条比别的重要，因为它丢掉的东西**后面找不回来**——复刻出来的图就是唯一的产物，被裁掉的文案在渲染之前就没了。' +
+        '典型的样子：容器写了 `height:844px` + `overflow:hidden`，内容却排到 1500px，于是下半屏的控件和文案全部消失，' +
+        '而右侧列表里照样列着它们，看图的人只会觉得「漏了很多文案」。静态检查看不出到底溢出没有（那要排版引擎），' +
+        '所以请自己跑 `localehub mockup --page` 生成预览、或者直接把 HTML 在浏览器里打开看一眼：' +
+        '**内容多高，盒子就多高**（`height` 跟着内容，或写实际内容高度），不要用 `overflow:hidden` 收口；' +
+        '确实需要滚动的一屏，把下面的内容作为另一帧传。',
+    });
+  }
+
   if (assets.scripts > 0) {
     findings.push({
       code: 'SCRIPTS_NOT_RUN',
@@ -436,6 +460,7 @@ export function analyzeDocument(input: {
       shapes: assets.shapes,
       positioned: assets.positioned,
       flow: assets.flow,
+      clipped: assets.clipped,
     },
     clean: findings.length === 0,
   };
