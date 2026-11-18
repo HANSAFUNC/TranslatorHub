@@ -1721,7 +1721,7 @@ app.bypass_rls` + 检查影响行数，否则 arrange 静默不生效、测试�
 
 改动：
 
-- `documentAssets` 新增两个计数：`positioned`（\`position: absolute|fixed\`）与 `flow\`（\`display: flex|grid\`），
+- `documentAssets` 新增两个计数：`positioned`（`position: absolute|fixed`）与 `flow`（`display: flex|grid`），
   只读页面自己带的 CSS（`<style>` 与 inline style；外链样式表本来就被要求内联，读不到就不猜）。
 - 新 finding `FLOW_LAYOUT`：`flow > 0 && positioned === 0` → 「N 处用 flex/grid 排版，整页没有一处绝对定位：
   这是重排，不是那一屏」，advice 给出写法（容器 `position:relative`，元素 `position:absolute` +
