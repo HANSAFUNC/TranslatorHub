@@ -123,3 +123,53 @@ describe('the sketch written into .localehub/mockups', () => {
     expect(manifest.uploaded).toBeNull();
   });
 });
+
+/**
+ * The preview is where an uploader finds out it drew a wireframe.
+ *
+ * A screen went up as grey bars, six hand-written `<svg>` glyphs and not one asset, and the platform
+ * said nothing, because inline `<svg>` counted as a picture. Saying it only in the upload's report is
+ * too late to be cheap: the mockup is already on the platform and the reviewer is already looking at a
+ * shape that is not their screen. The CLI reads the same page through the same analyzer, so the answer
+ * has to be in the preview, before `--confirm`.
+ */
+describe('what the preview says about a page that was drawn rather than brought', () => {
+  function workspaceWithDrawnPage(): string {
+    const root = workspaceWithConfig();
+    writeFileSync(
+      join(root, 'home.html'),
+      [
+        '<!doctype html><html lang="zh-CN"><head><style>',
+        '.screen{width:390px;height:844px;background:#F1F5FC}',
+        '.bar{height:16px;border-radius:8px;background:#DFE6F5}',
+        '.avatar{width:40px;height:40px;border-radius:20px;background:#D7DEEA}',
+        '</style></head><body><div class="screen">',
+        '<div class="bar"></div>',
+        '<svg viewBox="0 0 24 24"><path d="M12 2 22 20 2 20Z" fill="#FF7744"/></svg>',
+        '<div class="avatar"></div>',
+        '<span data-key="lesson.title">上课页</span>',
+        '</div></body></html>',
+      ].join('\n'),
+      'utf8',
+    );
+    return root;
+  }
+
+  it('tells the uploader the artwork is hand-drawn, before anything is uploaded', async () => {
+    const root = workspaceWithDrawnPage();
+    const services = new LocalSyncServices({ cwd: root, env: { LOCALEHUB_TOKEN: 't' } });
+    const preview = await services.generateScreenMockup({ page: 'home.html', name: '上课页' });
+
+    expect(preview.kind).toBe('document');
+    expect(preview.uploaded).toBe(false);
+    // `OperationResult` is deliberately open (`[key: string]: unknown`), so the shape a caller reads here
+    // is named once rather than asserted into existence at each use.
+    const report = preview.report as { findings: { code: string }[]; stats: Record<string, number> };
+    expect(report.findings.map((finding) => finding.code)).toContain('DRAWN_SHAPES');
+    expect(report.stats).toMatchObject({ pictures: 0, shapes: 1 });
+    // And it has to reach the human, not just sit in the returned object: the message is what the agent
+    // reads out, and its advice is what it acts on.
+    expect(String(preview.message)).toContain('手画的形状');
+    expect(String(preview.message)).toContain('Assets.xcassets');
+  });
+});

@@ -105,6 +105,19 @@ check(
   ),
   'the guide lists every finding the report can carry',
 );
+// The fidelity half of the guide. An agent that reads it must learn that the layout numbers and the
+// pictures are in the project, and that drawing something that merely looks like the screen is the
+// failure the platform reports as DRAWN_SHAPES.
+check(guideText.includes('DRAWN_SHAPES'), 'the guide names the finding for a hand-drawn wireframe');
+check(
+  ['constraint', 'layout_', 'padding', 'StyleSheet'].every((cue) => guideText.includes(cue)),
+  'the guide says, per stack, where the layout numbers live',
+);
+check(
+  ['xcassets', 'drawable'].every((cue) => guideText.includes(cue)),
+  'the guide says where the project keeps its pictures',
+);
+check(guideText.includes('不要照着印象画'), 'the guide says not to draw the screen from memory');
 
 const prompts = (await client.listPrompts()).prompts.map((row) => row.name);
 check(prompts.includes('upload-screen-sketch'), 'the sketch prompt is registered', prompts.join(', '));
@@ -113,9 +126,13 @@ const promptText = String(rendered.messages[0]?.content?.text ?? '');
 check(promptText.includes('localehub://screen-sketch-guide'), 'the prompt sends the agent to the guide');
 check(promptText.includes('不要传 markers'), 'the prompt says not to hand-roll markers');
 check(promptText.includes('report'), 'the prompt tells the agent to read the report back');
+// The prompt used to say "平台只解析、不渲染" and offer three inputs with no `document` — which is what
+// an uploading agent read as permission to hand-write a wireframe.
+check(promptText.includes('document'), 'the prompt routes the agent to the replica path');
+check(!promptText.includes('平台只解析、不渲染'), 'the prompt no longer describes the platform as parse-only');
 
 const tool = (await client.listTools()).tools.find((row) => row.name === 'upload_screen_mockup');
-check(tool?.description?.includes('ui'), 'the tool description leads with ui');
+check(tool?.description?.includes('document'), 'the tool description leads with document');
 check(tool?.description?.includes('localehub://screen-sketch-guide'), 'the tool description points at the guide');
 
 check(discovery.resources.includes('localehub://screen-sketch-guide'), 'GET /mcp/tools advertises the guide');

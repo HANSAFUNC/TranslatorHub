@@ -178,8 +178,11 @@ public 路由不受影响，负载均衡仍可探测。
 之前，编辑器把它显示为「平台没有这个 Key」，而不是假装那处不存在。
 
 整页复刻的响应里，`report` 读的是**那一页自己**（不是画出来的图）：`stats.keys` 是标记命中的 key 数、
-`inlineAssets`/`remoteAssets`/`localAssets` 是素材去向、`scripts` 是脚本数，findings 包括 `NO_KEYS`、
-`ASSETS_NOT_INLINED`、`NO_STYLE`、`REMOTE_ASSETS`、`SCRIPTS_NOT_RUN`。
+`inlineAssets`/`remoteAssets`/`localAssets` 是素材去向、`scripts` 是脚本数、`pictures` 是页面**带来**的图
+（`<img>`／`background-image`／SVG `<image>`）、`shapes` 是调用方**画**的行内 `<svg>`，findings 包括 `NO_KEYS`、
+`ASSETS_NOT_INLINED`、`NO_STYLE`、`REMOTE_ASSETS`、`SCRIPTS_NOT_RUN`、`NO_PICTURES`、`DRAWN_SHAPES`。
+`pictures` 与 `shapes` 分开数是有意的：合成一个数时，一页零素材、全靠手画形状的线框图会被报成「有图，没问题」
+（`DRAWN_SHAPES` 就是这条），而「这屏的图到底到了没有」正是译者看着线框图要问的那个问题。
 
 响应里的 `report` 是**平台看过自己画出来的那张图之后**的结论，不是对入参的复述：`stats` 给出图上真实的
 数量（`pictures` / `placeholders` / `sourceColours` / `frames` / `markers` / `missingKeys` / `components`），

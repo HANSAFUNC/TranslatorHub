@@ -1608,6 +1608,61 @@ namespace（空的 `web` 行已删），`platform=web` 查询返回 0 条。
 点编号能选中右侧对应的行；被标住的控件本身样式没被盖掉（读回它的 `backgroundColor`）。427 单元 / 172 集成、
 `pnpm lint` 全绿。
 
+### 1.49 上传方交的是示意图，平台却报「有 6 张图，没问题」
+
+用户说：「上传上来的还原度不太行 也没有素材」。先把库里那一页取出来看，不猜：
+
+```
+上课页 | ios | document | 17870 字符 | 3 帧
+assets: {"inline":0,"remote":0,"local":0,"pictures":6,...}   ← 旧口径
+findings: [ 'NO_COMPONENTS' ]
+```
+
+848×844 的一屏里 `<img>` 0 个、`url(` 0 个、`data:image` 0 个、6 个手写 `<svg>`，文字位置是灰条占位
+（`.nav .bar{background:#DFE6F5}`）。**存进来的是一张线框图**——平台这一侧一个字节都没丢，是上传方手写的。
+把它渲染出来一看，是一张「像那个 App」的示意图：认不出是哪个页面，因为照片、插画、图标一个都没来。
+
+根因两条，都不在渲染上：
+
+**一、上传方读到的文档还是「重画时代」的。** 导入指南 §6 开头写着「上游只有一条路值得走：**传 `ui`**」，
+`upload-screen-sketch` 提示词第 3 步写着「平台只解析、不渲染」、第 5 步列三种输入**没有 `document`**。
+整页复刻的说明（§1.47 建的）只在那份长 guide 里，上传的 Agent 没有被路由过去，于是照着旧指令手写了一张图。
+
+**二、报告看不见「没有素材」。** `documentAssets` 把 `<svg>` 和 `<img>` 一起算进 `pictures`（原
+`mockup-document.ts:251`），于是零素材的一页报出「pictures: 6」，唯一能告诉上传方「你这页什么都没带」的
+信号是哑的。
+
+改动：
+
+- **`pictures` 与 `shapes` 分开数**：`pictures` = 页面**带来**的（`<img>`、`<image>`、`background-image`），
+  `shapes` = 调用方**画**的（行内 `<svg>`）。两者答的是不同问题：「这屏的图到了吗」是译者看着线框图在问的那个。
+- **新 finding `DRAWN_SHAPES`**：`pictures === 0 && shapes > 0` → 「N 处图形是手画的形状，这一页一张真素材都没有」，
+  advice 指名从哪取原件（`Assets.xcassets` / `res/drawable*` / `assets/`），并且**矢量图标要照抄工程里的 `path`，
+  不要照着截图重画一个像的**。`NO_PICTURES` 的措辞跟着改了：行内 `<svg>` 不再算「有图」。
+- **教程新增 §9「素材和布局从工程里读出来，不要照着印象画」**：逐栈对照表——布局数值在哪、图在哪、颜色/字号在哪
+  （iOS SwiftUI 与 UIKit/storyboard、Android、Flutter、React Native、Web 各一行），两条硬规矩（尺寸坐标照抄工程数值；
+  图取工程里的原件），加一句自检：「看不出是哪个页面，就不要传」。
+- **导入指南 §6 与上传提示词重写**：首选 `document`（整页复刻），片段是退路；明说「不要照着眼睛写一份示意图」；
+  提示词第 3 步改成「交那一屏**真实的 HTML**」并点名原生界面的数值在工程里，第 7 步把 `DRAWN_SHAPES` 列进要看懂的
+  那组 code。第 5 步补回「不要传 markers 配 html / ui / document」——这条被重写时漏掉过，`guide.test.ts` 当场抓住。
+- **CLI 预览就报**：`localehub mockup --page`（不加 `--confirm`）走的是同一个分析器，所以上传**之前**就看到
+  `DRAWN_SHAPES`，不用先传一次再被平台告知。
+
+**验证**：拿用户那一页真实的三帧跑新分析器：
+
+```
+stats: {"pictures":0,"shapes":19,"frames":3,"markers":40,"keys":22,"inlineAssets":0,...}
+findings: DRAWN_SHAPES | 19 处图形是手画的形状，这一页一张真素材都没有
+          NO_COMPONENTS | 元素没有组件名，图例是空的
+```
+
+新增 7 个单元测试（434 全绿）：`pictures`/`shapes` 的分口径、`DRAWN_SHAPES` 的触发与 advice、
+「一页同时有 `<img>` 和 `<svg>` 时保持 clean」、教程里逐栈线索（`constraint` / `layout_` / `padding` /
+`StyleSheet` / `xcassets` / `drawable`）、提示词不再出现「平台只解析、不渲染」与「三种输入选一种」、
+导入指南不再出现「上游只有一条路值得走」、以及 local-sync 里「预览（上传前）就报 `DRAWN_SHAPES` 且消息里带改法」。
+
+
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

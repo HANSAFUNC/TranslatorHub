@@ -879,14 +879,17 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
   define(
     'upload_screen_mockup',
     '给一个界面加上「这些文字在屏幕的什么位置」：平台的翻译编辑器会把界面和译文并排显示，点标记跳到对应译文。' +
-      '三种输入选一种——**传 html 最省事**：把页面的 HTML（或 JSX/TSX）源码交上来，平台解析出元素树、自己排版画图并算出坐标，' +
-      '颜色与组件外观按 class（含 Tailwind）/ inline style / <style> 规则还原（只解析，不渲染、不执行、不联网）；' +
-      '也可以传 ui（按元素描述页面，text/button/input/row…）；或者传 image_base64（SVG/PNG/JPEG，自己画的图）＋ markers。' +
-      '传 ui 时，节点上的 text 就是界面上显示的文字，默认作为 key（可用 key 覆盖）；key 还没导入也照存，' +
-      '会在返回值里以 markers.unmatched 报告，而不是拒绝。同名屏幕再传一次是整体替换（没有 dry run）。' +
-      '返回值里的 report 是平台看过自己画出来的图之后的结论（stats 是图上真实的数量，findings 每条带 advice），' +
-      'NO_PICTURES / NO_SOURCE_COLOURS / IDENTICAL_FRAMES 这几条说明图没还原到位，按 advice 改输入后同名重传。' +
-      '节点表、key/namespace 的来源、上限，以及「让 CLI 从页面源码生成这份描述」见资源 localehub://screen-sketch-guide。',
+      '**首选传 document**（整页 HTML）：平台不重画，原文存下来，编辑器在沙箱里照浏览器的方式渲染——' +
+      '配色、圆角、字体、阴影、图片全是页面自己的，还原度最高；素材要内联成 data: URI（本地文件）或写成公开的 https 地址。' +
+      '只有一段代码、没有整页时才传 html 片段或 ui（近似，不是复刻）；image_base64 + markers 只用于设计稿与截图。' +
+      '**不要照着眼睛画一张像那个界面的图**：灰条当文字、手画的形状当图标，传上来就是线框图，平台会报 DRAWN_SHAPES。' +
+      '原生界面（iOS/安卓/Flutter/RN）的布局数值和图片都在工程里（Auto Layout 约束、layout_*、Flutter 的 padding、资源目录），' +
+      '照抄数值、把图内联上来——逐栈对照表见资源 localehub://screen-sketch-guide 的 §9。' +
+      'key 从元素上的 data-key / data-i18n-key 来，整页的标记位置由浏览器实测、不用你给坐标；' +
+      'key 还没导入也照存，会在返回值里以 markers.unmatched 报告，而不是拒绝。同名屏幕再传一次是整体替换（没有 dry run）。' +
+      '返回值里的 report 是平台看过这一页之后的结论（stats 里 pictures 是页面带来的图、shapes 是手画的形状，findings 每条带 advice），' +
+      'DRAWN_SHAPES / NO_PICTURES / ASSETS_NOT_INLINED / NO_STYLE / NO_SOURCE_COLOURS / IDENTICAL_FRAMES 都说明还没还原到位，' +
+      '按 advice 改输入后同名重传。节点表、key/namespace 的来源、上限，以及「让 CLI 从页面源码生成」见 localehub://screen-sketch-guide。',
     async (input: {
       project_id: string;
       name: string;
@@ -1137,7 +1140,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
     {
       title: 'Upload a screen sketch',
       description:
-        '把一个页面的界面草图传到 LocaleHub（从页面源码生成 ui 描述 → 预览 → 上传），让译者在编辑器里对着界面看译文',
+        '把一个页面的界面草图传到 LocaleHub（整页 HTML → 预览 → 上传；平台不重画，编辑器照浏览器的方式渲染），让译者在编辑器里对着界面看译文',
       argsSchema: {
         projectId: z.string().optional().describe('目标项目 id；省略则先调 list_projects'),
         page: z.string().optional().describe('要画的那个页面，例如 apps/web/src/app/projects/page.tsx'),

@@ -372,9 +372,10 @@ export const remoteToolSchemas = {
           '一帧一个状态，别把同一状态拆开——帧多到看不清时，挑真正影响译文的那几个。',
       ),
     ui: uiSpecSchema.optional().describe(
-      '界面描述（推荐）：按元素描述页面，平台据此画出草图并自动计算每个标记的位置与大小——不需要你量坐标。' +
+      '界面描述：按元素描述页面，平台据此画出草图并自动计算每个标记的位置与大小——不需要你量坐标。' +
         'root 是一个树：screen 里放 text / button / input / card / row / image 等节点，节点上的 text 就是界面上显示的文字，' +
-        '它同时是标记的默认 key（可用 key 覆盖）。与 image_base64 二选一。',
+        '它同时是标记的默认 key（可用 key 覆盖）。**这是近似，不是复刻**：字体、渐变、阴影都是平台的，图标要靠内联 SVG，' +
+        '所以只在拿不到整页 HTML、或手上本来就只有一段结构时才用它——有页面源码就传 document。与 image_base64 二选一。',
     ),
     image_base64: z
       .string()
@@ -382,7 +383,9 @@ export const remoteToolSchemas = {
       .describe(
         `草图本身，base64（可以带 data: 前缀）。支持 SVG / PNG / JPEG，解码后不超过 ${Math.round(MAX_MOCKUP_BYTES / 1024 / 1024)} MB。` +
           `整个请求（图片 + 标记的 text/note）共用 ${Math.round(MAX_MOCKUP_REQUEST_BYTES / 1024 / 1024)} MB 的传输上限，base64 会让图片占约 1.37 倍——超了整单会被拒。` +
-          'SVG 最省事也最清晰，适合自己画一张线框图；不要在里面放 <script>、事件属性或 <foreignObject>，会被拒绝。',
+          'SVG 最省事也最清晰，适合设计稿——但**不要用它照着印象画一张界面**：那样的线框图译者认不出是哪个页面，' +
+          '平台会报 DRAWN_SHAPES。真实界面优先传 document；确实是截图/设计稿时，照片和插画请用真图（内联 PNG/JPEG），' +
+          '不要用色块代替。不要在里面放 <script>、事件属性或 <foreignObject>，会被拒绝。',
       ),
     mime_type: z
       .enum(['image/svg+xml', 'image/png', 'image/jpeg'])

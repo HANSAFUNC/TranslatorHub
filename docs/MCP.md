@@ -484,6 +484,11 @@ localehub mockup --page src/app/projects/page.tsx --name 项目列表 --confirm 
 配色、圆角、字体、阴影、背景都是页面自己的，这正是「还原度」的来源；代价是本能行为（由接口填的数据）不出现，
 所以某个状态要展示就把那个状态写成静态 HTML 或作为一帧——「动态数据除外」。
 
+**这条路上唯一真正的坑，是那份 HTML 不是真实界面的 HTML。** 拿不到源码时容易退化成「照着印象画一张像它的图」，
+传上来就成了一页线框图（见下面的 `DRAWN_SHAPES`）。原生界面也一样有源可抄：布局数值在工程里
+（Auto Layout 约束、`layout_*`、Flutter 的 `padding`、RN 的 `StyleSheet`），图片在资源目录里
+（`Assets.xcassets`、`res/drawable*`、`assets/`）——按教程 §9 的逐栈对照表读出来，照抄数值、图内联成 `data:`。
+
 素材只能跟着页面上来，平台从不联网取资源：本地文件要内联成 `data:` URI（`localehub mockup --page` 会自动内联
 `<link rel=stylesheet>`、`<img src>`、`srcset`、CSS `url()`，并把样式表变成 `<style>`），或者写成浏览器能取的
 `https` 地址（内网、要登录、已下线的地址都会是破图）。标记来自元素上的 `data-key` / `data-i18n-key`：**坐标由
@@ -492,7 +497,16 @@ localehub mockup --page src/app/projects/page.tsx --name 项目列表 --confirm 
 
 响应里的 `report` 在整页这条路上读的是页面自己：`NO_KEYS`（一处 `data-key` 都没有，标记无处可落）、
 `ASSETS_NOT_INLINED`（相对路径素材没人能解析）、`NO_STYLE`（样式表没跟着上来）、`REMOTE_ASSETS`（看图的人要能访问
-那个域名）、`SCRIPTS_NOT_RUN`（脚本不会跑，动态数据除外）、`NO_PICTURES`。每条都带改法，Agent 按它改输入再同名重传。
+那个域名）、`SCRIPTS_NOT_RUN`（脚本不会跑，动态数据除外）、`NO_PICTURES`、`DRAWN_SHAPES`。每条都带改法，Agent 按它改输入再同名重传。
+
+**`DRAWN_SHAPES` 是「还原度」那条线上最关键的一条。** 页面上有图形，但全是手写进标记里的 `<svg>` 形状，
+一张从工程里取的素材都没有——渲染出来就是线框图：灰条当文字、手画的形状当图标、头像是个色块。
+`stats` 里 `pictures`（页面**带来**的 `<img>`／`background-image`／SVG `<image>`）与 `shapes`（调用方**画**的
+`<svg>`）分开数，就是为了让「一个真素材都没有」不会被算成「有图」——早先两者合在一起，一页六个手画字形
+报出来是「6 张图，没问题」。修法在教程 §9 的逐栈对照表：布局数值和图片都在工程里（iOS 的 Auto Layout 约束与
+`Assets.xcassets`、Android 的 `layout_*` 与 `res/drawable*`、Flutter 的 `padding` 与 `assets/`、RN 的 `StyleSheet`），
+照抄数值、把图内联成 `data:` URI。`localehub mockup --page` 的**预览**（不加 `--confirm`）就会报这一条，
+所以上传方在传之前就知道自己交的是复刻还是示意图。
 
 编辑器那一侧：翻译编辑器标题栏的「界面草图」按钮打开一个 90% 视口的详情页，左边是按标记框住的界面，
 右边是该语言下的同一批条目，**两边双向联动**（点标记跳到条目、点条目点亮标记），编号是它们之间的暗号。

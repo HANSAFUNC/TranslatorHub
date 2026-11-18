@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { FINDING_CODES, analyzeDocument, analyzeSketch } from '../mockup-report';
 import { documentAssets, documentMarkers, isFullDocument, normalizeDocument } from '../mockup-document';
-import { REMOTE_MCP_SKETCH_GUIDE, remoteSketchPrompt } from '../mcp-guide';
+import { REMOTE_MCP_IMPORT_GUIDE, REMOTE_MCP_SKETCH_GUIDE, remoteSketchPrompt } from '../mcp-guide';
 
 /**
  * The guidance a sketch comes back with.
@@ -172,6 +172,22 @@ describe('every finding is reachable and explained', () => {
       markers: [{ key: 'a', text: '我的', component: 'card' }],
       legend: [{ name: 'card' }],
     },
+    DRAWN_SHAPES: {
+      svg: '',
+      document: {
+        frames: [
+          {
+            title: '默认',
+            html:
+              '<html><head><style>.card{background:#fff}</style></head><body>' +
+              '<svg viewBox="0 0 24 24"><path d="M0 0h4v4H0z" fill="#667085"/></svg>' +
+              '<span data-key="a" class="card">我的</span></body></html>',
+          },
+        ],
+      },
+      markers: [{ key: 'a', text: '我的', component: 'card' }],
+      legend: [{ name: 'card' }],
+    },
   };
 
   /** Whichever reader the scenario is for: a picture goes to one, a page to the other. */
@@ -215,6 +231,51 @@ describe('every finding is reachable and explained', () => {
 });
 
 /**
+ * Fidelity is the uploader's job, and it cannot be done from imagination.
+ *
+ * A caller that has the app has the layout: Auto Layout constraints, Android's `layout_*` attributes,
+ * Flutter's padding and size arguments, an RN stylesheet. What it must not do is draw something that
+ * looks roughly like the screen — that is how a screen arrived as grey bars, six hand-written glyphs and
+ * not one asset, and the translation editor then showed a wireframe nobody recognised. These pin the
+ * instructions that say where the numbers come from, per stack, and that route the caller to the path
+ * where the browser does the rendering.
+ */
+describe('telling the uploader where the layout and the assets come from', () => {
+  it('names the layout source in each stack a caller might have', () => {
+    for (const cue of ['constraint', 'layout_', 'padding', 'StyleSheet']) {
+      expect(REMOTE_MCP_SKETCH_GUIDE, cue).toContain(cue);
+    }
+  });
+
+  it('names where the pictures come from, so a screen with photos is not drawn by hand', () => {
+    for (const cue of ['xcassets', 'drawable']) {
+      expect(REMOTE_MCP_SKETCH_GUIDE, cue).toContain(cue);
+    }
+  });
+
+  it('names the codes that mean "you drew it instead of bringing it"', () => {
+    expect(REMOTE_MCP_SKETCH_GUIDE).toContain('DRAWN_SHAPES');
+  });
+
+  it('routes the upload prompt to the replica path, not to "the platform redraws"', () => {
+    const prompt = remoteSketchPrompt({ projectId: 'p', page: 'HomeView.swift' });
+    expect(prompt).toContain('document');
+    // The stale line: it described the platform as parse-and-redraw, which is what an uploading agent
+    // read as permission to hand-write a wireframe.
+    expect(prompt).not.toContain('平台只解析、不渲染');
+    expect(prompt).not.toContain('三种输入选一种');
+  });
+
+  it('does not send an agent down the redraw path in the guide it reads first', () => {
+    // The import guide's sketch section used to open with "上游只有一条路值得走：传 ui" — one path, the
+    // one that redraws. The agent followed it, and the result was this wireframe.
+    expect(REMOTE_MCP_IMPORT_GUIDE).not.toContain('上游只有一条路值得走');
+    expect(REMOTE_MCP_IMPORT_GUIDE).toContain('document');
+    expect(REMOTE_MCP_IMPORT_GUIDE).toContain('DRAWN_SHAPES');
+  });
+});
+
+/**
  * The replica path, read the same way.
  *
  * A page is not a picture, so what is wrong with it is different: nothing was redrawn, but the page may
@@ -233,7 +294,23 @@ describe('what the document report notices', () => {
     const report = analyzeDocument(pageWith('<div class="policy-card" data-key="policy.view"><img src="data:image/png;base64,AA"/><svg viewBox="0 0 1 1"></svg>查看详情</div>'));
     expect(report.clean).toBe(true);
     expect(report.stats.keys).toBe(1);
-    expect(report.stats.pictures).toBe(2);
+    // One picture and one shape: a picture is something the page *brought* — an `<img>` or a CSS
+    // background — while an inline `<svg>` is something the caller drew. Counting the two together is
+    // what let a page of six hand-written glyphs report "6 pictures, nothing to say".
+    expect(report.stats.pictures).toBe(1);
+    expect(report.stats.shapes).toBe(1);
+  });
+
+  it('says the pictures are hand-drawn shapes when the page brought no asset at all', () => {
+    const report = analyzeDocument(pageWith('<div class="policy-card" data-key="policy.view"><svg viewBox="0 0 24 24"><path d="M0 0h4v4H0z"/></svg>查看详情</div>'));
+    const finding = report.findings.find((entry) => entry.code === 'DRAWN_SHAPES')!;
+    expect(finding.count).toBe(1);
+    expect(finding.advice).toContain('data:');
+    // The upload that prompted this: a screen whose photos, icons and illustration were all drawn as
+    // shapes, so it rendered as a wireframe. The report must not call that "has pictures".
+    expect(report.stats.pictures).toBe(0);
+    expect(report.stats.shapes).toBe(1);
+    expect(report.findings.map((entry) => entry.code)).not.toContain('NO_PICTURES');
   });
 
   it('says a relative asset will be a broken image, and what to do instead', () => {

@@ -53,6 +53,7 @@ export const FINDING_CODES = [
   'REMOTE_ASSETS',
   'SCRIPTS_NOT_RUN',
   'NO_STYLE',
+  'DRAWN_SHAPES',
 ] as const;
 
 export type FindingCode = (typeof FINDING_CODES)[number];
@@ -78,6 +79,15 @@ export interface MockupReportStats {
   localAssets?: number;
   /** `<script>` elements. They travel with the page and never run. */
   scripts?: number;
+  /**
+   * Inline `<svg>` shapes on the replica path — drawn in the markup rather than brought from the
+   * project.
+   *
+   * Counted apart from `pictures` on purpose. A screen whose photos, icons and illustration are all
+   * hand-written paths renders as a wireframe, and calling those "pictures" is how such an upload came
+   * back with nothing to say about itself.
+   */
+  shapes?: number;
 }
 
 export interface MockupReport {
@@ -307,14 +317,31 @@ export function analyzeDocument(input: {
     });
   }
 
-  if (assets.pictures === 0) {
+  if (assets.pictures === 0 && assets.shapes === 0) {
     findings.push({
       code: 'NO_PICTURES',
       severity: 'warning',
       title: '这一页里没有任何图片、图标或背景图',
       advice:
-        '如果页面上本来有图，说明它们没跟着上来：<img>/inline <svg>/background-image 里的地址要能被浏览器解析，' +
+        '如果页面上本来有图，说明它们没跟着上来：<img>/background-image 里的地址要能被浏览器解析，' +
         '本地文件请内联成 data: URI。如果页面确实没有图，这条可以忽略。',
+    });
+  }
+
+  // Artwork the caller drew rather than the project supplied. This is the difference between a replica
+  // of the screen and a wireframe of it, and it is invisible in every other number the report prints:
+  // the page has style, keys and layout, and looks nothing like the app.
+  if (assets.pictures === 0 && assets.shapes > 0) {
+    findings.push({
+      code: 'DRAWN_SHAPES',
+      severity: 'warning',
+      count: assets.shapes,
+      title: `${assets.shapes} 处图形是手画的形状，这一页一张真素材都没有`,
+      advice:
+        '手画的形状是示意图，不是那个界面：App 里的头像、照片、插画、图标在工程里都有源文件，把它们内联成 ' +
+        'data: URI 一起传（iOS 从 Assets.xcassets / android 从 res/drawable 取；位图用 <img src="data:image/png;base64,…">，' +
+        '矢量图标可以直接内联 <svg>…</svg> 但要照抄工程里那份 path，不要自己画一个像的）。' +
+        '这一步做完，看图的译者才认得出这是哪个页面。',
     });
   }
 
@@ -376,6 +403,7 @@ export function analyzeDocument(input: {
       remoteAssets: assets.remote,
       localAssets: assets.local,
       scripts: assets.scripts,
+      shapes: assets.shapes,
     },
     clean: findings.length === 0,
   };

@@ -213,8 +213,16 @@ export interface DocumentAssetCounts {
   scripts: number;
   /** Stylesheets and `<style>` blocks the page brought with it. */
   styles: number;
-  /** Pictures in the markup: `<img>`, inline `<svg>`, `background-image`. */
+  /**
+   * Pictures the page brought with it: `<img>`, an SVG `<image>`, a CSS `background-image`.
+   *
+   * Deliberately not counting inline `<svg>`. A shape written into the markup is something the caller
+   * drew, not something the project supplied, and the two answer different questions: "did the screen's
+   * artwork arrive" is the one a translator looking at a wireframe is asking.
+   */
   pictures: number;
+  /** Inline `<svg>` shapes: artwork drawn in the markup rather than brought from the project. */
+  shapes: number;
   /** Distinct colours the page names, so "it arrived monochrome" is answerable. */
   colours: number;
 }
@@ -242,13 +250,19 @@ function classifyAsset(reference: string): 'inline' | 'remote' | 'local' {
  * report's job is to say which ones are missing, not to have an opinion about the others.
  */
 export function documentAssets(document: MockupDocument): DocumentAssetCounts {
-  const counts: DocumentAssetCounts = { inline: 0, remote: 0, local: 0, scripts: 0, styles: 0, pictures: 0, colours: 0 };
+  const counts: DocumentAssetCounts = { inline: 0, remote: 0, local: 0, scripts: 0, styles: 0, pictures: 0, shapes: 0, colours: 0 };
   const colours = new Set<string>();
   for (const frame of document.frames) {
     const html = frame.html;
     counts.scripts += (html.match(/<script[\s>]/gi) ?? []).length;
     counts.styles += (html.match(/<style[\s>]/gi) ?? []).length + (html.match(/<link[^>]+rel\s*=\s*['"]?stylesheet/gi) ?? []).length;
-    counts.pictures += (html.match(/<img[\s>]/gi) ?? []).length + (html.match(/<svg[\s>]/gi) ?? []).length + (html.match(/background-image\s*:/gi) ?? []).length;
+    // `pictures` is what the page *brought*; `shapes` is what the caller drew. `<image>` is the SVG
+    // element that carries a real raster, so it belongs with the pictures.
+    counts.pictures +=
+      (html.match(/<img[\s>]/gi) ?? []).length +
+      (html.match(/<image[\s>]/gi) ?? []).length +
+      (html.match(/background-image\s*:/gi) ?? []).length;
+    counts.shapes += (html.match(/<svg[\s>]/gi) ?? []).length;
     for (const match of html.matchAll(/(?:src|href|poster)\s*=\s*["']([^"']*)["']/gi)) {
       const value = match[1]!;
       // A link to another page is not an asset; only what the browser would fetch to paint the frame.

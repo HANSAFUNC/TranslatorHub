@@ -148,11 +148,18 @@ MCP 的导入每次都是一次**部分上传**：它只说「这几个文件是
 译文缺的从来不是词，是**位置**：\`checkout.pay_now\` 到了译者手上没有按钮。\`upload_screen_mockup\` 把界面和译文
 并排显示在编辑器的「界面草图」里，点标记跳到译文、选译文点亮标记。
 
-上游只有一条路值得走：**传 \`ui\`**——把页面描述成元素树，平台自己排版、画图，并算出每个标记的坐标。
-手画一张图再逐个量坐标（\`image_base64\` + \`markers\`）留给设计稿与截图：它是最容易过时的一步，页面改一行文案坐标就全废了。
+上游该走的路是**整页复刻**：把那一屏真实的 HTML 交上来（\`document\`，或 \`html\` 里直接放整页——带
+\`<!doctype html>\` 或 \`<html>\` 就算整页），平台不重画，编辑器在沙箱里照着渲染，看起来就是那个页面。
+只有一段代码、没有整页时才退到片段重画（\`html\` 片段或 \`ui\` 元素树），那是近似，不是复刻。
 
-完整教程见 \`localehub://screen-sketch-guide\`：节点表、key 与 namespace 从哪来、上限、两件不可逆的事，
-以及「让 CLI 从页面源码直接生成这份描述」（\`localehub mockup --page <页面文件> --confirm\`）。
+**还原度取决于一件事：那份 HTML 是不是真实界面的 HTML。** 拿不到页面源码时最容易出的错，是照着眼睛
+写一份示意图——灰条当文字、手画的形状当图标——那传上来就是线框图，译者认不出是哪个页面（平台会报
+\`DRAWN_SHAPES\`）。原生界面（iOS/安卓/Flutter/RN）的布局数值和图片都在工程里，按下面的对照表读出来照抄，
+图从资源目录取原件内联成 \`data:\` URI。
+
+完整教程见 \`localehub://screen-sketch-guide\`：§0 两条路的取舍、§7 报告怎么读、**§9 逐栈对照表
+（布局数值在哪、图在哪、颜色在哪）**、key 与 namespace 从哪来、上限、两件不可逆的事，
+以及「让 CLI 从页面源码直接生成」（\`localehub mockup --page <页面文件> --confirm\`）。
 
 ## 7. 解析本地文件
 
@@ -180,6 +187,11 @@ export const REMOTE_MCP_SKETCH_GUIDE = `# 把界面草图传上来：让每句�
 
 **片段**（一个组件文件、一段结构）走重画：平台解析出元素树、自己排版画图并算出坐标，颜色与组件外观按
 class（含 Tailwind）/ inline style / \`<style>\` 规则还原。用在没有整页、只有一段代码的时候。
+
+**整页复刻的前提是那份 HTML 就是真实界面的 HTML**，不是照着眼睛写的一份示意图。这是这条路上唯一真正的坑：
+拿不到源码时，容易退化成「画一张像它的图」——灰条当文字、手画的形状当图标——传上来就是一张线框图，
+译者认不出是哪个页面，平台也会报 \`DRAWN_SHAPES\`。**原生界面也一样**：布局数值和图片都在工程里
+（Auto Layout 约束、\`layout_*\`、Flutter 的 padding、资源目录里的图），按 §9 的逐栈对照表读出来照抄。
 
 不想给源码时：\`ui\` 是自己写元素树（同样的排版与出图），\`image_base64\` + \`markers\` 是自己画图、
 自己量坐标，留给设计稿和截图。
@@ -438,7 +450,8 @@ localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表 -
 | \`NO_STYLE\` | 浏览器默认样式，像没穿衣服 | 样式表要跟着上来：\`<style>\` 内联，或把 \`<link rel=stylesheet>\` 的那份文件内容内联进去 |
 | \`REMOTE_ASSETS\` | 图能出来，但依赖看图的人能访问那个域名 | 要任何环境都一样就内联；内网、要登录、已下线的地址都会变破图 |
 | \`SCRIPTS_NOT_RUN\` | 由接口填的数据是空的（这是设计） | 「动态数据除外」：要展示某个状态，把那个状态写成静态 HTML（或单独一帧） |
-| \`NO_PICTURES\` | 整页里没有任何图片/图标/背景图 | 与重画那条同义：图的地址要么内联、要么是浏览器能取到的地址 |
+| \`NO_PICTURES\` | 整页里没有任何图片、图标或背景图 | 与重画那条同义：图的地址要么内联、要么是浏览器能取到的地址 |
+| \`DRAWN_SHAPES\` | 整页的图全是手画的形状，一张真素材都没有 → 看着像线框图 | 从工程里取真素材内联（见 §9）：iOS 的 \`Assets.xcassets\`、Android 的 \`res/drawable*\`、Flutter 的 \`assets/\`；矢量图标要照抄工程里的 \`path\`，不要自己画一个像的 |
 
 只有这些：报告只说自己**看得见**的事，不会猜。自己传 \`image_base64\` + \`markers\` 时，平台手里只有那张图，
 没有图上元素的坐标，所以判断不了圈得准不准——片段与 \`ui\` 由平台排版时算，整页由浏览器渲染时实测，
@@ -474,6 +487,32 @@ localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表 -
 
 **位置不用你给**：编辑器渲染这一帧时，自己量每个 \`data-key\` 元素的矩形并画框。所以整页这条路，
 返回值里的标记坐标一律是 0——那不是「在上角」，是「等浏览器量」。
+
+## 9. 素材和布局从工程里读出来，不要照着印象画
+
+**这一节是「还原度」的全部**。平台收到的是 HTML，读不懂 Swift / Kotlin / Dart / JSX——**能读懂工程的只有你**。
+你用眼睛估一个「差不多」的界面，译者看到的就是一张线框图：灰色圆角条代表文字、几个手画的形状代表图标、
+头像是个色块。这正是 \`DRAWN_SHAPES\` 要拦下的东西。
+
+两条硬规矩：
+
+1. **尺寸和坐标照抄工程的数值，不要凭感觉**。屏幕画布按 \`platform\` 定（ios 390×844、android 412×915、web 1280×800），
+   里面的每个元素按工程里的真实数值摆放（间距、圆角、字号、行高都一样）。位置不确定就用固定定位写死数值，
+   比让它自由排布更接近原样。
+2. **图从工程的资源目录里取原件**，内联成 \`data:\` URI。自己画的形状只有在工程里本来就是这个矢量（比如一个
+   vector drawable 的 \`<path>\`）时才允许——照抄那份 \`path\`，不要照着截图重画一个像的。
+
+| 技术栈 | 布局数值在哪 | 图在哪 | 颜色/字号在哪 |
+| --- | --- | --- | --- |
+| iOS（SwiftUI） | \`.padding(16)\`、\`.frame(width:height:)\`、\`VStack(spacing:12)\`、\`HStack\`、\`Spacer()\` | \`Assets.xcassets/*.imageset\`（1x/2x/3x 的 PNG，或 PDF 矢量） | \`Assets.xcassets\` 里的 colorset、\`.font(.system(size:17, weight:.semibold))\` |
+| iOS（UIKit / storyboard） | storyboard/XIB 里每个 \`<constraint firstItem=… secondItem=… constant=…>\`、\`frame\`、\`UIStackView\` 的 \`spacing\`/\`layoutMargins\`；代码里的 \`NSLayoutConstraint\`/\`anchor\` | 同上 | \`UIColor(named:)\`、\`UIFont\` 的字号字重 |
+| Android | \`layout_width\`/\`layout_height\`、\`layout_constraint*\`、\`layout_margin*\`、\`padding*\`、\`textSize\`（sp）、\`app:layout_constraintGuide\` | \`res/drawable*\`（**vector drawable 的 \`<path android:pathData>\` 可以直接变成内联 \`<svg><path d>\`**）、\`res/mipmap*\` | \`res/values/colors.xml\`、\`res/values/dimens.xml\`、\`res/values/styles.xml\`（主题里的 \`colorPrimary\` 等） |
+| Flutter | \`Container(padding:, margin:, width:, height:)\`、\`SizedBox\`、\`Row/Column\` 的 \`spacing\`、\`EdgeInsets\` 的数值 | \`assets/\`（pubspec.yaml 里声明的那些） | \`Theme.of(context)\` 的 \`colorScheme\`/\`textTheme\`、\`TextStyle(fontSize:)\` |
+| React Native | \`StyleSheet.create({…})\` 里的数值、\`flexDirection\`、\`gap\` | \`Image source={require('./x.png')}\` 指向的文件 | 样式表里的色值、\`fontSize\` |
+| Web（React/Vue/…） | 组件源码与 CSS 本身 | 构建产物里的同目录文件 | 同上；\`localehub mockup --page <构建好的页面>\` 会自动内联样式表、\`<img>\`、\`srcset\` 与 CSS \`url()\` |
+
+**做完自检**：页面里每一个「本该是图」的地方，是不是都以 \`data:\` 出现；把 HTML 在浏览器里打开，
+和原界面并排看一眼。看不出是哪个页面，就不要传——平台会把 \`DRAWN_SHAPES\` 报回来，你还是得重做一遍。
 `;
 
 /**
@@ -489,16 +528,22 @@ export function remoteSketchPrompt(args: { projectId?: string; page?: string } =
     `把 ${page} 的界面草图传到 LocaleHub（${project}），让译者在编辑器里对着界面看译文。`,
     '',
     '按这个顺序做，不要跳步：',
-    '1. 读 localehub://screen-sketch-guide，它是这个流程的权威说明。',
+    '1. 读 localehub://screen-sketch-guide，它是这个流程的权威说明（§9 有逐栈对照表：布局数值在哪、图在哪、颜色在哪）。',
     '2. 能跑命令就用：localehub mockup --page <页面文件> --name <屏幕名> 先生成预览，把「哪些字符串变成了标记、用了哪些颜色」报给我确认，再加 --confirm 上传。',
-    '3. 不能跑命令就把界面转成 HTML 交上来（任何技术栈都一样：upload_screen_mockup 传 html）。平台只解析、不渲染；',
-    '   文案要落到 key 上就给元素加 data-key，否则标记会以文案本身为 key。',
-    '4. 调 get_project 确认 sourceLocale 与 platforms；草图的 locale 用 sourceLocale，platform 用页面所属的端，',
+    '3. 不能跑命令，就交那一屏**真实的 HTML**：upload_screen_mockup 传 document（整页，平台不重画，编辑器照浏览器的方式渲染）。',
+    '   原生界面也一样——布局数值和图片都在工程里（Auto Layout 约束 / layout_* / Flutter 的 padding / RN 的 StyleSheet），',
+    '   照抄数值、把资源目录里的图内联成 data: URI。**不要照着眼睛写一份示意图**：灰条当文字、手画的形状当图标，',
+    '   传上来就是一张线框图，译者认不出是哪个页面。文案要落到 key 上就给元素加 data-key。',
+    '4. 调 get_project 确认 sourceLocale 与 platforms；草图的 locale 用 sourceLocale，platform 用页面所属的端（ios / android / web），',
     '   分表的项目还要给 namespace（iOS 的 Localizable / InfoPlist）。',
-    '5. 调 upload_screen_mockup：三种输入选一种（html / ui / image_base64+markers），不要传 markers 配 html 或 ui；name 用页面名，不要用版本号。',
+    '5. 调 upload_screen_mockup：整页传 document（首选）；只有一段代码时传 html 片段或 ui；',
+    '   自己画的图（设计稿、截图）才用 image_base64 + markers，并且只有这一种才要给标记。',
+    '   不要传 markers 配 html / ui / document——坐标由平台排版时算、或由浏览器渲染时量，给了也不会采用；',
+    '   一次只用一种输入，name 用页面名，不要用版本号。',
     '6. 把返回值里的 markers.total / markers.matchedKeys / markers.unmatched 报给我：unmatched 说明这些 key 还没导入，先传草图没问题，导入后会自动对上。',
-    '7. 读同一个返回值里的 report：它是平台看过自己画出来的图之后的结论（stats 里 pictures / placeholders / sourceColours / frames 是图上真实的数量，findings 每条带 advice）。',
-    '   出现 NO_PICTURES、PLACEHOLDER_PICTURES、NO_SOURCE_COLOURS、IDENTICAL_FRAMES 时，图还没达到「看得出是哪个页面」，按 advice 改输入（内联图片、补 css 或 theme、删掉重复的帧）后同名重传，再把新的 report 报给我；clean 或只剩 MISSING_KEYS 就可以收工。',
+    '7. 读同一个返回值里的 report：它是平台看过这一页之后的结论（stats 里 pictures / shapes / placeholders / sourceColours / frames 是页面上真实的数量，findings 每条带 advice）。',
+    '   DRAWN_SHAPES（图全是手画的形状）、NO_PICTURES、PLACEHOLDER_PICTURES、NO_SOURCE_COLOURS、IDENTICAL_FRAMES 都说明还没达到「看得出是哪个页面」，',
+    '   按 advice 改输入（从工程里取真图内联、补 css 或 theme、删掉重复的帧）后同名重传，再把新的 report 报给我；clean 或只剩 MISSING_KEYS 就可以收工。',
     '',
     '注意：upload_screen_mockup 没有 dry run，同名屏幕会被整体替换（含旧标记），上传前把屏幕名与端再确认一遍。',
   ].join('\n');
