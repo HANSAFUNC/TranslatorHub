@@ -452,6 +452,7 @@ localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表 -
 | \`SCRIPTS_NOT_RUN\` | 由接口填的数据是空的（这是设计） | 「动态数据除外」：要展示某个状态，把那个状态写成静态 HTML（或单独一帧） |
 | \`NO_PICTURES\` | 整页里没有任何图片、图标或背景图 | 与重画那条同义：图的地址要么内联、要么是浏览器能取到的地址 |
 | \`DRAWN_SHAPES\` | 整页的图全是手画的形状，一张真素材都没有 → 看着像线框图 | 从工程里取真素材内联（见 §9）：iOS 的 \`Assets.xcassets\`、Android 的 \`res/drawable*\`、Flutter 的 \`assets/\`；矢量图标要照抄工程里的 \`path\`，不要自己画一个像的 |
+| \`FLOW_LAYOUT\` | 整页用 flex/grid 排的，没有一处绝对定位 → 浏览器替你重排了一遍 | 每个元素按工程给的坐标写成 \`position:absolute\` + \`left/top/width/height\`（见 §9 第一条） |
 
 只有这些：报告只说自己**看得见**的事，不会猜。自己传 \`image_base64\` + \`markers\` 时，平台手里只有那张图，
 没有图上元素的坐标，所以判断不了圈得准不准——片段与 \`ui\` 由平台排版时算，整页由浏览器渲染时实测，
@@ -494,13 +495,18 @@ localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表 -
 你用眼睛估一个「差不多」的界面，译者看到的就是一张线框图：灰色圆角条代表文字、几个手画的形状代表图标、
 头像是个色块。这正是 \`DRAWN_SHAPES\` 要拦下的东西。
 
-两条硬规矩：
+三条硬规矩：
 
-1. **尺寸和坐标照抄工程的数值，不要凭感觉**。屏幕画布按 \`platform\` 定（ios 390×844、android 412×915、web 1280×800），
-   里面的每个元素按工程里的真实数值摆放（间距、圆角、字号、行高都一样）。位置不确定就用固定定位写死数值，
-   比让它自由排布更接近原样。
+1. **每个元素绝对定位，坐标照抄工程的数值。** 容器 \`position:relative\`（尺寸就是那一屏，ios 390×844、
+   android 412×915、web 1280×800），里面的每个元素 \`position:absolute\` + \`left/top/width/height\`——
+   工程里的 Auto Layout \`frame\`、\`layout_*\`、Flutter 的 \`padding\`/\`SizedBox\`、RN \`StyleSheet\` 的数值就是这些数。
+   **不要用 flex/grid/流式排版**去"排得差不多"：浏览器的排版引擎不是设备的那个，字体、字号、行高只要差一点，
+   整块就挪走，而且错得不明显——平台会报 \`FLOW_LAYOUT\`。绝对定位还有一个好处：**错得看得见**。框重叠、
+   该贴边的地方有缝、内容超出屏幕，你自己一看就知道，而不是交给别人猜。
 2. **图从工程的资源目录里取原件**，内联成 \`data:\` URI。自己画的形状只有在工程里本来就是这个矢量（比如一个
    vector drawable 的 \`<path>\`）时才允许——照抄那份 \`path\`，不要照着截图重画一个像的。
+3. **文字按工程的字号/字重/行高写**，别用浏览器的默认 14px：整屏的字号层次（10/11/12/13/14/17/20）是设计的一部分，
+   差一档看着就不像。
 
 | 技术栈 | 布局数值在哪 | 图在哪 | 颜色/字号在哪 |
 | --- | --- | --- | --- |
@@ -532,7 +538,8 @@ export function remoteSketchPrompt(args: { projectId?: string; page?: string } =
     '2. 能跑命令就用：localehub mockup --page <页面文件> --name <屏幕名> 先生成预览，把「哪些字符串变成了标记、用了哪些颜色」报给我确认，再加 --confirm 上传。',
     '3. 不能跑命令，就交那一屏**真实的 HTML**：upload_screen_mockup 传 document（整页，平台不重画，编辑器照浏览器的方式渲染）。',
     '   原生界面也一样——布局数值和图片都在工程里（Auto Layout 约束 / layout_* / Flutter 的 padding / RN 的 StyleSheet），',
-    '   照抄数值、把资源目录里的图内联成 data: URI。**不要照着眼睛写一份示意图**：灰条当文字、手画的形状当图标，',
+    '   照抄数值、把资源目录里的图内联成 data: URI。**每个元素写成绝对定位**（容器 position:relative、元素 position:absolute + left/top/width/height），',
+    '   不要用 flex/grid 让浏览器替你排：字体差一点整块就挪走，平台会报 FLOW_LAYOUT。**不要照着眼睛写一份示意图**：灰条当文字、手画的形状当图标，',
     '   传上来就是一张线框图，译者认不出是哪个页面。文案要落到 key 上就给元素加 data-key。',
     '4. 调 get_project 确认 sourceLocale 与 platforms；草图的 locale 用 sourceLocale，platform 用页面所属的端（ios / android / web），',
     '   分表的项目还要给 namespace（iOS 的 Localizable / InfoPlist）。',

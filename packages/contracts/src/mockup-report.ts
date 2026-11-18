@@ -54,6 +54,7 @@ export const FINDING_CODES = [
   'SCRIPTS_NOT_RUN',
   'NO_STYLE',
   'DRAWN_SHAPES',
+  'FLOW_LAYOUT',
 ] as const;
 
 export type FindingCode = (typeof FINDING_CODES)[number];
@@ -88,6 +89,15 @@ export interface MockupReportStats {
    * back with nothing to say about itself.
    */
   shapes?: number;
+  /**
+   * Elements the page places at a coordinate (`position: absolute` / `fixed`), and elements it leaves to
+   * the layout engine (`display: flex` / `grid`).
+   *
+   * Worth printing because the two together are what makes a replica judgeable at all: a page of
+   * coordinates shows a wrong number as overlap or overflow, while a flow-laid page hides it.
+   */
+  positioned?: number;
+  flow?: number;
 }
 
 export interface MockupReport {
@@ -368,6 +378,26 @@ export function analyzeDocument(input: {
     });
   }
 
+  // Arranged by the layout engine rather than by coordinates. This is the difference between a page
+  // that can be judged and one that cannot: with everything placed by flow, a wrong number is absorbed
+  // into a layout that still looks plausible, so "it does not look like the app" is unanswerable. Place
+  // every element at the coordinate the project gives it and the mistakes become visible as overlap,
+  // gap and overflow — which is the only way fidelity can be checked at all.
+  if (assets.flow > 0 && assets.positioned === 0) {
+    findings.push({
+      code: 'FLOW_LAYOUT',
+      severity: 'warning',
+      count: assets.flow,
+      title: `${assets.flow} 处用 flex/grid 排版，整页没有一处绝对定位：这是重排，不是那一屏`,
+      advice:
+        '整页复刻要的是「每个元素在工程给它的坐标上」，不是「让浏览器排得差不多」：字体、字号、行高只要有一点不同，' +
+        '流式排版就会把整块挪走，而且错得不明显。按工程里的真实数值写成绝对定位——容器 position:relative，' +
+        '每个元素 position:absolute + left/top/width/height（Auto Layout 的 frame、layout_*、Flutter 的 padding ' +
+        '都直接给你这些数）。这样排版与字体无关，框重叠、超出屏幕这类错也会直接看出来。' +
+        '固定尺寸的屏幕（390×844）本来就该这样写。',
+    });
+  }
+
   if (assets.scripts > 0) {
     findings.push({
       code: 'SCRIPTS_NOT_RUN',
@@ -404,6 +434,8 @@ export function analyzeDocument(input: {
       localAssets: assets.local,
       scripts: assets.scripts,
       shapes: assets.shapes,
+      positioned: assets.positioned,
+      flow: assets.flow,
     },
     clean: findings.length === 0,
   };

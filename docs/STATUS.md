@@ -1704,6 +1704,36 @@ app.bypass_rls` + 检查影响行数，否则 arrange 静默不生效、测试�
 `could not extend file ... No space left on device`，集成测试连项目都建不出来。`docker builder prune -af`
 回收 32.79GB、`docker image prune -f` 回收 23.73GB（19 个 dangling 层），现在 25.2G 可用。别的项目的镜像没动。
 
+### 1.51 复刻的 HTML 必须绝对定位（用户要求）
+
+用户说：「生成的 html 要绝对布局」。这条不只是风格偏好——它是**让"像不像"从主观变成可判定**的那一步：
+
+流式布局（flex/grid）把摆放交给浏览器的排版引擎，而浏览器的引擎不是设备的那个。字体、字号、行高差一点，
+整块就挪走，而且**错得不明显**——一套错的数值会被吸收成一个看起来还挺合理的版式，谁也指不出哪里错了。
+绝对定位反过来：每个元素在工程给它的坐标上，错了就是错位、重叠、超出屏幕，**一眼看得见**。
+
+平台上两屏真实数据正好把这个分界画出来（同一项目、同一个 Agent）：
+
+| 屏 | position:absolute | flex/grid | 报告 |
+| --- | --- | --- | --- |
+| `首页`（线框图） | **0** | **44** | DRAWN_SHAPES + `FLOW_LAYOUT` |
+| `上课页`（重传那版） | **33** | 4 | 只有 MISSING_KEYS（info） |
+
+改动：
+
+- `documentAssets` 新增两个计数：`positioned`（\`position: absolute|fixed\`）与 `flow\`（\`display: flex|grid\`），
+  只读页面自己带的 CSS（`<style>` 与 inline style；外链样式表本来就被要求内联，读不到就不猜）。
+- 新 finding `FLOW_LAYOUT`：`flow > 0 && positioned === 0` → 「N 处用 flex/grid 排版，整页没有一处绝对定位：
+  这是重排，不是那一屏」，advice 给出写法（容器 `position:relative`，元素 `position:absolute` +
+  `left/top/width/height`）和数值从哪来（Auto Layout 的 frame、`layout_*`、Flutter 的 `padding`）。
+  **判据取"一处绝对定位都没有"**，所以混合的页面（上课页 33/4）不误报。
+- 教程 §9 的「两条硬规矩」改成三条，**绝对定位升为第一条**并列在最前；findings 表加一行。
+- `upload_screen_mockup` 的工具描述与上传提示词同步（原生界面的数值在工程里 → 照抄成绝对定位）。
+
+**验证**：真实数据跑新分析器——`首页` positioned 0 / flow 44 报 `FLOW_LAYOUT`，`上课页` positioned 33 / flow 4 不报；
+再通过运行中的 API 读两屏详情，结果一致（首页 0/44 两条 finding，上课页 99/12 只有 MISSING_KEYS）。
+436 单元（新增 2 个）/ typecheck / lint 全绿。
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

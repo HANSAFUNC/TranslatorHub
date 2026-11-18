@@ -223,6 +223,16 @@ export interface DocumentAssetCounts {
   pictures: number;
   /** Inline `<svg>` shapes: artwork drawn in the markup rather than brought from the project. */
   shapes: number;
+  /**
+   * Elements the page places at a coordinate: `position: absolute` / `fixed` declarations.
+   *
+   * Counted because it is what makes a replica judgeable. A page arranged by flow hands the placement
+   * to the browser's layout engine, so a wrong number is absorbed into a plausible-looking layout and
+   * nothing can be checked; a page of coordinates shows its mistakes as overlap, gaps and overflow.
+   */
+  positioned: number;
+  /** `display: flex` / `grid` declarations: elements placed by the layout engine, not by a number. */
+  flow: number;
   /** Distinct colours the page names, so "it arrived monochrome" is answerable. */
   colours: number;
 }
@@ -250,7 +260,7 @@ function classifyAsset(reference: string): 'inline' | 'remote' | 'local' {
  * report's job is to say which ones are missing, not to have an opinion about the others.
  */
 export function documentAssets(document: MockupDocument): DocumentAssetCounts {
-  const counts: DocumentAssetCounts = { inline: 0, remote: 0, local: 0, scripts: 0, styles: 0, pictures: 0, shapes: 0, colours: 0 };
+  const counts: DocumentAssetCounts = { inline: 0, remote: 0, local: 0, scripts: 0, styles: 0, pictures: 0, shapes: 0, positioned: 0, flow: 0, colours: 0 };
   const colours = new Set<string>();
   for (const frame of document.frames) {
     const html = frame.html;
@@ -263,6 +273,15 @@ export function documentAssets(document: MockupDocument): DocumentAssetCounts {
       (html.match(/<image[\s>]/gi) ?? []).length +
       (html.match(/background-image\s*:/gi) ?? []).length;
     counts.shapes += (html.match(/<svg[\s>]/gi) ?? []).length;
+    // How the page is placed. Only the CSS the markup itself carries is readable — a linked stylesheet
+    // is an asset the caller was told to inline, and an unreadable one simply contributes nothing here
+    // rather than being guessed at.
+    const css = [
+      ...[...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((match) => match[1]!),
+      ...[...html.matchAll(/\sstyle\s*=\s*["']([^"']*)["']/gi)].map((match) => match[1]!),
+    ].join('\n');
+    counts.positioned += (css.match(/position\s*:\s*(?:absolute|fixed)\b/gi) ?? []).length;
+    counts.flow += (css.match(/display\s*:\s*(?:inline-)?(?:flex|grid)\b/gi) ?? []).length;
     for (const match of html.matchAll(/(?:src|href|poster)\s*=\s*["']([^"']*)["']/gi)) {
       const value = match[1]!;
       // A link to another page is not an asset; only what the browser would fetch to paint the frame.

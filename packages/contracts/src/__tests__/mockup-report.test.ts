@@ -188,6 +188,22 @@ describe('every finding is reachable and explained', () => {
       markers: [{ key: 'a', text: '我的', component: 'card' }],
       legend: [{ name: 'card' }],
     },
+    FLOW_LAYOUT: {
+      svg: '',
+      document: {
+        frames: [
+          {
+            title: '默认',
+            html:
+              '<html><head><style>.card{background:#fff;display:flex;gap:8px}</style></head><body>' +
+              '<img src="data:image/png;base64,AA">' +
+              '<span data-key="a" class="card">我的</span></body></html>',
+          },
+        ],
+      },
+      markers: [{ key: 'a', text: '我的', component: 'card' }],
+      legend: [{ name: 'card' }],
+    },
   };
 
   /** Whichever reader the scenario is for: a picture goes to one, a page to the other. */
@@ -311,6 +327,53 @@ describe('what the document report notices', () => {
     expect(report.stats.pictures).toBe(0);
     expect(report.stats.shapes).toBe(1);
     expect(report.findings.map((entry) => entry.code)).not.toContain('NO_PICTURES');
+  });
+
+  it('says a page laid out by flow is a re-composition, not the screen', () => {
+    // The other half of "it does not look like the app": the boxes are put where the browser's layout
+    // engine decides, so every difference in font metrics moves something. Nothing is checkable when a
+    // page is arranged this way — a wrong number is absorbed into a plausible-looking layout — which is
+    // why an absolutely-positioned page is the only kind whose fidelity can be judged at all.
+    const report = analyzeDocument({
+      document: {
+        frames: [
+          {
+            title: '默认',
+            html:
+              '<html><head><style>.card{background:#fff;display:flex;gap:8px}' +
+              '.grid{display:grid;grid-template-columns:repeat(5,1fr)}.banner{height:96px}</style></head>' +
+              '<body><div class="card" data-key="policy.view"><div class="grid"><div class="banner"></div></div>查看详情</div></body></html>',
+          },
+        ],
+      },
+      markers: [{ key: 'policy.view', text: '查看详情', component: 'policy-card' }],
+      legend: [{ name: 'policy-card' }],
+    });
+    const finding = report.findings.find((entry) => entry.code === 'FLOW_LAYOUT')!;
+    expect(finding.count).toBe(2);
+    expect(finding.advice).toContain('position:absolute');
+    expect(report.stats.positioned).toBe(0);
+    expect(report.stats.flow).toBe(2);
+  });
+
+  it('stays quiet about a page whose elements are each placed at a coordinate', () => {
+    const report = analyzeDocument({
+      document: {
+        frames: [
+          {
+            title: '默认',
+            html:
+              '<html><head><style>.screen{position:relative;width:390px;height:844px}</style>' +
+              '<style>.title{position:absolute;left:16px;top:60px;width:200px}</style></head>' +
+              '<body><div class="screen"><div class="title" data-key="policy.view" style="position:absolute;left:16px;top:60px">查看详情</div></div></body></html>',
+          },
+        ],
+      },
+      markers: [{ key: 'policy.view', text: '查看详情', component: 'policy-card' }],
+      legend: [{ name: 'policy-card' }],
+    });
+    expect(report.findings.map((entry) => entry.code)).not.toContain('FLOW_LAYOUT');
+    expect(report.stats.positioned).toBe(2);
   });
 
   it('says a relative asset will be a broken image, and what to do instead', () => {
