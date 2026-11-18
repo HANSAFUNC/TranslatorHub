@@ -1663,6 +1663,47 @@ findings: DRAWN_SHAPES | 19 处图形是手画的形状，这一页一张真素�
 
 
 
+### 1.50 存下来的报告是「判决」，判决不能比规则活得久
+
+用户说「还原度还是很大问题 你研究下怎么才能提高」。把所有组织的界面草图列出来，找到另一屏真的：
+**`高研院iOS` / `首页` / ios**，30,602 字符、4 帧、26 个 key，报告写着 **`"clean": true`，一条 finding 都没有**。
+而它的 CSS 是：
+
+```
+.banner{margin:12px 16px 0;height:96px;border-radius:12px;background:var(--ph)}   /* --ph:#E8ECF5 灰块 */
+.kk div{height:56px;border-radius:14px;background:#fff}                          /* 五列灰卡占位 */
+.ph{fill:none;stroke:#A9B4C7;stroke-width:1.6}                                    /* 手画的占位描边 */
+```
+
+**这就是那批灰块线框图，而平台给它打了「没问题」。** 用今天的规则重算同一份存下来的文档：
+
+```
+旧：pictures: 60 → clean: true
+新：pictures: 0, shapes: 60 → DRAWN_SHAPES | 60 处图形是手画的形状，这一页一张真素材都没有
+```
+
+根因是一行缓存判断（`mockups.service.ts`）：
+
+```ts
+const report = stored?.findings ? stored : await this.analyzeStored(...);
+```
+
+只要存下来的报告**有 `findings` 字段**就原样返回——而「没问题」恰恰就是 `findings: []`（空数组在 JS 里是真值）。
+于是**上传时算好的判决被永久缓存**：§1.49 加的规则对任何已存在的行都不生效，用户看到的还是「clean」。
+这比没有报告更糟——调用方把它读成「平台说这页没问题」。
+
+改动：**整页按读重算，重画那条路仍用存下来的那份**（重画要解码图片，而它的图不会再变；整页只需重解析
+行里已有的标记，且没有图片可解）。一次额外的主键读换「规则改了，所有已上传的行立刻跟上」。
+
+**验证**：`首页` 通过运行中的 API 读出来已经是 `clean: false` + `DRAWN_SHAPES | 60 处图形是手画的形状`，
+编辑器打开它会挂出这条横幅。集成测试新增一条：把一个「旧规则算出来的 clean 报告」写回库里（`SET LOCAL
+app.bypass_rls` + 检查影响行数，否则 arrange 静默不生效、测试就因为错误的原因通过——第一次跑正是这样），
+再读详情，断言它按今天的规则回答。434 单元 / 173 集成 / typecheck / lint 全绿。
+
+**顺带**：这台机器的 Docker VM 被这轮反复分层构建塞满（58.4G 用到 0 可用），Postgres 报
+`could not extend file ... No space left on device`，集成测试连项目都建不出来。`docker builder prune -af`
+回收 32.79GB、`docker image prune -f` 回收 23.73GB（19 个 dangling 层），现在 25.2G 可用。别的项目的镜像没动。
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

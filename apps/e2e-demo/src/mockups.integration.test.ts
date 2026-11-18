@@ -521,8 +521,60 @@ describe('screen mockups', () => {
     expect(report.findings.map((finding) => finding.code)).toEqual(['SCRIPTS_NOT_RUN']);
   }, 60_000);
 
-  it('refuses a page with no keys to hang translations on, and says what to add', async () => {
-    const response = await call(`/projects/${projectId}/mockups`, {
+  it('reads a stored page back through today’s rules, not the ones it was uploaded under', async () => {
+    // A screen went up as a wireframe — grey bars for text, hand-drawn paths for its pictures — and the
+    // platform blessed it: "clean: true", nothing to say. Not because the page was good, but because the
+    // report was computed under an older rule set, when a hand-drawn `<svg>` still counted as a picture.
+    // A stored report is a cached verdict, and a verdict that outlives the rules tells the caller
+    // everything is fine about a picture that looks nothing like the app. So a page is re-read on read:
+    // it costs a parse of markup the row already holds, and it means every improvement to the rules
+    // reaches everything already uploaded rather than only the next upload.
+    const html = `<!doctype html><html lang="en"><head><style>.banner{background:#E8ECF5;height:96px}</style></head>
+      <body><div class="banner"></div>
+      <svg viewBox="0 0 24 24"><path d="M0 0h4v4H0z" fill="#A9B4C7"/></svg>
+      <p data-key="checkout.title">Checkout</p></body></html>`;
+    const uploaded = await call<UploadResult>(`/projects/${projectId}/mockups`, {
+      method: 'POST',
+      token: session.token,
+      body: { name: 'stale-report', platform: 'web', locale: 'en-US', document: html, replace: true },
+    });
+    expect(uploaded.status, JSON.stringify(uploaded.body.error)).toBe(201);
+    const mockupId = uploaded.body.data!.mockupId;
+
+    // What the older rules left in the row: `pictures` counted the drawn shape, so there was nothing
+    // to report and `clean` came out true.
+    const prisma = new PrismaClient();
+    try {
+      // `SET LOCAL`, so the bypass only exists inside this transaction — and the row count is checked,
+      // because a test whose arrange step quietly matches nothing passes for the wrong reason.
+      const rewritten = await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SELECT set_config('app.bypass_rls', 'on', true)`);
+        return tx.$executeRaw`
+          UPDATE screen_mockups SET report = ${JSON.stringify({
+            clean: true,
+            findings: [],
+            stats: { pictures: 2, placeholders: 0, sourceColours: 1, frames: 1, markers: 1, missingKeys: 0, components: 0 },
+          })}::jsonb
+          WHERE id = ${mockupId}::uuid`;
+      });
+      expect(rewritten).toBe(1);
+    } finally {
+      await prisma.$disconnect();
+    }
+
+    const detail = await call<{ mockup: { report: { clean: boolean; findings: { code: string }[]; stats: { pictures: number; shapes?: number } } } }>(
+      `/projects/${projectId}/mockups/${mockupId}`,
+      { token: session.token },
+    );
+    const report = detail.body.data!.mockup.report;
+    expect(report.findings.map((finding) => finding.code)).toContain('DRAWN_SHAPES');
+    expect(report.clean).toBe(false);
+    // And the counts agree with the finding: no picture was brought, one shape was drawn.
+    expect(report.stats.pictures).toBe(0);
+    expect(report.stats.shapes).toBe(1);
+  }, 60_000);
+
+  it('refuses a page with no keys to hang translations on, and says what to add', async () => {    const response = await call(`/projects/${projectId}/mockups`, {
       method: 'POST',
       token: session.token,
       body: {

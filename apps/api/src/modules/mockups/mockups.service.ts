@@ -127,20 +127,26 @@ export class MockupsService {
       const document = mockup.document as unknown as MockupDocument | null;
       const kind = document ? 'document' : 'image';
 
-      // A sketch uploaded before the report existed carries an empty one: analyse it now, from the
-      // artefact, and leave the row alone — a read stays a read. The next upload of the same screen
-      // stores it.
+      // A page is re-read on every read; a drawn sketch keeps the verdict stored beside it (that one
+      // means decoding the image, and its picture cannot change under it). The reason a page is not
+      // cached is that a stored report is a cached *judgement*, and a judgement that outlives the rules
+      // is worse than no judgement at all: a screen that arrived as grey bars with hand-drawn shapes in
+      // place of its pictures was served as `clean: true` for as long as nothing disagreed with it —
+      // which is exactly what a caller reads as "the platform says this one is fine". Re-reading costs a
+      // parse of markup the row already holds, and it means fixing a rule reaches everything already
+      // uploaded instead of only the next upload.
       const stored = mockup.report as unknown as MockupReport | null;
-      const report = stored?.findings
-        ? stored
-        : await this.analyzeStored(
-            actor,
-            projectId,
-            mockupId,
-            markers,
-            mockup.legend as unknown as { name: string }[],
-            kind,
-          );
+      const report =
+        kind === 'document' || !stored?.findings
+          ? await this.analyzeStored(
+              actor,
+              projectId,
+              mockupId,
+              markers,
+              mockup.legend as unknown as { name: string }[],
+              kind,
+            )
+          : stored;
 
       return {
         mockup: {
