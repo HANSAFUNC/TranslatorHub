@@ -160,6 +160,26 @@ function declaredComponent(element: Element): string | null {
 }
 
 /**
+ * How many component names the markup declares, wherever they are.
+ *
+ * Counted over every element rather than over the markers, because the question the report asks is
+ * "did the caller name its components", and a name on an element that carries no key is still a name.
+ */
+export function markupComponents(document: MockupDocument): number {
+  const names = new Set<string>();
+  for (const frame of document.frames) {
+    const tree = parseHtml(frame.html) as unknown as Element[];
+    const walk = (element: Element): void => {
+      const name = declaredComponent(element);
+      if (name) names.add(name);
+      for (const child of element.children ?? []) walk(child);
+    };
+    for (const root of tree) walk(root);
+  }
+  return names.size;
+}
+
+/**
  * The markers a page carries, read from the key attributes in its markup.
  *
  * No coordinates: the page's layout is decided by a browser, and the platform does not run one. The
@@ -180,11 +200,14 @@ export function documentMarkers(
       const elementNamespace = element.attributes['data-namespace']?.trim() || namespace;
       let key: string | null = null;
       for (const attribute of KEY_ATTRIBUTES) {
-        const value = element.attributes[attribute]?.trim();
-        if (value) {
-          key = value;
-          break;
-        }
+        // Taken verbatim: a key with a trailing space is a different key from the one without it, and
+        // real string tables contain them (`"如需变更学习设备，点击 "`). Trimming here rewrote the
+        // caller's key into one the project did not have, and the report then blamed the caller for a
+        // key that was there all along. Whitespace-only is not a key at all.
+        const value = element.attributes[attribute];
+        if (value === undefined || value.trim() === '') continue;
+        key = value;
+        break;
       }
       if (key && !NON_COPY_TAGS.has(element.tag)) {
         markers.push({

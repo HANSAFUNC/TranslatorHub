@@ -48,6 +48,11 @@ const HELP = `localehub <command>
   status
       Local state + remote sync status + open conflicts.
 
+  mockup check <file> [--platform web] [--name <screen>]
+      Run the platform's own S1-S10 rules over a page **without writing or uploading anything**, and
+      exit non-zero if any of them is a warning. This is the same analyzer the platform runs, so a page
+      that passes here passes there -- "本地过、平台不过" is what this closes.
+
   mockup --page <file> [--name <screen>] [--platform web] [--locale zh-CN]
          [--namespace <ns>] [--keys <json-file>] [--css <file>] [--accent <color>]
          [--background <color>] [--width <px>] [--height <px>] [--document] [--confirm]
@@ -152,6 +157,25 @@ async function main(): Promise<void> {
       return;
     }
     case 'mockup': {
+      if (positionals[0] === 'check') {
+        const target = positionals[1];
+        if (!target) {
+          process.stderr.write('mockup check requires a file: localehub mockup check <file>\n');
+          process.exitCode = 2;
+          return;
+        }
+        const checked = await services.checkScreenMockup({
+          page: target,
+          ...(flags.platform ? { platform: flags.platform as string } : {}),
+          ...(flags.name ? { name: flags.name as string } : {}),
+          ...(flags.namespace ? { namespace: flags.namespace as string } : {}),
+        });
+        process.stdout.write(`${String(checked.message ?? '')}\n`);
+        if (!json) process.stdout.write(`${checked.passed === true ? 'PASS' : 'FAIL'}\n`);
+        // A warning is something to fix before uploading, so the shell can gate on it.
+        if (checked.passed !== true) process.exitCode = 1;
+        return;
+      }
       const page = (flags.page as string | undefined) ?? positionals[0];
       if (!page) {
         process.stderr.write('mockup requires --page <file> (a page component or an .html file)\n');

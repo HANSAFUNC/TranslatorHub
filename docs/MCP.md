@@ -512,6 +512,11 @@ localehub mockup --page src/app/projects/page.tsx --name 项目列表 --confirm 
 右边是该语言下的同一批条目，**两边双向联动**（点标记跳到条目、点条目点亮标记），编号是它们之间的暗号。
 标记是**红色细框**，只描边不填色——不会盖住它标的那行字；编号画在框**外面**的红圈里，并且尽量避开其它编号，所以一屏标记也不会糊成一片。译文还是空的那几条，编号改成琥珀色，扫一遍就知道哪几处还没翻。
 
+### 上传前本地验：`localehub mockup check`
+
+`localehub mockup check <file.html>` 跑的是**平台同一套规则**（同一个分析器），不写文件、不上传，有 warning 级
+finding 就退出码非零——可以在提交前或 CI 里卡住「本地过、平台不过」。传上去之后的 `report` 是同一份结果。
+
 ## 3. 本地仓库操作：CLI（不是 MCP）
 
 > 仓库里的落点固定是 `.localehub/`：`config.yaml` 与 `mockups/`（图 + 说明）**要提交**，`state.json` /

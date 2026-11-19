@@ -498,6 +498,76 @@ describe('what the document report notices', () => {
  * The keys come from attributes rather than from the text, because a page's text is not a key — the
  * whole point of the replica is that the caller's markup already says which string is which.
  */
+/**
+ * What a real caller hit, in one project, over 50+ frames.
+ *
+ * Each of these is a case where the platform told the caller something untrue about its own upload, and
+ * the caller had no way to tell: a key that matched but was reported missing, a frame count that
+ * disagreed with the request, a component name that was there but called absent. They are grouped
+ * because they share a shape — the platform read its own bookkeeping instead of the markup.
+ */
+describe('what the caller reported from the field', () => {
+  it('keeps the key exactly as the page wrote it, so a key with a trailing space can still match', () => {
+    // The project's key set has keys with trailing spaces (`"如需变更学习设备，点击 "` — common in real
+    // string tables). The page wrote the same value. Reading the attribute with `.trim()` silently
+    // rewrote the caller's key, so the marker could never match the row that was there all along, and
+    // the report blamed the caller for a key it did not have.
+    const document = normalizeDocument({
+      document: '<html><body><div data-key="如需变更学习设备，点击 ">如需变更学习设备，点击 </div></body></html>',
+    });
+    expect(documentMarkers(document)[0]!.key).toBe('如需变更学习设备，点击 ');
+    // An attribute that is only whitespace is still not a key.
+    const blank = normalizeDocument({ document: '<html><body><div data-key="   ">甲</div></body></html>' });
+    expect(documentMarkers(blank)).toHaveLength(0);
+  });
+
+  it('names the keys a marker could not find, instead of only counting them', () => {
+    // "1 key is missing" is not actionable: the caller ends up probing `GET /keys?search=…` once per key
+    // to find out which one. The names are already in hand when the finding is built.
+    const document = normalizeDocument({
+      document: '<html><body><span data-key="a">甲</span><span data-key="b">乙</span><span data-key="c">丙</span></body></html>',
+    });
+    const markers = documentMarkers(document).map((marker) => ({ ...marker, missing: marker.key === 'b' }));
+    const report = analyzeDocument({ document, markers, legend: [{ name: 'card' }] });
+    const finding = report.findings.find((entry) => entry.code === 'MISSING_KEYS')!;
+    expect(finding.count).toBe(1);
+    expect(finding.keys).toEqual(['b']);
+  });
+
+  it('counts the frames it was sent, and says how many of them carry markers', () => {
+    // A splash frame with no strings is a frame. Reporting two frames for a three-frame upload reads as
+    // "a frame went missing", and the caller re-uploads to fix a problem it does not have.
+    const document = normalizeDocument({
+      frames: [
+        { title: '启动图', html: '<html><body><div class="splash"></div></body></html>' },
+        { title: '默认', html: '<html><body><div data-key="a">甲</div></body></html>' },
+        { title: '空状态', html: '<html><body><div data-key="b">乙</div></body></html>' },
+      ],
+    });
+    const report = analyzeDocument({ document, markers: documentMarkers(document), legend: [{ name: 'card' }] });
+    expect(report.stats.frames).toBe(3);
+    expect(report.stats.framesWithMarkers).toBe(2);
+  });
+
+  it('only says the elements have no component name when the markup names none', () => {
+    // The criterion was "the legend is empty", and the legend is derived from the *markers* — so a
+    // component named on an element that carries no key contributed nothing, and the platform told the
+    // caller its elements had no component names while they were right there in the markup.
+    const named = normalizeDocument({
+      document: '<html><body><div data-component="PolicyCard"><span>甲</span></div><span data-key="a">乙</span></body></html>',
+    });
+    const namedReport = analyzeDocument({ document: named, markers: documentMarkers(named), legend: [] });
+    expect(namedReport.findings.map((entry) => entry.code)).not.toContain('NO_COMPONENTS');
+    expect(namedReport.stats.components).toBe(1);
+
+    const unnamed = normalizeDocument({
+      document: '<html><body><div class="flex-row"><span data-key="a">乙</span></div></body></html>',
+    });
+    const unnamedReport = analyzeDocument({ document: unnamed, markers: documentMarkers(unnamed), legend: [] });
+    expect(unnamedReport.findings.map((entry) => entry.code)).toContain('NO_COMPONENTS');
+  });
+});
+
 describe('reading a page', () => {
   it('takes keys from every attribute a caller might have used, with the namespace they declare', () => {
     const document = normalizeDocument({

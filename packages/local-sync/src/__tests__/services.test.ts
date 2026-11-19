@@ -125,6 +125,66 @@ describe('the sketch written into .localehub/mockups', () => {
 });
 
 /**
+ * The local gate, over the platform's own rules.
+ *
+ * "本地过、平台不过" was unavoidable while the caller re-implemented S1–S10 from the guide in its own
+ * script: the rules lived in two places and only one of them was right. This runs the same analyzer the
+ * platform runs, over the same markup, and answers with a verdict a shell can act on — which is the
+ * point of checking before uploading rather than after.
+ */
+describe('localehub mockup check', () => {
+  function workspaceWithPage(html: string): string {
+    const root = workspaceWithConfig();
+    writeFileSync(join(root, 'screen.html'), html, 'utf8');
+    return root;
+  }
+
+  it('fails a page that breaks the standard, naming the rules it broke', async () => {
+    // Everything the field reported at once: laid out by flow, a hand-drawn picture, and a box that
+    // hides whatever does not fit it.
+    const root = workspaceWithPage(
+      [
+        '<!doctype html><html><head><style>',
+        '.screen{position:relative;width:390px;height:844px;overflow:hidden}',
+        '.row{display:flex;gap:8px}',
+        '</style></head><body><div class="screen"><div class="row">',
+        '<svg viewBox="0 0 24 24"><path d="M0 0h4v4H0z"/></svg>',
+        '<span data-key="home.title">我的</span></div></div></body></html>',
+      ].join('\n'),
+    );
+    const services = new LocalSyncServices({ cwd: root, env: { LOCALEHUB_TOKEN: 't' } });
+    const checked = await services.checkScreenMockup({ page: 'screen.html' });
+
+    expect(checked.kind).toBe('document');
+    expect(checked.passed).toBe(false);
+    expect(checked.blocking).toEqual(expect.arrayContaining(['CLIPPED_BOX', 'FLOW_LAYOUT', 'DRAWN_SHAPES']));
+    // The message is what the agent reads out, so it carries the advice, not just the code.
+    expect(String(checked.message)).toContain('CLIPPED_BOX');
+    expect(String(checked.message)).toContain('overflow');
+  });
+
+  it('passes a page that meets it, and writes nothing', async () => {
+    const root = workspaceWithPage(
+      [
+        '<!doctype html><html><head><style>',
+        '.screen{position:relative;width:390px;height:844px}',
+        '.title{position:absolute;left:16px;top:60px;width:200px;font-size:17px}',
+        '</style></head><body><div class="screen">',
+        '<img src="data:image/png;base64,AA">',
+        '<span class="title" data-key="home.title">我的</span></div></body></html>',
+      ].join('\n'),
+    );
+    const services = new LocalSyncServices({ cwd: root, env: { LOCALEHUB_TOKEN: 't' } });
+    const checked = await services.checkScreenMockup({ page: 'screen.html' });
+
+    expect(checked.passed).toBe(true);
+    expect(checked.blocking).toEqual([]);
+    // A check is a read: nothing lands in the workspace for someone to commit by accident.
+    expect(() => readFileSync(join(root, '.localehub', 'mockups', 'screen.html'), 'utf8')).toThrow();
+  });
+});
+
+/**
  * The preview is where an uploader finds out it drew a wireframe.
  *
  * A screen went up as grey bars, six hand-written `<svg>` glyphs and not one asset, and the platform

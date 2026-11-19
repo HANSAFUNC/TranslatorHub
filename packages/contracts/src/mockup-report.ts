@@ -18,7 +18,7 @@
  * intend — and neither invents a finding it cannot see in the artefact itself.
  */
 
-import { documentAssets, framesAreCopies } from './mockup-document';
+import { documentAssets, framesAreCopies, markupComponents } from './mockup-document';
 
 export interface MockupFinding {
   code: FindingCode;
@@ -28,6 +28,13 @@ export interface MockupFinding {
   /** What to do about it, naming the actual field, flag or command. */
   advice: string;
   count?: number;
+  /**
+   * The things the finding is about, when naming them is cheap and being vague is not.
+   *
+   * `MISSING_KEYS` is the one that needs it: "1 key is missing" leaves the caller probing the key list
+   * one guess at a time, and the names are already in hand.
+   */
+  keys?: string[];
 }
 
 /**
@@ -101,6 +108,13 @@ export interface MockupReportStats {
   flow?: number;
   /** Boxes with a fixed height and `overflow: hidden`: whatever does not fit them is not in the picture. */
   clipped?: number;
+  /**
+   * Frames that actually carry markers, alongside `frames` (the frames the platform was sent).
+   *
+   * Both, because they answer different questions: "did every frame arrive" and "how many of them can a
+   * translator click through". Reporting only the second reads as a lost frame and earns a re-upload.
+   */
+  framesWithMarkers?: number;
 }
 
 export interface MockupReport {
@@ -144,13 +158,14 @@ function countMatches(text: string, pattern: RegExp): number {
 }
 
 /** Markers pointing at keys the platform does not have are stored, not refused — so they are said, not fixed. */
-function missingKeyFinding(missingKeys: number): MockupFinding | null {
-  if (!missingKeys) return null;
+function missingKeyFinding(missingKeys: readonly string[]): MockupFinding | null {
+  if (!missingKeys.length) return null;
   return {
     code: 'MISSING_KEYS',
     severity: 'info',
-    count: missingKeys,
-    title: `${missingKeys} 个标记指向平台还没有的 Key`,
+    count: missingKeys.length,
+    keys: [...missingKeys],
+    title: `${missingKeys.length} 个标记指向平台还没有的 Key`,
     advice:
       '标记会存下来，导入语言文件后自动对上；要让它们一开始就对，用 import_translations 把 key 导进来，' +
       '或在 HTML 里给元素加 data-key="checkout.pay" 明确写上是哪条 key。',
@@ -234,7 +249,7 @@ export function analyzeSketch(input: {
   const sourceColours = [...colours].filter((colour) => !PLATFORM_COLOURS.has(colour)).length;
 
   const frames = distinctFrames(input.markers);
-  const missingKeys = input.markers.filter((marker) => marker.missing).length;
+  const missingKeys = [...new Set(input.markers.filter((marker) => marker.missing).map((marker) => marker.key))];
   const components = input.legend?.length ?? 0;
 
   if (pictures === 0) {
@@ -276,7 +291,15 @@ export function analyzeSketch(input: {
 
   return {
     findings,
-    stats: { pictures, placeholders, sourceColours, frames: frames.length, markers: input.markers.length, missingKeys, components },
+    stats: {
+      pictures,
+      placeholders,
+      sourceColours,
+      frames: frames.length,
+      markers: input.markers.length,
+      missingKeys: input.markers.filter((marker) => marker.missing).length,
+      components,
+    },
     clean: findings.length === 0,
   };
 }
@@ -301,9 +324,13 @@ export function analyzeDocument(input: {
   const findings: MockupFinding[] = [];
   const assets = documentAssets({ frames: [...input.document.frames] });
   const keys = new Set(input.markers.map((marker) => `${marker.namespace ?? ''}\u0000${marker.key}`)).size;
-  const missingKeys = input.markers.filter((marker) => marker.missing).length;
-  const components = input.legend?.length ?? 0;
-  const frames = distinctFrames(input.markers).length || input.document.frames.length;
+  const missingKeys = [...new Set(input.markers.filter((marker) => marker.missing).map((marker) => marker.key))];
+  // Read from the markup, not from the legend. The legend is built out of the *markers*, so a component
+  // named on an element that carries no key contributed nothing to it — and the platform then told the
+  // caller its elements had no component names while the names were sitting in the markup.
+  const components = markupComponents({ frames: [...input.document.frames] });
+  const frames = input.document.frames.length;
+  const framesWithMarkers = distinctFrames(input.markers).length;
 
   if (keys === 0) {
     findings.push({
@@ -449,8 +476,9 @@ export function analyzeDocument(input: {
       placeholders: 0,
       sourceColours: assets.colours,
       frames,
+      framesWithMarkers,
       markers: input.markers.length,
-      missingKeys,
+      missingKeys: input.markers.filter((marker) => marker.missing).length,
       components,
       keys,
       inlineAssets: assets.inline,

@@ -188,8 +188,15 @@ public 路由不受影响，负载均衡仍可探测。
 数量（`pictures` / `placeholders` / `sourceColours` / `frames` / `markers` / `missingKeys` / `components`），
 `findings` 逐条列出看图才看得出来的问题，每条都带 `advice`（指名要改哪个字段或用哪条命令）。
 这些失败本来都是静默的——上传照样成功，只是图上看不出是哪个页面——所以这是调用端唯一的反馈回路。
-`clean: true` 表示没话说。详情接口同样返回它；对在这次改动之前上传的行，`report` 由存下来的图懒算，
-不需要重传。判定写在 `@localehub/contracts` 的 `analyzeSketch`，与 MCP 是同一份。
+`clean: true` 表示没话说。详情接口同样返回它；**整页的报告按读重算**（规则改了，所有已上传的行立刻跟上，
+不再只影响下一次上传），重画那条路用存下来的那份。判定写在 `@localehub/contracts` 的 `analyzeSketch` / `analyzeDocument`，与 MCP、与 CLI 的 `localehub mockup check` 是同一份。
+
+几个字段的口径（调用端问过）：`stats.frames` 是**收到的帧数**（含没有标记的帧），`stats.framesWithMarkers` 是
+其中带标记的帧数——两个都报，因为「帧到齐了吗」和「有几帧能点」是两个问题。`stats.components` 是**组件名的个数**，
+`legend[].count` 是**实例数**（同一个组件名出现 20 次：components 记 1、count 记 20）。
+`MISSING_KEYS` 除 `count` 外还带 `keys: string[]`（去重后的 key 名），调用端不用再逐条试探。
+**标记的 key 原样读，不裁剪**：`data-key="如需变更学习设备，点击 "` 尾部的空格是 key 的一部分，
+和字符串表里那一行必须一字不差；`&#10;` 不会被解码，key 里有换行就在属性里写**真换行**。
 
 
 `?:projectId` 必须属于调用方所在组织：不属于或不存在一律 404（不会写入任何行；`(project_id,

@@ -595,6 +595,94 @@ export class LocalSyncServices {
     };
   }
 
+  /**
+   * The platform's own reading of a page, run locally, and nothing else.
+   *
+   * `generateScreenMockup` already computes this report — but it also writes a preview into
+   * `.localehub/mockups/` and is phrased as "make a screen". A caller who has just written the HTML and
+   * wants to know whether it passes has a different question, and wants an exit code rather than a
+   * paragraph. This closes "本地过、平台不过": one analyzer, one set of rules, both ends of the wire.
+   *
+   * Nothing is written and nothing is uploaded.
+   */
+  async checkScreenMockup(input: { page: string; platform?: string; name?: string; namespace?: string }): Promise<OperationResult> {
+    const guard = this.workspace();
+    const read = readPageFile(guard, input.page);
+    const name = input.name ?? read.fileName.split('/').pop()!.replace(/\.[^.]+$/, '');
+    const platform = input.platform ?? this.config().config.project.platforms?.[0] ?? 'web';
+
+    /** The findings are the answer; a warning is something to fix, an info is something to know. */
+    const summarise = (kind: 'document' | 'drawn', frames: string[], report: ReturnType<typeof analyzeDocument>) => {
+      const blocking = report.findings.filter((finding) => finding.severity === 'warning');
+      return {
+        page: read.fileName,
+        name,
+        platform,
+        kind,
+        frames,
+        markers: report.stats.markers,
+        report,
+        blocking: blocking.map((finding) => finding.code),
+        passed: blocking.length === 0,
+        message:
+          `检查完毕（${kind === 'document' ? '整页复刻' : '片段重画'}，${frames.length} 帧，${report.stats.markers} 个标记）：` +
+          (blocking.length
+            ? `${blocking.length} 条必须改：\n` + blocking.map((f) => `  · ${f.code} ${f.title}\n    ${f.advice}`).join('\n')
+            : report.findings.length
+              ? `没有必须改的；${report.findings.length} 条提示：` + report.findings.map((f) => f.code).join('、')
+              : '没有问题。'),
+      } as OperationResult;
+    };
+
+    if (isFullDocument(read.source)) {
+      const page = inlinePageAssets(guard, read.source, read.fileName);
+      const document = { frames: [{ title: '默认', html: page.source }] };
+      const markers = documentMarkers(document, { namespace: input.namespace ?? null });
+      const legend: { index: number; name: string; count: number }[] = [];
+      for (const marker of markers) {
+        if (!marker.component) continue;
+        const existing = legend.find((item) => item.name === marker.component);
+        if (existing) existing.count += 1;
+        else legend.push({ index: legend.length + 1, name: marker.component, count: 1 });
+      }
+      const report = analyzeDocument({
+        document,
+        markers: markers.map((marker) => ({
+          key: marker.key,
+          namespace: marker.namespace,
+          frame: marker.frame,
+          component: marker.component,
+          text: marker.text,
+          missing: false,
+        })),
+        legend,
+      });
+      return summarise('document', ['默认'], report);
+    }
+
+    const pictures = inlineLocalImages(guard, read.source, read.fileName);
+    const { spec, strings } = buildUiSpec(pictures.source, read.fileName, {
+      name,
+      platform,
+      ...(input.namespace ? { namespace: input.namespace } : {}),
+    });
+    const sketch = renderUiSketch(spec);
+    const report = analyzeSketch({
+      svg: sketch.svg,
+      markers: sketch.markers.map((marker) => ({
+        key: marker.key,
+        namespace: marker.namespace,
+        frame: marker.frame ?? null,
+        component: marker.component ?? null,
+        text: marker.text,
+        missing: false,
+      })),
+      legend: sketch.legend,
+    });
+    void strings;
+    return summarise('drawn', ['默认'], report);
+  }
+
   async generateScreenMockup(input: {
     page: string;
     name?: string;
