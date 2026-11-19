@@ -3640,6 +3640,17 @@
               "type": "string",
               "maxLength": 255
             }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "unmatched"
+              ]
+            }
           }
         ]
       },
@@ -4285,6 +4296,9 @@
                       "additionalProperties": false
                     },
                     "maxItems": 400
+                  },
+                  "expect_no_images": {
+                    "type": "boolean"
                   },
                   "replace": {
                     "type": "boolean"

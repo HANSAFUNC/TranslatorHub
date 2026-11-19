@@ -450,7 +450,7 @@ localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表 -
 | \`NO_STYLE\` | 浏览器默认样式，像没穿衣服 | 样式表要跟着上来：\`<style>\` 内联，或把 \`<link rel=stylesheet>\` 的那份文件内容内联进去 |
 | \`REMOTE_ASSETS\` | 图能出来，但依赖看图的人能访问那个域名 | 要任何环境都一样就内联；内网、要登录、已下线的地址都会变破图 |
 | \`SCRIPTS_NOT_RUN\` | 由接口填的数据是空的（这是设计） | 「动态数据除外」：要展示某个状态，把那个状态写成静态 HTML（或单独一帧） |
-| \`NO_PICTURES\` | 整页里没有任何图片、图标或背景图 | 与重画那条同义：图的地址要么内联、要么是浏览器能取到的地址 |
+| \`NO_PICTURES\` | 整页里没有任何图片、图标或背景图 | 与重画那条同义：图的地址要么内联、要么是浏览器能取到的地址；**这一屏本来就该没有图时**（纯文字页、只有 CSS 圆角的弹窗），传 \`expect_no_images: true\` 声明掉它（见 §10 ⑥） |
 | \`DRAWN_SHAPES\` | 整页的图全是手画的形状，一张真素材都没有 → 看着像线框图 | 从工程里取真素材内联（见 §9）：iOS 的 \`Assets.xcassets\`、Android 的 \`res/drawable*\`、Flutter 的 \`assets/\`；矢量图标要照抄工程里的 \`path\`，不要自己画一个像的 |
 | \`FLOW_LAYOUT\` | 整页用 flex/grid 排的，没有一处绝对定位 → 浏览器替你重排了一遍 | 每个元素按工程给的坐标写成 \`position:absolute\` + \`left/top/width/height\`（见 §9 第一条） |
 | \`CLIPPED_BOX\` | 固定高度 + overflow:hidden，排到盒子外面的内容**图上不存在** | 内容多高盒子就多高，不要收口（§9 S2）；这一条丢掉的文案后面找不回来 |
@@ -576,6 +576,18 @@ const html = \`<img src="data:image/png;base64,\${readFileSync(src).toString('ba
 上面每一条规则照样全过。所以把关键数值的依据写成 HTML 注释留在页面里——
 \`<!-- y=91: 列表起点 = contentY(navHeight 44 + header 47) -->\`——复核的人顺着注释就能核，
 比事后猜你当时怎么算的快得多。
+
+**⑥ 「这页本来就没有图」是可以声明的。** \`NO_PICTURES\` 是抓「素材没跟上来」的，但一个只有文字和圆角的弹窗
+本来就该没有图——它的 advice 一直写着「如果确实没有图，这条可以忽略」，可**忽略不掉的 finding 会让 \`clean\` 永远为 false**，
+调用端就没法拿「没有 findings」当交付判据。传 \`expect_no_images: true\` 声明掉它：
+
+\`\`\`jsonc
+{ "project_id": "…", "name": "确认弹窗", "platform": "ios", "locale": "zh-CN",
+  "document": "<!doctype html>…", "expect_no_images": true }
+\`\`\`
+
+声明**跟着屏幕存下来**（整页的报告每次读取都重算，只活一次请求的话下次读它又回来了）。它**只能消除 \`NO_PICTURES\`**：
+素材没内联、地址取不到、图全是手画的形状，这些照报——那些是"图没上来"，不是"本来没有图"。
 
 ## 11. 本地就能验：\`localehub mockup check\`
 

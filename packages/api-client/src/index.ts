@@ -229,6 +229,8 @@ export class ApiClient {
       html?: string;
       /** The page kept whole, for a replica. What a full-page `html` means implicitly. */
       document?: string;
+      /** The caller asserts this screen has no pictures, so `NO_PICTURES` is not a defect here. */
+      expect_no_images?: boolean;
       namespace?: string;
       css?: string;
       theme?: { accent?: string; background?: string };

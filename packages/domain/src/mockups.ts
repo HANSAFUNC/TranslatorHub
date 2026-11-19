@@ -1,35 +1,6 @@
-import type { Prisma } from '@localehub/database';
-import {
-  ErrorCode,
-  LocaleHubError,
-  MAX_MARKERS_PER_MOCKUP,
-  MAX_MOCKUP_BYTES,
-  MAX_MOCKUP_DIMENSION,
-  analyzeSketch,
-  canonicalizeLocaleTag,
-  defaultViewport,
-  detectImageType,
-  analyzeDocument,
-  documentMarkers,
-  extractUiSpec,
-  imageDimensions,
-  isFullDocument,
-  normalizeDocument,
-  isValidLocaleTag,
-  normalizeMarker,
-  renderUiSketch,
-  type MockupDocument,
-  type MockupImageType,
-  type MockupMarkerInput,
-  type PlatformName,
-  type ReviewStatus,
-  type MockupReport,
-  type UiLegendItem,
-  type UiSpec,
-  type UiTheme,
-  uiSpecIssues,
-  unsafeSvgReasons,
-} from '@localehub/contracts';
+import { Prisma } from '@localehub/database';
+import type { Prisma as PrismaTypes } from '@localehub/database';
+import { ErrorCode, LocaleHubError, MAX_MARKERS_PER_MOCKUP, MAX_MOCKUP_BYTES, MAX_MOCKUP_DIMENSION, MockupExpectations, analyzeDocument, analyzeSketch, canonicalizeLocaleTag, defaultViewport, detectImageType, documentMarkers, extractUiSpec, imageDimensions, isFullDocument, isValidLocaleTag, normalizeDocument, normalizeMarker, renderUiSketch, type MockupDocument, type MockupImageType, type MockupMarkerInput, type MockupReport, type PlatformName, type ReviewStatus, type UiLegendItem, type UiSpec, type UiTheme, uiSpecIssues, unsafeSvgReasons } from '@localehub/contracts';
 import { createHash } from 'node:crypto';
 
 /**
@@ -548,6 +519,8 @@ export interface UpsertScreenMockupInput {
   locale: string;
   /** The picture, for a sketch the platform drew. Mutually exclusive with `document`. */
   image: DecodedMockupImage | null;
+  /** What the caller asserts about this screen, so the report stops reporting it. See `MockupExpectations`. */
+  expectations?: MockupExpectations;
   /** The page kept whole, for a replica. Stored as sent; scripts in it never run. */
   document?: MockupDocument | null;
   /** The size the screen is shown at: the picture's, or the platform's viewport for a page. */
@@ -601,7 +574,7 @@ export interface UpsertScreenMockupResult {
  * translations exist, which is the opposite of when it is useful.
  */
 export async function upsertScreenMockup(
-  tx: Prisma.TransactionClient,
+  tx: PrismaTypes.TransactionClient,
   input: UpsertScreenMockupInput,
 ): Promise<UpsertScreenMockupResult> {
   if (!isValidLocaleTag(input.locale)) {
@@ -684,12 +657,27 @@ export async function upsertScreenMockup(
     missing: !known.has(`${marker.namespace}\u0000${marker.key}`),
   }));
   const report = input.image
-    ? analyzeSketch({ svg: input.image.bytes.toString('utf8'), markers: reportMarkers, legend: input.legend ?? [] })
-    : analyzeDocument({ document: input.document!, markers: reportMarkers, legend: input.legend ?? [] });
+    ? analyzeSketch({
+        svg: input.image.bytes.toString('utf8'),
+        markers: reportMarkers,
+        legend: input.legend ?? [],
+        ...(input.expectations ? { expectations: input.expectations } : {}),
+      })
+    : analyzeDocument({
+        document: input.document!,
+        markers: reportMarkers,
+        legend: input.legend ?? [],
+        ...(input.expectations ? { expectations: input.expectations } : {}),
+      });
 
   const data = {
-    legend: (input.legend ?? []) as unknown as Prisma.InputJsonValue,
-    report: report as unknown as Prisma.InputJsonValue,
+    legend: (input.legend ?? []) as unknown as PrismaTypes.InputJsonValue,
+    report: report as unknown as PrismaTypes.InputJsonValue,
+    // What the caller asserted, kept beside the report it affects: a page is re-read on every read, so a
+    // declaration that only lived for one request would let the finding it suppressed come back.
+    expectations: input.expectations
+      ? (input.expectations as unknown as PrismaTypes.InputJsonValue)
+      : Prisma.DbNull,
     organizationId: input.organizationId,
     projectId: input.projectId,
     name: input.name,
@@ -704,7 +692,7 @@ export async function upsertScreenMockup(
     // `Uint8Array<ArrayBuffer>`, and a Buffer's backing store is `ArrayBufferLike`, which includes
     // SharedArrayBuffer. One copy per upload is cheaper than fighting the variance.
     image: input.image ? new Uint8Array(input.image.bytes) : null,
-    document: (input.document ?? null) as unknown as Prisma.InputJsonValue,
+    document: (input.document ?? null) as unknown as PrismaTypes.InputJsonValue,
     createdById: input.userId,
   };
 
@@ -727,14 +715,14 @@ export async function upsertScreenMockup(
     const inserted = await tx.$queryRaw<{ id: string }[]>`
           INSERT INTO screen_mockups (
             id, organization_id, project_id, name, platform, locale,
-            width, height, mime_type, byte_size, content_hash, image, document, legend, report, created_by_id,
+            width, height, mime_type, byte_size, content_hash, image, document, legend, report, expectations, created_by_id,
             created_at, updated_at
           )
           VALUES (
             gen_random_uuid(), ${data.organizationId}::uuid, ${data.projectId}::uuid, ${data.name},
             ${data.platform}::text::"PlatformKind", ${data.locale},
             ${data.width}, ${data.height}, ${data.mimeType}, ${data.byteSize},
-            ${data.contentHash}, ${data.image}, ${JSON.stringify(data.document)}::jsonb, ${JSON.stringify(data.legend)}::jsonb, ${JSON.stringify(data.report)}::jsonb, ${data.createdById}::uuid,
+            ${data.contentHash}, ${data.image}, ${JSON.stringify(data.document)}::jsonb, ${JSON.stringify(data.legend)}::jsonb, ${JSON.stringify(data.report)}::jsonb, ${JSON.stringify(data.expectations ?? null)}::jsonb, ${data.createdById}::uuid,
             now(), now()
           )
           ON CONFLICT (project_id, platform, name) DO UPDATE SET
@@ -749,6 +737,7 @@ export async function upsertScreenMockup(
             document = EXCLUDED.document,
             legend = EXCLUDED.legend,
             report = EXCLUDED.report,
+            expectations = EXCLUDED.expectations,
             created_by_id = EXCLUDED.created_by_id,
             updated_at = now()
           RETURNING id
@@ -880,13 +869,26 @@ export interface ScreenMockupSummary {
   byteSize: number;
   markerCount: number;
   updatedAt: Date;
+  /** Present only with `include=unmatched`: markers pointing at a key the project does not have. */
+  unmatchedKeys?: number;
+  /** Present only with `include=unmatched`: the codes from the report written when it was uploaded. */
+  findings?: string[];
 }
 
 /** Screens of a project, newest first, without the image bytes. */
 export async function listScreenMockups(
-  tx: Prisma.TransactionClient,
+  tx: PrismaTypes.TransactionClient,
   projectId: string,
-  filters: { platform?: PlatformName } = {},
+  /**
+   * `includeUnmatched` adds, per screen, how many of its markers point at a key the project does not
+   * have, plus the codes from the report written when it was uploaded.
+   *
+   * A caller that uploads screen after screen has no way to see the shape of what it has done — which
+   * pages are up, how many of each one's strings are still unattached, when each was last touched — and
+   * ends up keeping that ledger itself. `qa/issues` is about *translations* and never covered this.
+   * Opt-in because it costs a second query, and most reads of the list do not need it.
+   */
+  filters: { platform?: PlatformName; includeUnmatched?: boolean } = {},
 ): Promise<ScreenMockupSummary[]> {
   const rows = await tx.screenMockup.findMany({
     where: { projectId, ...(filters.platform ? { platform: filters.platform as never } : {}) },
@@ -909,7 +911,7 @@ export async function listScreenMockups(
     },
     orderBy: [{ updatedAt: 'desc' }, { name: 'asc' }],
   });
-  return rows.map((row) => ({
+  const summaries = rows.map((row) => ({
     id: row.id,
     name: row.name,
     platform: row.platform as string,
@@ -921,6 +923,41 @@ export async function listScreenMockups(
     byteSize: row.byteSize,
     markerCount: row._count.markers,
     updatedAt: row.updatedAt,
+  }));
+  if (!filters.includeUnmatched || !summaries.length) return summaries;
+
+  // One query for every screen rather than one per screen. A marker is unmatched when the project has
+  // no live key with the same (namespace, key) — the same identity `resolveScreenMarkers` matches on,
+  // so the count here and the "平台没有这个 Key" the editor shows agree by construction.
+  const counts = await tx.$queryRaw<{ mockup_id: string; unmatched: bigint }[]>`
+    SELECT m.mockup_id, count(*) AS unmatched
+    FROM screen_mockup_markers m
+    WHERE m.mockup_id = ANY(${summaries.map((summary) => summary.id)}::uuid[])
+      AND NOT EXISTS (
+        SELECT 1 FROM translation_keys k
+        JOIN namespaces n ON n.id = k.namespace_id
+        WHERE k.project_id = ${projectId}::uuid
+          AND k.key = m.key
+          AND n.name = m."namespace"
+          AND k.archived_at IS NULL
+      )
+    GROUP BY m.mockup_id
+  `;
+  const unmatchedByMockup = new Map(counts.map((row) => [row.mockup_id, Number(row.unmatched)]));
+  const findings = await tx.screenMockup.findMany({
+    where: { id: { in: summaries.map((summary) => summary.id) } },
+    select: { id: true, report: true },
+  });
+  const codesByMockup = new Map(
+    findings.map((row) => {
+      const report = row.report as unknown as { findings?: { code: string }[] } | null;
+      return [row.id, (report?.findings ?? []).map((finding) => finding.code)];
+    }),
+  );
+  return summaries.map((summary) => ({
+    ...summary,
+    unmatchedKeys: unmatchedByMockup.get(summary.id) ?? 0,
+    findings: codesByMockup.get(summary.id) ?? [],
   }));
 }
 
@@ -964,7 +1001,7 @@ export interface ResolvedMarker {
  * dialog follow the screen rather than the order the caller happened to list them in.
  */
 export async function resolveScreenMarkers(
-  tx: Prisma.TransactionClient,
+  tx: PrismaTypes.TransactionClient,
   params: { projectId: string; platform: string; markers: {
     id: string;
     key: string;

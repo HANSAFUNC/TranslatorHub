@@ -34,11 +34,14 @@ export class MockupsService {
   async list(
     actor: ActorContext,
     projectId: string,
-    filters: { platform?: PlatformName; key?: string; namespace?: string },
+    filters: { platform?: PlatformName; key?: string; namespace?: string; include?: 'unmatched' },
   ) {
     assertRole(actor, projectId, Role.READONLY);
     return this.prisma.tenant.withOrganization(actor.organizationId, async (tx) => {
-      const mockups = await listScreenMockups(tx, projectId, { platform: filters.platform });
+      const mockups = await listScreenMockups(tx, projectId, {
+        platform: filters.platform,
+        includeUnmatched: filters.include === 'unmatched',
+      });
       let containing = new Set<string>();
       if (filters.key) {
         // Matched on (namespace, key), which is what a marker actually points at. Matching the key
@@ -92,6 +95,8 @@ export class MockupsService {
           legend: true,
           // What is missing from the sketch, written when it was uploaded.
           report: true,
+          // What the caller asserted about it, so re-reading the page re-reads it under the same claim.
+          expectations: true,
           // Present only for a replica, and only to say how many states it holds: the markup itself
           // travels on its own endpoint, one frame at a time.
           document: true,
@@ -192,7 +197,10 @@ export class MockupsService {
     kind: 'image' | 'document',
   ): Promise<MockupReport> {
     const row = await this.prisma.tenant.withOrganization(actor.organizationId, (tx) =>
-      tx.screenMockup.findFirst({ where: { id: mockupId, projectId }, select: { image: true, document: true } }),
+      tx.screenMockup.findFirst({
+        where: { id: mockupId, projectId },
+        select: { image: true, document: true, expectations: true },
+      }),
     );
     if (!row) throw new LocaleHubError(ErrorCode.NOT_FOUND, `Mockup ${mockupId} not found`, 404);
     const reportMarkers = markers.map((marker) => ({
@@ -203,10 +211,23 @@ export class MockupsService {
       text: marker.text,
       missing: marker.platform === null,
     }));
+    // The declaration travels with the row, so a page re-read months later is still read under the claim
+    // its caller made — otherwise the finding it suppressed would come back on the next look.
+    const expectations = (row.expectations ?? undefined) as { noImages?: boolean } | undefined;
     if (kind === 'document') {
-      return analyzeDocument({ document: row.document as unknown as MockupDocument, markers: reportMarkers, legend });
+      return analyzeDocument({
+        document: row.document as unknown as MockupDocument,
+        markers: reportMarkers,
+        legend,
+        ...(expectations ? { expectations } : {}),
+      });
     }
-    return analyzeSketch({ svg: Buffer.from(row.image ?? new Uint8Array()).toString('utf8'), markers: reportMarkers, legend });
+    return analyzeSketch({
+      svg: Buffer.from(row.image ?? new Uint8Array()).toString('utf8'),
+      markers: reportMarkers,
+      legend,
+      ...(expectations ? { expectations } : {}),
+    });
   }
 
   /**
@@ -337,6 +358,7 @@ export class MockupsService {
         height,
         markers,
         legend,
+        ...(body.expect_no_images ? { expectations: { noImages: true } } : {}),
         replace: body.replace ?? true,
       }),
     );

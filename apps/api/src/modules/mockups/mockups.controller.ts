@@ -28,6 +28,15 @@ const listSchema = z.object({
    */
   key: z.string().max(512).optional(),
   namespace: z.string().max(255).optional(),
+  /**
+   * `?include=unmatched` adds, per screen, how many markers point at a key the project does not have
+   * and the finding codes from its report.
+   *
+   * A caller that uploads screen after screen otherwise keeps that ledger itself: which pages are up,
+   * how many strings on each are still unattached, when each was last touched. `qa/issues` is about
+   * translations and never covered the screens.
+   */
+  include: z.enum(['unmatched']).optional(),
 });
 
 const documentSchema = z.object({
@@ -98,6 +107,13 @@ const uploadSchema = z.object({
   width: z.number().int().positive().max(8192).optional(),
   height: z.number().int().positive().max(8192).optional(),
   markers: z.array(markerSchema).max(MAX_MARKERS_PER_MOCKUP).optional(),
+  /**
+   * The caller asserts this screen has no pictures at all, so `NO_PICTURES` is not a defect here.
+   *
+   * A dialog made of text and rounded corners really does have no artwork, and the finding's own advice
+   * told the caller to ignore it — but an ignored finding still counts, so `clean` was unreachable.
+   */
+  expect_no_images: z.boolean().optional(),
   replace: z.boolean().optional(),
 });
 

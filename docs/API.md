@@ -177,6 +177,16 @@ public 路由不受影响，负载均衡仍可探测。
 指向平台尚未导入的 Key 的标记会照常保存并在响应里列为 `markers.unmatched` —— 草图通常画在导入
 之前，编辑器把它显示为「平台没有这个 Key」，而不是假装那处不存在。
 
+上传时还可以带 **`expect_no_images: true`**：这一屏确实没有任何图片/图标时，报告不再报 `NO_PICTURES`。
+这个 finding 本来抓的是「素材没跟上来」，但一个只有文字和圆角的弹窗本来就该没有图——它的 advice 一直写着
+「如果确实没有图可以忽略」，而**忽略不掉的 finding 会让 `clean` 永远为 false**，调用端就没法拿「没有 findings」
+当交付判据。声明**跟着屏幕存下来**（整页的报告每次读取都重算，只活一次请求的话下一次读它又会回来），
+并且**只能消除 `NO_PICTURES`**：`ASSETS_NOT_INLINED`、`REMOTE_ASSETS`、`DRAWN_SHAPES` 照报——那些是「图没上来」，
+不是「本来没有图」。
+
+`GET /projects/:projectId/mockups?include=unmatched` 在每行上多加两个字段：`unmatchedKeys`（这个屏幕有多少个标记
+指向项目里没有的 key）与 `findings`（上传时那份报告的 code）。不加参数时列表还是原来的形状——列表不该顺手变成报告。
+
 整页复刻的响应里，`report` 读的是**那一页自己**（不是画出来的图）：`stats.keys` 是标记命中的 key 数、
 `inlineAssets`/`remoteAssets`/`localAssets` 是素材去向、`scripts` 是脚本数、`pictures` 是页面**带来**的图
 （`<img>`／`background-image`／SVG `<image>`）、`shapes` 是调用方**画**的行内 `<svg>`，findings 包括 `NO_KEYS`、

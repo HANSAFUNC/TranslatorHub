@@ -20,6 +20,23 @@
 
 import { documentAssets, framesAreCopies, markupComponents } from './mockup-document';
 
+/**
+ * What the caller asserts about the screen it is uploading.
+ *
+ * The report is the platform's reading of the artefact, and some of what it reports is a fact rather
+ * than a defect: a dialog made of text and rounded corners really does have no pictures. `NO_PICTURES`
+ * is there to catch artwork that failed to travel, and its advice already told the caller to ignore it
+ * in that case — but an ignored finding still counts, so `clean` was unreachable and could not be used
+ * as a delivery gate. A declaration is how "ignore this" becomes something a caller can say.
+ *
+ * Stored with the screen rather than applied at upload, because a page's report is recomputed on every
+ * read: the claim has to persist or the finding returns.
+ */
+export interface MockupExpectations {
+  /** The screen has no pictures at all, so their absence is not a defect here. */
+  noImages?: boolean;
+}
+
 export interface MockupFinding {
   code: FindingCode;
   severity: 'warning' | 'info';
@@ -233,6 +250,8 @@ function distinctFrames(markers: readonly ReportMarker[]): string[] {
  */
 export function analyzeSketch(input: {
   svg: string;
+  /** What the caller asserts about this screen. See `MockupExpectations`. */
+  expectations?: MockupExpectations;
   markers: readonly ReportMarker[];
   /** The component numbering the picture carries; empty means the board named no components. */
   legend?: readonly { name: string }[];
@@ -252,7 +271,10 @@ export function analyzeSketch(input: {
   const missingKeys = [...new Set(input.markers.filter((marker) => marker.missing).map((marker) => marker.key))];
   const components = input.legend?.length ?? 0;
 
-  if (pictures === 0) {
+  // Placeholders are always a defect — they mean artwork was referenced and did not resolve. Only the
+  // bare "there are no pictures here" is something a caller may assert, because only that one can be
+  // true of a screen that never had any.
+  if (pictures === 0 && (placeholders > 0 || !input.expectations?.noImages)) {
     findings.push({
       code: placeholders ? 'PLACEHOLDER_PICTURES' : 'NO_PICTURES',
       severity: 'warning',
@@ -320,6 +342,8 @@ export function analyzeDocument(input: {
   document: { frames: readonly { title: string; html: string }[] };
   markers: readonly ReportMarker[];
   legend?: readonly { name: string }[];
+  /** What the caller asserts about this page. See `MockupExpectations`. */
+  expectations?: MockupExpectations;
 }): MockupReport {
   const findings: MockupFinding[] = [];
   const assets = documentAssets({ frames: [...input.document.frames] });
@@ -357,7 +381,7 @@ export function analyzeDocument(input: {
     });
   }
 
-  if (assets.pictures === 0 && assets.shapes === 0) {
+  if (assets.pictures === 0 && assets.shapes === 0 && !input.expectations?.noImages) {
     findings.push({
       code: 'NO_PICTURES',
       severity: 'warning',

@@ -1104,6 +1104,17 @@ model ScreenMockup {
    */
   legend         Json         @default("[]")
   /**
+   * What the caller asserts about this upload, so the report stops nagging about it.
+   *
+   * `{ "noImages": true }` for a screen that genuinely has no pictures — a plain dialog, a text page.
+   * `NO_PICTURES` exists to catch artwork that failed to travel, and its own advice already said "if the
+   * page really has no images, ignore this", which left the caller unable to reach `clean` and therefore
+   * unable to use "no findings" as a delivery gate. A declaration is stored rather than applied once at
+   * upload time because a page's report is recomputed on every read: a byte the platform keeps and a
+   * *claim the caller makes* have to travel together, or the finding comes back on the next read.
+   */
+  expectations   Json?
+  /**
    * The sketch's own report: what a reader would notice is missing (no pictures, no page colours,
    * identical frames), with what to do about it.
    *

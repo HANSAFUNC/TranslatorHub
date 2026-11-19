@@ -574,6 +574,76 @@ describe('screen mockups', () => {
     expect(report.stats.shapes).toBe(1);
   }, 60_000);
 
+  it('lets a caller declare that a screen has no pictures, and keeps the declaration', async () => {
+    // The dead end a caller hit: a dialog made of text and rounded corners really does have no artwork,
+    // the finding's own advice said to ignore it, and an ignored finding still counts — so `clean` was
+    // unreachable and could not be used as a delivery gate. The declaration has to survive a re-read,
+    // because a page's report is recomputed on every read.
+    const html = `<!doctype html><html lang="en"><head><style>.dialog{background:#fff;border-radius:12px;color:#333}</style></head>
+      <body><div class="dialog" data-component="ConfirmDialog" data-key="checkout.title">Delete this file?</div></body></html>`;
+
+    const plain = await call<UploadResult>(`/projects/${projectId}/mockups`, {
+      method: 'POST',
+      token: session.token,
+      body: { name: 'no-images-plain', platform: 'web', locale: 'en-US', document: html, replace: true },
+    });
+    expect(plain.status, JSON.stringify(plain.body.error)).toBe(201);
+    const plainReport = plain.body.data!.report as { clean: boolean; findings: { code: string }[] };
+    expect(plainReport.findings.map((finding) => finding.code)).toContain('NO_PICTURES');
+    expect(plainReport.clean).toBe(false);
+
+    const declared = await call<UploadResult>(`/projects/${projectId}/mockups`, {
+      method: 'POST',
+      token: session.token,
+      body: { name: 'no-images-declared', platform: 'web', locale: 'en-US', document: html, replace: true, expect_no_images: true },
+    });
+    expect(declared.status, JSON.stringify(declared.body.error)).toBe(201);
+    const declaredReport = declared.body.data!.report as unknown as { clean: boolean; findings: { code: string }[]; stats: { pictures: number } };
+    expect(declaredReport.findings.map((finding) => finding.code)).not.toContain('NO_PICTURES');
+    expect(declaredReport.clean).toBe(true);
+    // A declaration changes the verdict, not the facts: the page still brought no pictures.
+    expect(declaredReport.stats.pictures).toBe(0);
+
+    // And it is still true on the next read, which is where a declaration kept only for one request
+    // would have let the finding come back.
+    const detail = await call<{ mockup: { report: { clean: boolean; findings: { code: string }[] } } }>(
+      `/projects/${projectId}/mockups/${declared.body.data!.mockupId}`,
+      { token: session.token },
+    );
+    expect(detail.body.data!.mockup.report.findings.map((finding) => finding.code)).not.toContain('NO_PICTURES');
+    expect(detail.body.data!.mockup.report.clean).toBe(true);
+  }, 60_000);
+
+  it('answers, for a whole project, which screens have strings nothing is attached to', async () => {
+    // What a caller uploading screen after screen otherwise keeps a ledger for: which pages are up, how
+    // many of each one's strings point at a key the project does not have, when each was last touched.
+    // `qa/issues` is about translations and never covered the screens.
+    const html = `<!doctype html><html><body><div data-component="Card">
+      <span data-key="checkout.title">Checkout</span>
+      <span data-key="not.imported.anywhere">Nothing</span></div></body></html>`;
+    const uploaded = await call<UploadResult>(`/projects/${projectId}/mockups`, {
+      method: 'POST',
+      token: session.token,
+      body: { name: 'unmatched-probe', platform: 'web', locale: 'en-US', document: html, replace: true },
+    });
+    expect(uploaded.status, JSON.stringify(uploaded.body.error)).toBe(201);
+
+    const list = await call<{ id: string; name: string; unmatchedKeys?: number; findings?: string[]; markerCount: number }[]>(
+      `/projects/${projectId}/mockups?include=unmatched`,
+      { token: session.token },
+    );
+    expect(list.status, JSON.stringify(list.body.error)).toBe(200);
+    const row = list.body.data!.find((entry) => entry.name === 'unmatched-probe')!;
+    // One of the two markers points at a key the project does not have — counted, not guessed at.
+    expect(row.markerCount).toBe(2);
+    expect(row.unmatchedKeys).toBe(1);
+    expect(Array.isArray(row.findings)).toBe(true);
+
+    // And without the flag the list stays the cheap shape it was: a list of screens, not a report.
+    const plain = await call<{ unmatchedKeys?: number }[]>(`/projects/${projectId}/mockups`, { token: session.token });
+    expect(plain.body.data!.every((entry) => entry.unmatchedKeys === undefined)).toBe(true);
+  }, 60_000);
+
   it('refuses a page with no keys to hang translations on, and says what to add', async () => {    const response = await call(`/projects/${projectId}/mockups`, {
       method: 'POST',
       token: session.token,

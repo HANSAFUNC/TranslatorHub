@@ -463,6 +463,8 @@ localehub mockup --page src/app/projects/page.tsx --name 项目列表 --confirm 
   （几帧是复制品）这三类说明还没还原到位，按 advice 改输入后**同名重传**；`clean` 或只剩
   `MISSING_KEYS` 就可以继续。MCP 的 `nextSteps` 会把 findings 的标题直接列出来，
   教程 §7 有逐条对照表。
+- **`expect_no_images: true` 是唯一一个能消除 finding 的声明。** 一屏确实没有图片（纯文字页、只有 CSS 圆角的弹窗）时传它，
+  `NO_PICTURES` 就不再出现，`clean` 因此可达。它**只管这一条**：素材没内联、地址取不到、图是手画的，照报。
 - **屏幕名是身份。** 同名同端再传一次是整体替换（图与标记一起换）。Agent 重新生成一版不该留下
   `checkout-2`、`checkout-final`；确实想并存就换个名字，或者传 `replace: false` 让平台报冲突。
 - **标记按 key + namespace 匹配，不按端。** 一个界面只画一次，`platform` 是这张图的标签。同一 key

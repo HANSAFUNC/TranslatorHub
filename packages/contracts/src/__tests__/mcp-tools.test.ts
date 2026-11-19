@@ -61,6 +61,9 @@ describe('the Remote MCP tool registry', () => {
       // caller learns that scripts travel but do not run — and that positions are measured by the
       // browser, so there are no coordinates to hand in.
       'document',
+      // The one declaration a caller can make about its own screen, so a page that truly has no
+      // artwork can still reach `clean` and be used as a delivery gate.
+      'expect_no_images',
       'frames',
       'height',
       'html',

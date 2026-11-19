@@ -568,6 +568,65 @@ describe('what the caller reported from the field', () => {
   });
 });
 
+
+/**
+ * What the caller asserts about its own upload.
+ *
+ * `NO_PICTURES` exists to catch artwork that failed to travel. For a screen made of text and CSS it is
+ * noise that can never be cleared, because it fires on a fact that is simply true — and its own advice
+ * said "if the page really has no images, ignore this", which is not something a delivery gate can act
+ * on. A declaration turns "ignore this" into something a caller can say, so `clean` means what it says.
+ */
+describe('what the caller declares about a screen', () => {
+  const textPage: Parameters<typeof analyzeDocument>[0] = {
+    document: {
+      frames: [
+        {
+          title: '默认',
+          html: '<html><head><style>.dialog{background:#fff;border-radius:12px;color:#333}</style></head><body><div class="dialog" data-component="ConfirmDialog" data-key="policy.view">确认删除？</div></body></html>',
+        },
+      ],
+    },
+    markers: [{ key: 'policy.view', text: '确认删除？', component: 'dialog' }],
+    legend: [{ name: 'dialog' }],
+  };
+
+  it('stops reporting no pictures once the caller says there are none', () => {
+    expect(analyzeDocument(textPage).findings.map((entry) => entry.code)).toContain('NO_PICTURES');
+    const declared = analyzeDocument({ ...textPage, expectations: { noImages: true } });
+    expect(declared.findings.map((entry) => entry.code)).not.toContain('NO_PICTURES');
+    // The gate the finding was blocking: "no findings" now means the caller is done.
+    expect(declared.clean).toBe(true);
+    // The counts still tell the truth about what arrived — a declaration changes the verdict, not the facts.
+    expect(declared.stats.pictures).toBe(0);
+  });
+
+  it('does not let the declaration hide a picture that failed to arrive', () => {
+    // The one thing a declaration must not do. A screen that names artwork nobody can resolve is not
+    // "a screen with no pictures", and saying so must not silence the finding that says it.
+    const broken = analyzeDocument({
+      document: {
+        frames: [
+          {
+            title: '默认',
+            html: '<html><body><img src="./logo.png" data-key="a"><img src="https://cdn.example.com/a.png" data-key="b"></body></html>',
+          },
+        ],
+      },
+      markers: [
+        { key: 'a', text: '', component: 'card' },
+        { key: 'b', text: '', component: 'card' },
+      ],
+      legend: [{ name: 'card' }],
+      expectations: { noImages: true },
+    });
+    const codes = broken.findings.map((entry) => entry.code);
+    expect(codes).toContain('ASSETS_NOT_INLINED');
+    expect(codes).toContain('REMOTE_ASSETS');
+    expect(broken.clean).toBe(false);
+  });
+});
+
 describe('reading a page', () => {
   it('takes keys from every attribute a caller might have used, with the namespace they declare', () => {
     const document = normalizeDocument({

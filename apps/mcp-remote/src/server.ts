@@ -932,6 +932,8 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
         note?: string;
       }[];
       replace: boolean;
+      /** The caller asserts the screen has no pictures at all. */
+      expect_no_images?: boolean;
     }) => {
       assertRole(actor, input.project_id, Role.DEVELOPER);
       assertProjectBound(actor, input.project_id);
@@ -974,6 +976,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
           // means the domain function always receives the shape its type declares.
           markers: resolvedMarkers,
           legend,
+          ...(input.expect_no_images ? { expectations: { noImages: true } } : {}),
           replace: input.replace,
         }),
       );

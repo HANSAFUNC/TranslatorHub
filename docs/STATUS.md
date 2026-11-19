@@ -1803,6 +1803,38 @@ app.bypass_rls` + 检查影响行数，否则 arrange 静默不生效、测试�
 **没做的（属产品决策，见 §1.53 后续）**：`NO_PICTURES` 让「确实没有图的页面」永远不 clean（需要请求级声明，
 要加列 + 迁移）；参考截图比对（9.3）；草图侧的按页面总览视图（10）。
 
+### 1.54 反馈文档剩下的三条：可声明的 NO_PICTURES、本地总览、以及 9.3 的取舍
+
+§1.53 修完 P0 四条后，反馈文档还剩三条要定形状。用户说「做」，于是把不需要额外决策的两条做完。
+
+**⑤ `expect_no_images`：让「确实没有图的页面」能 clean。** 这条的死结是：`NO_PICTURES` 的 advice 自己写着
+「如果确实没有图，这条可以忽略」，可**忽略不掉的 finding 会让 `clean` 永远为 false**——调用端就没法拿
+「没有 findings」当交付判据。做法是给调用端一个**能说的话**：
+
+- `packages/database`：`screen_mockups` 新增 `expectations jsonb`（迁移 `20261119000000_mockup_expectations`）。
+  **必须落库**，因为整页的报告每次读取都重算（§1.50）——声明只活一次请求的话，下一次读 finding 又会回来。
+- `contracts`：`MockupExpectations { noImages?: boolean }`，`analyzeDocument` / `analyzeSketch` 都收；
+  只压制 `NO_PICTURES`。重画那条路的 `PLACEHOLDER_PICTURES` **不受影响**——占位框意味着"图被引用了但没解析出来"，
+  那不是"本来没有图"，声明不该掩盖它。测试里专门钉了这一条（`does not let the declaration hide a picture that
+  failed to arrive`）。
+- 线：API `expect_no_images` → domain 落库 → MCP zod/描述 → 详情读取时把存下来的声明再喂给分析器。
+- **统计不撒谎**：`stats.pictures` 照样是 0。声明改的是判决，不是事实。
+
+**⑩ `GET /projects/:projectId/mockups?include=unmatched`：草图侧的总览。** 一行多两个字段：`unmatchedKeys`
+（该屏有多少标记指向项目里没有的 key）与 `findings`（上传时报告的 code）。前者用**一条** SQL 算（不是每屏一次）：
+`NOT EXISTS (… translation_keys k JOIN namespaces n ON n.id=k.namespace_id WHERE k.project_id=… AND k.key=m.key
+AND n.name=m."namespace" AND k.archived_at IS NULL)` —— **与 `resolveScreenMarkers` 同一套身份**（namespace+key），
+所以这个计数和编辑器里那句「平台没有这个 Key」按构造就是一致的。不加参数时列表形状不变。
+
+**⑨.3 参考截图比对：仍然需要先定 (A)/(B)。** 反馈里的现场案例（子组件当成页面级元素、底部固定卡 166 vs 真实 238、
+列表起点 103 vs 真实 91）与我在 §1.52 查到的结论是同一件事：**S1–S10 验「自洽」，验不了「像不像」**。
+要真验必须有参照渲染，那就是还挂着的问题：接受天花板，还是让上传方产出真实渲染 + 元素 frame 做比对。
+两条独立路径得出同一结论，这条建议正面做决定；在此之前它不会被"再改几句指引"解决。
+
+**验证**：446 单元（新增 2 条声明用例）/ 174 集成（新增 2 条：声明经过 API 落库并在重读后仍然生效；
+`?include=unmatched` 在真数据上数出 1 条未匹配、不加参数时字段不存在）/ typecheck / lint 全绿；
+镜像已重建并验证容器内是新代码。
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

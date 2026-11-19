@@ -403,6 +403,17 @@ export const remoteToolSchemas = {
           'markers[].text 填图里显示的文字，编辑器可以据此提示「草图与平台原文不一致」。' +
           '**传 ui 时不要传 markers**——平台会自己算，传了也不采用。',
       ),
+    expect_no_images: z
+      .boolean()
+      .optional()
+      .describe(
+        '这一屏确实没有任何图片/图标时传 true，报告就不再报 NO_PICTURES。' +
+          '这个 finding 本来是抓「素材没跟上来」的，但一个只有文字和圆角的弹窗本来就该没有图——' +
+          '它的 advice 一直写着「如果确实没有图可以忽略」，而忽略不掉的 finding 会让 `clean` 永远为 false，' +
+          '调用端就没法拿「没有 findings」当交付判据。声明会跟着屏幕存下来（整页的报告每次读取都重算，' +
+          '声明只活一次请求的话，下一次读它又会回来）。**它只能消除 NO_PICTURES**，' +
+          '素材没内联、地址取不到这类真问题照报。',
+      ),
     replace: z
       .boolean()
       .default(true)
