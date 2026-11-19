@@ -169,12 +169,27 @@ Scope 强制、源文变更致 STALE、apply report 推进基线。
 ## 部署
 
 ```bash
-docker compose up -d --build          # 开发/演示
-docker compose -f compose.yaml -f compose.production.yaml up -d   # 生产（需 ./secrets/*）
-docker compose run --rm api pnpm prisma migrate deploy
+docker compose --env-file localehub.env up -d --build          # 开发/演示
+docker compose --env-file localehub.env -f compose.yaml -f compose.production.yaml up -d   # 生产（需 ./secrets/*）
+docker compose --env-file localehub.env run --rm api pnpm prisma migrate deploy
 ```
 
-详见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
+**`--env-file localehub.env` 不是可选的**：compose 默认只读 `.env`，而本仓库的工作区禁止读写 `.env*`，
+模板因此叫 `env.example`、你复制出来的是 `localehub.env`。不加这个参数，`CORS_ORIGINS` / `AUTH_SECRET`
+这些全部退回 compose 里的默认值，你改过的配置**看起来生效了、其实没进容器**。
+
+**让局域网里别的机器能登录**：默认只允许 `http://localhost:3000`，别人用 `http://192.168.x.x:3000`
+打开时登录会以 `403 CSRF_VERIFICATION_FAILED`（`Origin … is not allowed to call this API`）失败——
+请求根本没执行，登录按钮看着像没反应。把自己的地址加进去（逗号分隔，多个都列上）：
+
+```bash
+# localehub.env
+CORS_ORIGINS=http://localhost:3000,http://192.168.200.172:3000
+```
+
+这是 CORS 与 CSRF 守卫**共用的**同一份白名单（`@localehub/config` 的 `corsOrigins()`），所以改一处两边都生效；
+写错地址的表现就是上面那个 403，不会静默放行。详见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#让局域网里别的机器登录要加-cors_origins)。
+
 
 ## 文档
 
