@@ -13,7 +13,6 @@ import { writeFileSync } from 'node:fs';
 
 const CDP = 'http://127.0.0.1:9382';
 const WEB = process.env.WEB ?? 'http://localhost:3000';
-const API = 'http://localhost:3001/api/v1';
 const MARK = Date.now().toString(36);
 
 const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -26,7 +25,12 @@ await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
 let id = 0; const pending = new Map();
 ws.addEventListener('message', (e) => {
   const m = JSON.parse(e.data);
-  if (m.id && pending.has(m.id)) { const p = pending.get(m.id); pending.delete(m.id); m.error ? p.reject(new Error(JSON.stringify(m.error))) : p.resolve(m.result); }
+  if (m.id && pending.has(m.id)) {
+    const p = pending.get(m.id);
+    pending.delete(m.id);
+    if (m.error) p.reject(new Error(JSON.stringify(m.error)));
+    else p.resolve(m.result);
+  }
 });
 const send = (method, params = {}) => new Promise((resolve, reject) => { const i = ++id; pending.set(i, { resolve, reject }); ws.send(JSON.stringify({ id: i, method, params })); });
 const evaluate = async (expression) => {
