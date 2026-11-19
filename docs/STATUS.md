@@ -1864,6 +1864,32 @@ SAVED IN PLACE       : true
 
 446 单元 / typecheck / lint 全绿；web 镜像已重建（分层构建）并确认 bundle 里带 `data-marker-edit`。
 
+### 1.56 传整个 App 之前，先把「从启动到每一屏」的关系摸清
+
+用户说：「引导要加提示词 对方获取启动开始到会触发的页面的所有关系 然后再去提交」。这是 §1.53/§1.54 之后
+上传方暴露出来的真正短板：**一屏单独看只能回答「这句话在这一屏的哪里」**；只有整套屏都在，译者才能顺着
+「启动 → 首页 → 点去学习 → 上课页」一路找下去。而随机传几屏的结果是——没人知道少了什么，而「少了什么」
+正是译者真正要问的问题。
+
+新增 MCP 提示词 **`map-app-screens`**（`remoteScreenMapPrompt`），这是 `upload-screen-sketch` **之前**的一步：
+
+1. 读导航源码，找到**启动那一屏**以及从它出发能到的每一屏和打开它的动作。提示词逐栈点名了导航在哪：
+   iOS storyboard 的 `initialViewController`/`<segue>`、SwiftUI 的 `NavigationStack`/`NavigationLink`/`.sheet`、
+   UIKit 的 `pushViewController`/`present`、Android 的 `LAUNCHER` activity 与 `res/navigation/*.xml`（nav_graph）
+   的 `<action>`/`<deepLink>`、Flutter 的 `home`/`routes`/`onGenerateRoute`、RN 的 `react-navigation`、Web 的路由表。
+   并提醒非按钮入口：tab、返回、深链、通知、**启动后自动跳转**。
+2. **先列表、先不要传**：「从哪一屏 / 触发什么 / 到哪一屏 / 上传时用的屏幕名」，一屏多入口写多行，到不了的屏不写，
+   拿不准的单独问。
+3. 调用方确认后再按表里的顺序一屏一屏传（屏幕名用页面名，状态作为多帧）。
+4. 把表写进仓库的 `.localehub/mockups/flow.md` 一起提交——复核的人要能看出「这一屏是从哪来的、点哪里进的」。
+
+教程同时新增 **§12**（同样的内容 + 一张逐栈对照表），`upload-screen-sketch` 第 0 步指向它（只在传整个 App 时走）。
+
+**验证**：实时 MCP 检查新增 7 条断言（提示词已注册、参数渲染、逐栈点名导航位置、先要表后上传、
+`从哪一屏`/`到哪一屏`、教程指向它、教程写明 flow.md 去处），**47 项全过**；447 单元（新增 1 条）。
+其中「逐栈点名导航位置」第一次是**失败**的——我漏了 Android 的实际文件名，检查当场抓住，补成
+`res/navigation/*.xml`（nav_graph）后才过。
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

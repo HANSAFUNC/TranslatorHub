@@ -33,6 +33,7 @@ import {
   REMOTE_MCP_SKETCH_GUIDE,
   REMOTE_MCP_TOOL_SCOPES,
   remoteImportPrompt,
+  remoteScreenMapPrompt,
   remoteSketchPrompt,
   resolveLocaleTag,
   type RemoteMcpTool,
@@ -1138,6 +1139,29 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
     },
     (args: { focus?: string; projectId?: string; localesDir?: string }) => ({
       messages: [{ role: 'user', content: { type: 'text', text: remoteImportPrompt(args ?? {}) } }],
+    }),
+  );
+
+  /**
+   * The step before the upload: know the app's whole navigation, then draw.
+   *
+   * Registered as its own prompt because it is a different job with a different deliverable — a table of
+   * screens and the actions that reach them — and because an agent asked to "upload this screen" will
+   * never discover on its own that the useful question is "which screens are there at all".
+   */
+  registerPrompt(
+    'map-app-screens',
+    {
+      title: 'Map the app’s screens before uploading',
+      description:
+        '从启动开始摸清每一屏和进入它的触发点，列成表确认后再一屏一屏传（先读导航源码：storyboard segue / NavigationStack / nav_graph / 路由表）',
+      argsSchema: {
+        projectId: z.string().optional().describe('目标项目 id；省略则先调 list_projects'),
+        app: z.string().optional().describe('要摸清的项目/App，例如 ios/ 或高研院 App'),
+      },
+    },
+    (args: { projectId?: string; app?: string }) => ({
+      messages: [{ role: 'user', content: { type: 'text', text: remoteScreenMapPrompt(args ?? {}) } }],
     }),
   );
 

@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import { FINDING_CODES, analyzeDocument, analyzeSketch } from '../mockup-report';
 import { documentAssets, documentMarkers, isFullDocument, normalizeDocument } from '../mockup-document';
-import { REMOTE_MCP_IMPORT_GUIDE, REMOTE_MCP_SKETCH_GUIDE, remoteSketchPrompt } from '../mcp-guide';
+import {
+  REMOTE_MCP_IMPORT_GUIDE,
+  REMOTE_MCP_SKETCH_GUIDE,
+  remoteScreenMapPrompt,
+  remoteSketchPrompt,
+} from '../mcp-guide';
 
 /**
  * The guidance a sketch comes back with.
@@ -296,6 +301,24 @@ describe('telling the uploader where the layout and the assets come from', () =>
     // read as permission to hand-write a wireframe.
     expect(prompt).not.toContain('平台只解析、不渲染');
     expect(prompt).not.toContain('三种输入选一种');
+  });
+
+  it('asks for the whole app before a single screen, and says where the navigation lives', () => {
+    // A screen on its own answers "where does this string live" only for the strings that happen to be
+    // on it. The map is what turns "a few screens" into "the app's screens" — and it is a different job,
+    // so it is a different prompt rather than a paragraph inside the upload one.
+    const prompt = remoteScreenMapPrompt({ projectId: 'p', app: '高研院 App' });
+    expect(prompt).toContain('高研院 App');
+    // Per stack: an agent that has the app in front of it needs to know where *its* navigation is.
+    for (const cue of ['segue', 'NavigationStack', 'nav_graph', 'routes', 'react-navigation']) {
+      expect(prompt, cue).toContain(cue);
+    }
+    // The table comes first and the upload second: the order is the whole point of the prompt.
+    expect(prompt.indexOf('先不要传')).toBeGreaterThan(-1);
+    expect(prompt).toContain('从哪一屏');
+    expect(prompt).toContain('到哪一屏');
+    expect(prompt).toContain('flow.md');
+    expect(REMOTE_MCP_SKETCH_GUIDE).toContain('map-app-screens');
   });
 
   it('does not send an agent down the redraw path in the guide it reads first', () => {

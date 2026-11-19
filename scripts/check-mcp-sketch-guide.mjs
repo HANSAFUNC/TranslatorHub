@@ -141,6 +141,21 @@ check(
   'the prompt makes the pre-upload self-check a step',
 );
 check(promptText.includes('CLIPPED_BOX') && promptText.includes('FLOW_LAYOUT'), 'the prompt names the findings that gate an upload');
+// Mapping the app before drawing it: the step that turns "a few screens" into "the app's screens". It
+// has to be reachable as its own prompt, name where each stack keeps its navigation, and ask for the
+// table *before* the upload rather than describing it afterwards.
+check(prompts.includes('map-app-screens'), 'the map-first prompt is registered', prompts.join(', '));
+const mapPrompt = await client.getPrompt({ name: 'map-app-screens', arguments: { projectId: 'demo', app: 'High Research App' } });
+const mapText = String(mapPrompt.messages[0]?.content?.text ?? '');
+check(mapText.includes('High Research App') && mapText.includes('project_id=demo'), 'the map prompt renders its arguments');
+check(
+  ['segue', 'NavigationStack', 'nav_graph', 'routes', 'react-navigation'].every((cue) => mapText.includes(cue)),
+  'the map prompt says, per stack, where the navigation lives',
+);
+check(mapText.includes('先不要传') || mapText.includes('先别传'), 'the map prompt asks for the table before uploading');
+check(mapText.includes('从哪一屏') && mapText.includes('到哪一屏'), 'the prompt asks for the from/to table');
+check(guideText.includes('map-app-screens'), 'the guide points at the map-first prompt');
+check(guideText.includes('flow.md'), 'the guide says where the map is kept');
 // The prompt used to say "平台只解析、不渲染" and offer three inputs with no `document` — which is what
 // an uploading agent read as permission to hand-write a wireframe.
 check(promptText.includes('document'), 'the prompt routes the agent to the replica path');

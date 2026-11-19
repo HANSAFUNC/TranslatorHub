@@ -604,6 +604,40 @@ FAIL
 
 warning 级的 finding 会让它失败（info 不会），所以可以在提交前、CI 里卡住「本地过、平台不过」；
 传上去之后平台的 \`report\` 是同一份结果，两次不会不一致。
+
+## 12. 要传整个 App：先把流程摸清，再动手传
+
+**一屏单独看，只能回答「这句话在这一屏的哪里」。要回答「这句话在 App 的哪里」，得让译者能顺着
+「启动 → 首页 → 点去学习 → 上课页」一路找下去。** 所以传整套界面之前先做这一步——它有自己的提示词
+\`map-app-screens\`（MCP 里可调用），做完了再一屏一屏传。
+
+1. **找到启动那一屏**，以及从它出发能到的**每一屏**和**打开它的那个动作**。导航在哪：
+
+   | 技术栈 | 启动与跳转的写法 |
+   | --- | --- |
+   | iOS（storyboard） | \`initialViewController\`、每个 \`<segue>\`（\`identifier\` 就是触发点） |
+   | iOS（SwiftUI） | \`WindowGroup\` / \`NavigationStack\` / \`NavigationLink\` / \`.sheet\` / \`.fullScreenCover\` |
+   | iOS（UIKit 代码） | \`pushViewController\` / \`present\` |
+   | Android | \`AndroidManifest.xml\` 里 \`LAUNCHER\` 那个 activity、navigation 图的 \`<action>\`/\`<deepLink>\`、\`startActivity\` |
+   | Flutter | \`MaterialApp\` 的 \`home\`/\`routes\`/\`onGenerateRoute\`、\`Navigator.push\`、GoRouter 的 \`routes\` |
+   | React Native | react-navigation 的 \`Navigator\`/\`Screen\` 与 \`navigate(...)\` |
+   | Web | 路由表与 \`<Link>\` / \`router.push\` |
+
+   别忘了非按钮的入口：tab、返回、深链、通知，以及**启动后自动跳转**的那一屏。
+2. **列成一张表，先别传**，报给调用方确认：
+
+   | 从哪一屏 | 触发什么 | 到哪一屏 | 上传时用的屏幕名 |
+   | --- | --- | --- | --- |
+   | 启动页 | 自动（已登录 3 秒后） | 首页 | 启动页 |
+   | 首页 | 点「去学习」 | 上课页 | 上课页 |
+
+   一屏多个入口就写多行；到不了的屏不写；拿不准的单列出来问。
+3. 确认后**按表里的顺序**一屏一屏传，屏幕名用页面名（不用版本号），同一屏的状态作为多帧。
+4. 把这张表写进仓库的 \`.localehub/mockups/flow.md\` 一起提交——复核的人要能看出「这一屏是从哪来的」。
+
+**为什么值得多花这一步**：随手传几屏，谁都不知道少了什么；而「少了什么」正是译者真正要问的问题。
+一张确认过的流程表，是把「传了几个界面」变成「这个 App 的界面都在这里」的唯一办法。
+
 `;
 
 /**
@@ -621,6 +655,8 @@ export function remoteSketchPrompt(args: { projectId?: string; page?: string } =
     '**交付标准 S1–S10 是硬性的，逐条对照；不满足就不要传。** 完整版在 localehub://screen-sketch-guide 的 §9。',
     '',
     '按这个顺序做，不要跳步：',
+    '0. **要传的是整个 App 而不只是这一屏时，先做 map-app-screens**：从启动开始把每一屏和进入它的触发点列成表，',
+    '   我确认之后再一屏一屏传。随手传几屏的结果是没人知道少了什么。（只传这一屏就直接走第 1 步。）',
     '1. 读 localehub://screen-sketch-guide。§9 是交付标准（每条后面括号里是平台用来判定它的 finding），§7 是 finding 对照表。',
     '2. 能跑命令就用：localehub mockup --page <页面文件> --name <屏幕名> 先生成预览，把「哪些字符串变成了标记、用了哪些颜色」报给我确认，再加 --confirm 上传。',
     '3. 不能跑命令，就交那一屏**真实的 HTML**：upload_screen_mockup 传 document（整页，平台不重画，编辑器照浏览器的方式渲染）。',
@@ -646,6 +682,60 @@ export function remoteSketchPrompt(args: { projectId?: string; page?: string } =
     '   clean 或只剩 MISSING_KEYS 就可以收工。',
     '',
     '注意：upload_screen_mockup 没有 dry run，同名屏幕会被整体替换（含旧标记），上传前把屏幕名与端再确认一遍。',
+  ].join('\n');
+}
+
+/**
+ * The prompt body for mapping an app before uploading it.
+ *
+ * A screen on its own answers "where does this string live" for the strings that happen to be on it. A
+ * *set* of screens only answers it if the set is the app: the reader has to be able to follow 启动 → 首页
+ * → 点击去学习 → 上课页 and find every string on the way, which means the uploader has to know the
+ * navigation before it starts drawing. Uploading whichever screens it happened to open gives a handful
+ * of screens with no way to tell what is missing — and "what is missing" is the question a translator
+ * actually has.
+ *
+ * So this prompt is the step before `upload-screen-sketch`: walk the app's own navigation, from the
+ * launch screen, and write down every screen it can reach and what opens it. Then upload them in that
+ * order, with that table.
+ */
+export function remoteScreenMapPrompt(args: { projectId?: string; app?: string } = {}): string {
+  const project = args.projectId ? `project_id=${args.projectId}` : '先调 list_projects 拿到 project_id';
+  const app = args.app ?? '这个 App';
+  return [
+    `先摸清 ${app} 的界面全貌（从启动到每一屏、以及它们之间怎么走），再把界面传到 LocaleHub（${project}）。`,
+    '',
+    '**不要先传几屏再说。** 一屏单独看只能回答「这句话在这一屏的哪里」；只有整套屏都上来了，译者才能顺着',
+    '「启动 → 首页 → 点去学习 → 上课页」一路找下去。随手传几屏的结果是：没人知道少了什么，而「少了什么」',
+    '正是译者真正要问的问题。',
+    '',
+    '按这个顺序做，不要跳步：',
+    '1. 读导航源码，找到**启动的那一屏**，以及从它出发能到的**每一屏**和**打开它的那个动作**：',
+    '   · iOS：Main storyboard 的 `initialViewController` 与每个 `<segue>`（`identifier` 就是触发点）；',
+    '     SwiftUI 的 `WindowGroup` / `NavigationStack` / `NavigationLink` / `.sheet` / `.fullScreenCover`；',
+    '     UIKit 代码里的 `pushViewController` / `present`。',
+    '   · Android：`AndroidManifest.xml` 里 `LAUNCHER` 那个 activity、`res/navigation/*.xml`（nav_graph）的 `<action>` 与 `<deepLink>`、',
+    '     `startActivity` / `Intent`。',
+    '   · Flutter：`MaterialApp` 的 `home` / `routes` / `onGenerateRoute`、`Navigator.push`、GoRouter 的 `routes`。',
+    '   · React Native：react-navigation 的 `Navigator`/`Screen` 与 `navigate(...)`。',
+    '   · Web：路由表与 `<Link>` / `router.push`。',
+    '   还要算上非按钮的入口：tab、返回、深链、通知、以及**启动后自动跳转**的那些。',
+    '2. 把结果列成一张表报给我确认，**先不要传**：',
+    '',
+    '   | 从哪一屏 | 触发什么（按钮/手势/自动/深链） | 到哪一屏 | 上传时用的屏幕名 |',
+    '   | --- | --- | --- | --- |',
+    '   | 启动页 | 自动（已登录 3 秒后） | 首页 | `启动页` |',
+    '   | 首页 | 点「去学习」 | 上课页 | `上课页` |',
+    '',
+    '   一屏有多个入口就写多行。**到不了的屏不要写**（除非我明确要传它）；拿不准的单独列出来问我。',
+    '3. 我确认这张表之后，**按表里的顺序**一屏一屏传：每屏一个 `name`（用页面名，不要版本号），',
+    '   用 `upload_screen_mockup` 传 `document`；同一屏的不同状态（空 / 加载中 / 失败 / 已结课）作为两帧。',
+    '   怎么写出那一屏的真实 HTML、素材和布局从工程哪里读，见 localehub://screen-sketch-guide 的 §9。',
+    '4. 把这张表写进仓库的 `.localehub/mockups/flow.md` 一起提交：复核的人要能看出「这一屏是从哪来的、',
+    '   点哪里进的」。只用 MCP 的话，把表贴回给我，我放进仓库。',
+    '5. 全部传完，把每屏 report 里的 findings 汇总报我（哪些屏还没达到「看得出是哪个页面」）。',
+    '',
+    '注意：`upload_screen_mockup` 没有 dry run，同名屏幕会被整体替换（含旧标记）。',
   ].join('\n');
 }
 
