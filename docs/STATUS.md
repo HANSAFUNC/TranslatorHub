@@ -1835,6 +1835,35 @@ AND n.name=m."namespace" AND k.archived_at IS NULL)` —— **与 `resolveScreen
 `?include=unmatched` 在真数据上数出 1 条未匹配、不加参数时字段不存在）/ typecheck / lint 全绿；
 镜像已重建并验证容器内是新代码。
 
+### 1.55 草图上就地改译文：右侧不再只有「在编辑器中打开」
+
+用户说：「右边的打开编辑器按钮跳页了 不方便 应该要在本页面编辑」。原来每一行的操作只有
+「在编辑器中打开」——点下去弹窗关掉、跳到翻译编辑器、落到那条条目上。可读者此刻正看着**那个界面、那句话、
+周围的上下文**，跳走丢掉的恰恰是他打开这个视图的理由。
+
+改动（`screen-mockup-dialog.tsx`，编辑器弹窗与将来的草图页共用同一份）：
+
+- 每行的**主操作改成「编辑」**：就在行内把值显示换成 `Textarea`，`保存 / 取消`，`⌘/Ctrl+Enter` 保存、`Esc` 取消。
+- 保存走的是**编辑器自己那条路**：`POST /projects/:id/translations/:entryId/draft`（同一个端点、同一套 revision 校验、
+  同一套审核流程），所以在这里写的草稿和在编辑器里写的是同一种东西——没有第二条路径，也就没有第二套规则。
+  保存后重新拉详情，状态徽标（DRAFT 等）跟着更新。
+- **「在编辑器中打开」保留为次级按钮**（ghost），不再是唯一出路：要审、要提交、要看版本时它仍然有用。
+- 失败**显示在那一行上**（通常是角色不够，API 403）：比起「什么都没发生」，说清楚是更好的结果。
+- 客户端不做权限门（编辑器页面本来也不做），API 是权威。
+
+**验证**：`scripts/check-inline-edit.mjs` 在真实浏览器里跑完整流程——在真项目（高研院iOS）里临时传一屏、
+取一条**真译文**、点编辑、改值、保存，然后断言三件事：**URL 没变（没有跳页）**、行上的值变了、平台上读回来就是新值；
+最后把原值写回、删掉临时草图（脚本自己报 `value restored = true | probe screens removed = 1`）。实测输出：
+
+```
+editor took focus in the box: true
+URL after saving     : unchanged (no navigation)
+value on the platform: "就地编辑 mwn8044j"
+SAVED IN PLACE       : true
+```
+
+446 单元 / typecheck / lint 全绿；web 镜像已重建（分层构建）并确认 bundle 里带 `data-marker-edit`。
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

@@ -9,11 +9,12 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { EmptyState } from '@/components/empty-state';
 import { ErrorAlert } from '@/components/error-alert';
 import { StatusBadge } from '@/components/status-badge';
 import { useAsync, timeAgo } from '@/components/use-async';
-import { API_BASE, fetchObjectUrl, get, type MockupDetail, type MockupMarker, type MockupSummary } from '@/lib/api';
+import { API_BASE, fetchObjectUrl, get, post, type MockupDetail, type MockupMarker, type MockupSummary } from '@/lib/api';
 import { localeDisplayName } from '@localehub/contracts/locale';
 import { cn } from '@/lib/utils';
 
@@ -192,6 +193,7 @@ export function ScreenMockupDialog({
     data: detail,
     error: detailError,
     loading: detailLoading,
+    reload: reloadDetail,
   } = useAsync(
     () =>
       open && mockupId
@@ -207,6 +209,22 @@ export function ScreenMockupDialog({
   );
 
   const markers = useMemo(() => detail?.markers ?? [], [detail]);
+
+  /**
+   * Save a translation from the screen it belongs to.
+   *
+   * The reader is looking at the page, at the string, with the surrounding context in front of them —
+   * sending them to the editor to type the value loses exactly the thing that made them open this. The
+   * call is the editor's own (`POST /translations/:id/draft`), so a draft written here and a draft
+   * written there are the same draft: same endpoint, same revision check, same review workflow.
+   */
+  const saveMarkerValue = useCallback(
+    async (entryId: string, value: string): Promise<void> => {
+      await post(`/projects/${projectId}/translations/${entryId}/draft`, { value });
+      await reloadDetail();
+    },
+    [projectId, reloadDetail],
+  );
 
   /**
    * The replica's frame, and what the browser measured inside it.
@@ -751,6 +769,7 @@ export function ScreenMockupDialog({
                         onHighlight={setHighlight}
                         onSelect={() => select(markerKey(marker))}
                         onOpenInEditor={onOpenInEditor}
+                        onSave={saveMarkerValue}
                         register={(node) => {
                           if (node) rowRefs.current.set(markerKey(marker), node);
                           else rowRefs.current.delete(markerKey(marker));
@@ -779,6 +798,7 @@ function MarkerRow({
   onHighlight,
   onSelect,
   onOpenInEditor,
+  onSave,
   register,
 }: {
   index: number;
@@ -794,12 +814,39 @@ function MarkerRow({
   onHighlight: (highlight: { kind: 'frame' | 'component'; value: string }) => void;
   onSelect: () => void;
   onOpenInEditor: (entry: { entryId: string; value: string }) => void;
+  /** Write this entry's draft. The editor's own call, so the two cannot disagree. */
+  onSave: (entryId: string, value: string) => Promise<void>;
   register: (node: HTMLElement | null) => void;
 }) {
   // `platform === null` is the marker's "this key is not in the project" signal, from the domain's
   // resolution. `source === null` is not the same thing: a key imported only under a non-source
   // locale has a key row and an entry but no SourceVersion, and calling that "平台没有这个 Key" told a
   // reviewer to import a key the editor already lists.
+  // Editing happens here rather than somewhere else, so the state lives here: one row, one draft.
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const cancelEdit = (): void => {
+    setEditing(false);
+    setSaveError(null);
+  };
+  const save = async (): Promise<void> => {
+    if (!marker.entry) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await onSave(marker.entry.entryId, draft);
+      setEditing(false);
+    } catch (error) {
+      // Shown in the row, next to the box that caused it. A refusal here is usually a role the reader
+      // does not have, and "nothing happened" is the one thing that would be worse than saying so.
+      setSaveError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const missingKey = marker.platform === null;
   const untranslated = !missingKey && (!marker.entry || !marker.entry.value);
   // The sketch is drawn in its own language (`mockup.locale`), which is often — but not always — the
@@ -888,28 +935,76 @@ function MarkerRow({
             <div className="text-muted-foreground mt-1 text-xs">草图里写的是「{marker.text}」，与平台原文不一致</div>
           ) : null}
 
-          <div className="mt-2 flex items-center gap-2">
-            {marker.entry ? (
-              <Button
-                type="button"
-                variant={active ? 'default' : 'outline'}
-                size="sm"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onOpenInEditor({ entryId: marker.entry!.entryId, value: marker.entry!.value });
+          {editing ? (
+            /* Editing in place, rather than sending the reader to the editor and losing the screen
+               they were looking at. The save is the same call the editor makes
+               (`POST /translations/:id/draft`), so a value written here is the same draft a value
+               written there is — no second path, no second set of rules. */
+            <div className="mt-2 flex flex-col gap-2" onClick={(event) => event.stopPropagation()}>
+              <Textarea
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') cancelEdit();
+                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) void save();
                 }}
-              >
-                <Pencil data-icon="inline-start" />
-                在编辑器中打开
-              </Button>
-            ) : (
-              <span className="text-muted-foreground flex items-center gap-1 text-xs">
-                <ExternalLink className="size-3" />
-                导入该 Key 后即可编辑
-              </span>
-            )}
-            {marker.note ? <span className="text-muted-foreground truncate text-xs">{marker.note}</span> : null}
-          </div>
+                rows={2}
+                autoFocus
+                aria-label={`${marker.key} 的译文`}
+                data-marker-editor={markerKey(marker)}
+                className="text-sm"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" size="sm" disabled={saving || draft === (marker.entry?.value ?? '')} onClick={() => void save()}>
+                  {saving ? '保存中…' : '保存'}
+                </Button>
+                <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={cancelEdit}>
+                  取消
+                </Button>
+                {saveError ? <span className="text-destructive text-xs">{saveError}</span> : null}
+                <span className="text-muted-foreground text-xs">⌘/Ctrl + Enter 保存，Esc 取消</span>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {marker.entry ? (
+                <Button
+                  type="button"
+                  variant={active ? 'default' : 'outline'}
+                  size="sm"
+                  data-marker-edit={markerKey(marker)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setDraft(marker.entry!.value);
+                    setSaveError(null);
+                    setEditing(true);
+                  }}
+                >
+                  <Pencil data-icon="inline-start" />
+                  编辑
+                </Button>
+              ) : marker.entry ? null : (
+                <span className="text-muted-foreground flex items-center gap-1 text-xs">
+                  <ExternalLink className="size-3" />
+                  导入该 Key 后即可编辑
+                </span>
+              )}
+              {marker.entry ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onOpenInEditor({ entryId: marker.entry!.entryId, value: marker.entry!.value });
+                  }}
+                >
+                  在编辑器中打开
+                </Button>
+              ) : null}
+              {marker.note ? <span className="text-muted-foreground truncate text-xs">{marker.note}</span> : null}
+            </div>
+          )}
         </div>
       </div>
     </li>
