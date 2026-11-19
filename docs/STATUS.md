@@ -1890,6 +1890,33 @@ SAVED IN PLACE       : true
 其中「逐栈点名导航位置」第一次是**失败**的——我漏了 Android 的实际文件名，检查当场抓住，补成
 `res/navigation/*.xml`（nav_graph）后才过。
 
+### 1.57 MCP 管理：每个工具都能点进去看
+
+用户说：「MCP管理 点击每个工具都可以进去查看」。原来的表只有三列：名字、一句话、参数名逗号连起来——
+「那我到底该传什么」这个问题，只有 MCP 客户端能回答（读 JSON schema），平台的页面上看不到。
+
+- 新增路由 **`/mcp/[tool]`**：工具名、所属 server、参数个数与必填数、**完整描述**（不再截断——好几个工具的
+  规则就写在描述里）、**参数表**（字段 / 类型 / 必填 / 说明，附默认值、枚举取值、嵌套形状的逐项展开）、
+  **原始 schema**（可直接复制）。找不到的工具明确说「没有注册这个名字」并给回路。
+- 列表每一行都可点（`data-mcp-tool`），**工具名本身是 `<a href>`**——可以复制链接、新标签打开、被读屏读到，
+  不只是个 click handler。
+- 类型抽到 `apps/web/src/lib/mcp-tools.ts`，两个页面共用，避免列表和详情各说一套。
+
+**顺带抓到一个漂移**：`/mcp/tools` 并不返回 schema 里的描述，而是用
+`apps/api/src/modules/mcp/tool-descriptions.ts` 那份**一行摘要覆盖**掉它。于是 MCP 客户端看到的是新文案，
+平台自己的页面上挂着的却是「传 ui 元素树，平台自己画图并算坐标」——**这句在整页复刻取代它之后又活了两轮**，
+因为两份文案之间没有任何东西保证同步。已修正，并加了一道机械能查的守卫
+（`apps/api/src/__tests__/mcp-tool-descriptions.test.ts`）：每个已注册工具都有一行、不出现退役说法、
+界面工具那行必须点明 `document`、以及不许给不存在的工具写摘要。
+
+**验证**：`scripts/check-mcp-tool-pages.mjs`（真实浏览器）9 项全过——19 行、名字是真链接、
+点进 `upload_screen_mockup` 后 18 行参数、3 个必填、`project_id`/`name`/`document`/`expect_no_images` 都在、
+有回路、未知工具会说明。451 单元（新增 4 条）/ lint 全绿；web 与 api 镜像都已重建部署。
+
+**没做的**：两处文案仍然分家（长描述在 `apps/mcp-remote/src/server.ts` 的 `define()`，短摘要在 API 的这张表）。
+真正的修法是把长描述搬进 `@localehub/contracts`，让 MCP server 与 API 读同一份——那是 19 个工具搬一次的机械活，
+这轮没做，留了口子。
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

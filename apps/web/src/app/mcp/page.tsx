@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { Boxes, Copy, Info, KeyRound, Languages, Plug, ScrollText, ShieldAlert, Sparkles, Terminal } from 'lucide-react';
 
@@ -19,26 +20,8 @@ import { PageHeader } from '@/components/page-header';
 import { StatusBadge } from '@/components/status-badge';
 import { useAsync } from '@/components/use-async';
 import { get, type Me, type ProjectSummary } from '@/lib/api';
+import type { McpTools, ToolDescriptor } from '@/lib/mcp-tools';
 import { toast } from 'sonner';
-
-interface ToolDescriptor {
-  name: string;
-  server: string;
-  description: string;
-  inputSchema: { properties?: Record<string, unknown>; required?: string[] } | null;
-}
-
-interface McpTools {
-  remote: ToolDescriptor[];
-  resources: string[];
-  prompts: string[];
-  /** Externally reachable endpoint, as configured on the server. */
-  remoteUrl: string;
-  /** How a client reads and invokes skills; the API owns these strings, not the browser. */
-  skillDelivery: { indexUri: string; resourceTemplate: string; promptPrefix: string };
-  /** Ready-to-paste configs, generated server-side by the same code the CLI uses. */
-  snippets: McpClientSnippets;
-}
 
 interface Skill {
   slug: string;
@@ -63,7 +46,16 @@ function notDeliveredReason(skill: Skill): string {
   return '被更高版本取代';
 }
 
+/**
+ * The tools, each one a way in.
+ *
+ * A row that only says a name and a paragraph leaves the next question unanswered — what do I actually
+ * send it — and that answer is the tool's parameter schema, which until now only an MCP client could
+ * read. So every row opens the tool's own page. The name is a real link as well as the row being
+ * clickable: the link can be copied, opened in a new tab, and read by a screen reader.
+ */
 function ToolTable({ tools, loading }: { tools?: ToolDescriptor[]; loading: boolean }) {
+  const router = useRouter();
   if (loading) return <Skeleton className="h-48" />;
   if (!tools?.length) return <EmptyState icon={<Plug />} title="没有注册的工具" />;
   return (
@@ -73,16 +65,31 @@ function ToolTable({ tools, loading }: { tools?: ToolDescriptor[]; loading: bool
           <TableHead className="w-64">工具</TableHead>
           <TableHead>说明</TableHead>
           <TableHead>参数</TableHead>
+          <TableHead className="w-16" />
         </TableRow>
       </TableHeader>
       <TableBody>
         {tools.map((tool) => (
-          <TableRow key={tool.name}>
-            <TableCell className="align-top font-mono text-xs">{tool.name}</TableCell>
+          <TableRow
+            key={tool.name}
+            data-mcp-tool={tool.name}
+            className="hover:bg-muted/50 cursor-pointer"
+            onClick={() => router.push(`/mcp/${encodeURIComponent(tool.name)}`)}
+          >
+            <TableCell className="align-top font-mono text-xs">
+              <Link
+                href={`/mcp/${encodeURIComponent(tool.name)}`}
+                className="hover:text-foreground underline-offset-4 hover:underline"
+                onClick={(event) => event.stopPropagation()}
+              >
+                {tool.name}
+              </Link>
+            </TableCell>
             <TableCell className="align-top text-sm">{tool.description}</TableCell>
             <TableCell className="text-muted-foreground break-all align-top font-mono text-xs">
               {Object.keys(tool.inputSchema?.properties ?? {}).join(', ') || '—'}
             </TableCell>
+            <TableCell className="text-muted-foreground align-top text-xs">查看 →</TableCell>
           </TableRow>
         ))}
       </TableBody>
