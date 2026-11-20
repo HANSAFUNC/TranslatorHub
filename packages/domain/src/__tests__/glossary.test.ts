@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveGlossary, termTarget, type ResolvedTerm } from '../glossary';
-import { runQaRules, type QaCandidateEntry } from '../qa';
+import { glossaryFindings, runQaRules, type QaCandidateEntry } from '../qa';
 
 /**
  * The termbase's two halves: the rule that decides *which* term applies, and the rule that decides
@@ -225,6 +225,23 @@ describe('how loud a termbase violation is', () => {
     const forbidden = findings.find((item) => item.ruleCode === 'GLOSSARY_TERM_FORBIDDEN');
     expect(forbidden?.severity).toBe('ERROR');
     expect(forbidden?.details).toMatchObject({ forbidden: '講座' });
+  });
+
+  it('asks the same question when the release check asks it', () => {
+    // The release check calls `glossaryFindings` directly instead of the whole rule engine. That is
+    // only safe while the two agree, and they stopped agreeing once already: the release check used
+    // to not look at the termbase at all, so an approved term was an ERROR on the QA page and
+    // invisible to `validate_release` for the same project.
+    const candidates = [
+      entry({ sourceValue: 'Course list', value: 'モジュール一覧', glossaryTerms: [term()] }),
+      entry({ entryId: 'e2', sourceValue: 'Course list', value: '講座一覧', glossaryTerms: [term({ forbiddenTargets: { 'ja-JP': ['講座'] } })] }),
+      entry({ entryId: 'e3', sourceValue: 'Course list', value: 'コース一覧', glossaryTerms: [term()] }),
+    ];
+
+    for (const candidate of candidates) {
+      const throughRules = runQaRules([candidate]).filter((item) => item.ruleCode.startsWith('GLOSSARY'));
+      expect(glossaryFindings(candidate)).toEqual(throughRules);
+    }
   });
 
   it('does not let a term in another language fire here', () => {

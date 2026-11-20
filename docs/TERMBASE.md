@@ -87,7 +87,7 @@ CREATE UNIQUE INDEX glossary_project_term_key
 | AI 起草 | 术语对进提示词，`caseSensitive` 丢失 | 带大小写规则；`doNotTranslate` 直接锁定；被覆盖的组织词条不再传给模型 |
 | QA 校验 | 一律 WARNING | 按状态定严重度：违反 `APPROVED` → **ERROR**；违反 `DRAFT` → WARNING；`DEPRECATED` 不参与 |
 | 编辑器 | — | 原文出现该词时旁边显示"术语：课程 → Course"，一键插入；违反就地标红 |
-| 发布校验 | QA 问题已经会挡发布 | 不用改：术语违规升成 ERROR，它自动进了发布闸门 |
+| 发布校验（`validate_release`） | **当时不会挡**：它自己重算缺译/占位符/过期/冲突，从不读术语库 | 术语违规升成 ERROR，并由发布前校验自己问一遍术语库（2026-11-20 补上，见 §9） |
 | **术语改动** | **什么都不发生** | 改一条词条 = 一个事件：把"原文含这个词"的条目重新排一次 QA。平台已有 STALE 机制处理源文变更，这是同一形状的事件 |
 
 最后一行是这份设计的重点。词库的价值在于**改了之后全项目跟着收敛**；如果改词条只影响下一次翻译，
@@ -133,6 +133,7 @@ CREATE UNIQUE INDEX glossary_project_term_key
 | 3. 能被策展（REST） | ✅ | `PATCH` / `DELETE` / `POST .../glossary/import`（按 term upsert，带审计），`GET` 返回 `scope`、`overrides` 与计数 |
 | 3. 能被策展（MCP） | ✅ | `upsert_glossary_terms`（需 `glossary.write`，与读分开授权）。只能落 **DRAFT**：定稿是人的动作。已定稿/已废弃的词条改不动，返回 `untouched` 而不是静默忽略 |
 | 4. 严重度分级 | ✅ | `GLOSSARY_TERM_MISSING` 按状态定严重度（`APPROVED` → ERROR），新增 `GLOSSARY_TERM_FORBIDDEN`；`DEPRECATED` 不参与 |
+| 4b. 发布前校验问术语库 | ✅ | `validateForRelease` 现在自己调 `glossaryFindings`（与 QA 用同一个函数）。**这条一开始漏了**：设计里写「不用改，升成 ERROR 就自动进闸门」，而那个前提是错的——发布校验从不读 QA 问题，也不读术语库 |
 | 5. 改动触发重查 | ✅ | 四条写入口（新增/改动/删除/导入 + MCP 的 upsert）都会入队一次该项目的 QA 运行；`jobId` 每项目一个，连着改几条合并成一次。这次运行的 `qa_run.scope` 里记着 `reason` 与改了哪些词 |
 | 6. 界面 | ✅ 部分 | 后台管理新增 `/glossary`（侧边栏「翻译管理」下）：三段统计、词条表（逐语言译法、状态、来源、覆盖提示）、定稿/退回/删除、抽候选、手工加一条 |
 | 7. 抽候选 | ✅ | `POST .../glossary/extract` + 页面上的候选队列。**不猜译法**（见下） |
@@ -161,6 +162,20 @@ CREATE UNIQUE INDEX glossary_project_term_key
 - **抽候选不猜译法。** 设计里写"把现有译法作为建议值"，实现时去掉了：一句话和它的译文对不出其中某一个词
   变成了什么，给出一个猜的值就等于平台替使用者背书。抽出来的是**词汇的形状**——哪些短语反复出现、
   出现在多少条 key 里、举例——由知道答案的人填。这一点也写在页面上了。
+
+### 一处漏掉的假设（2026-11-20 补）
+
+§5 那张表里「发布校验」一行原本写着「不用改：QA 问题已经会挡发布」。**这个前提是错的**，而且是写完文档、
+写完状态页之后才被读代码推翻的：`validateForRelease`（`validate_release` / `POST /projects/:id/sync/validate`）
+自己重算缺译、占位符、过期、开放冲突四类问题，从不读 `qa_issues`，也从不读术语库。所以在一段时间里，平台同时
+说两件相反的话：QA 页面上 `课程 → Course` 是红色 ERROR，而发布前校验对同一个项目回 `ok: true`。
+
+现在由发布前校验自己问一遍术语库，用的是 QA 那份 `glossaryFindings`（同一函数，不可能两处不一致）。
+草稿词条的违规会出现在报告的 `issues` 里但不阻断（`ok` 只看 ERROR），定稿的会阻断。
+
+**仍然没做的一步**：`POST /projects/:id/releases`（真正建 release）本身不调用发布前校验，所以「挡」目前发生在
+校验这一步，而不是建 release 那一步。要在那一步也挡住，需要先有设计里提到的那条「带备注的例外」路径，
+否则就是一道没有出口的墙。
 
 ### 已知的两处不完整
 

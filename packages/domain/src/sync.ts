@@ -26,6 +26,8 @@ import { buildSyncPlan, computeSyncDiff, isPushAction, resolveConflictValue, typ
 import { TenantPrisma } from '@localehub/database';
 import { localeDisplayName, resolveLocaleTag } from '@localehub/contracts';
 import { emitProjectEvent, getProjectRevision } from './events';
+import { resolveGlossary } from './glossary';
+import { glossaryFindings } from './qa';
 import {
   ensureTranslationKey,
   markTranslationsStale,
@@ -1866,6 +1868,10 @@ export class SyncService {
       if (!project) throw new LocaleHubError(ErrorCode.NOT_FOUND, `Project ${projectId} not found`, 404);
       const revision = await getProjectRevision(tx, projectId);
 
+      // The termbase is read here, not from stored QA issues: `validate_release` has to answer the
+      // question it advertises even on a project nobody has run QA on, and a stored issue can be
+      // stale by a single term edit. Same resolver and same rules as the QA run.
+      const glossary = await resolveGlossary(tx, { organizationId: actor.organizationId, projectId });
       const [entries, keys, openConflicts] = await Promise.all([
         tx.translationEntry.findMany({
           where: { projectId },
@@ -1876,6 +1882,7 @@ export class SyncService {
       ]);
 
       const issues: { code: string; severity: 'ERROR' | 'WARNING' | 'INFO'; key: string; locale: string; message: string }[] = [];
+      let glossaryProblems = 0;
       let approved = 0;
       let stale = 0;
       let untranslated = 0;
@@ -1921,6 +1928,43 @@ export class SyncService {
         }
       }
 
+      if (glossary.length) {
+        // Per entry, because "which of these approved translations may not ship" is the question a
+        // release check is asked; the details travel with the issue the way the QA page shows them.
+        for (const entry of entries) {
+          if (entry.localeCode === project.sourceLocale) continue;
+          const findings = glossaryFindings({
+            entryId: entry.id,
+            key: entry.key.key,
+            locale: entry.localeCode,
+            platform: entry.key.platform,
+            namespace: entry.key.namespace.name,
+            value: entry.value,
+            status: entry.status,
+            sourceValue: entry.key.sourceVersions[0]?.value ?? '',
+            sourceLocale: project.sourceLocale,
+            glossaryTerms: glossary.map((term) => ({
+              term: term.term,
+              translations: term.translations,
+              caseSensitive: term.caseSensitive,
+              status: term.status,
+              doNotTranslate: term.doNotTranslate,
+              forbiddenTargets: term.forbiddenTargets,
+            })),
+          });
+          for (const finding of findings) {
+            glossaryProblems += 1;
+            issues.push({
+              code: finding.ruleCode,
+              severity: finding.severity,
+              key: finding.key,
+              locale: finding.locale,
+              message: finding.message,
+            });
+          }
+        }
+      }
+
       if (openConflicts > 0) {
         issues.push({
           code: 'OPEN_CONFLICTS',
@@ -1935,7 +1979,7 @@ export class SyncService {
         projectId,
         revision,
         ok: issues.every((issue) => issue.severity !== 'ERROR'),
-        counts: { keys, entries: entries.length, approved, stale, untranslated, placeholderProblems, openConflicts },
+        counts: { keys, entries: entries.length, approved, stale, untranslated, placeholderProblems, openConflicts, glossaryProblems },
         issues,
       };
     });

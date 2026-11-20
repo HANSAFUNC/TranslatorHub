@@ -536,7 +536,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
    * rendered as X" first, so it is allowed to write into the termbase — as a **candidate**, and
    * nothing else. Two things it cannot do, both deliberate:
    *
-   *  * it cannot approve. A term somebody approved is rule that blocks a release; handing that to a
+   *  * it cannot approve. A term somebody approved is a rule the release check refuses on; handing that to a
    *    model is how a termbase fills with instructions nobody agreed to.
    *  * it cannot touch an already-approved term. Those rows come back under `untouched`, so the
    *    caller learns it was heard and that the answer belongs to a person.

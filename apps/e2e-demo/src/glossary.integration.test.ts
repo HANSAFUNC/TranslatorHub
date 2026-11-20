@@ -143,6 +143,18 @@ interface Issue {
   localeCode: string;
 }
 
+interface ReleaseCheck {
+  ok: boolean;
+  counts: { glossaryProblems: number };
+  issues: { code: string; severity: string; key: string; locale: string; message: string }[];
+}
+
+const releaseCheck = async (projectId: string): Promise<ReleaseCheck> => {
+  const response = await call<ReleaseCheck>(`/projects/${projectId}/sync/validate`, { method: 'POST', token: session.token });
+  expect(response.status, JSON.stringify(response.body.error)).toBe(201);
+  return response.body.data!;
+};
+
 const openIssues = async (projectId: string): Promise<Issue[]> => {
   const response = await call<Issue[]>(`/projects/${projectId}/qa/issues`, { token: session.token });
   return (response.body.data ?? []).filter((issue) => issue.ruleCode.startsWith('GLOSSARY'));
@@ -295,6 +307,12 @@ describe('proposing terms over MCP', () => {
 
     // ...and the entry that already says it is left alone.
     expect((await openIssues(projectId)).map((row) => row.translationKey)).toEqual(['home.title']);
+
+    // The release check asks the termbase the same question, and a *candidate* is not a rule: it
+    // shows up in the report, and the report still passes.
+    const draftCheck = await releaseCheck(projectId);
+    expect(draftCheck.issues.some((issue) => issue.code === 'GLOSSARY_TERM_MISSING')).toBe(true);
+    expect(draftCheck.ok).toBe(true);
   }, 120_000);
 
   it('records why the run happened', async () => {
@@ -330,6 +348,15 @@ describe('proposing terms over MCP', () => {
       return issue && issue.severity === 'ERROR' ? issue : null;
     });
     expect(escalated.severity).toBe('ERROR');
+
+    // And the gate is real, not a colour on a page: the pre-release check now refuses. This is the
+    // claim the design made from the start and the code did not keep — `validateForRelease`
+    // recomputed four checks of its own and never read the termbase.
+    const check = await releaseCheck(projectId);
+    expect(check.ok).toBe(false);
+    expect(check.counts.glossaryProblems).toBeGreaterThan(0);
+    const blocker = check.issues.find((issue) => issue.code === 'GLOSSARY_TERM_MISSING');
+    expect(blocker).toMatchObject({ severity: 'ERROR', key: 'home.title', locale: 'ja-JP' });
   }, 120_000);
 
   it('will not let an agent rewrite a term somebody approved', async () => {
@@ -366,5 +393,10 @@ describe('proposing terms over MCP', () => {
       async () => ((await openIssues(projectId)).length === 0 ? true : null),
     );
     expect(await openIssues(projectId)).toEqual([]);
+
+    // Deleting the term has to unblock the release too, or the gate is a wall with no door.
+    const check = await releaseCheck(projectId);
+    expect(check.ok).toBe(true);
+    expect(check.issues.filter((issue) => issue.code.startsWith('GLOSSARY'))).toEqual([]);
   }, 120_000);
 });

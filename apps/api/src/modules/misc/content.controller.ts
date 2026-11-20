@@ -147,8 +147,8 @@ export class ContentController {
   /**
    * Change a term.
    *
-   * Approving one is the switch that turns a violation into an error that blocks a release, so it takes
-   * the same role a release does. `updatedAt` is the column, but the audit trail is what answers "who
+   * Approving one is the switch that turns a violation into an error the release check refuses on, so it
+   * takes the same role a release does. `updatedAt` is the column, but the audit trail is what answers "who
    * decided this" — a termbase nobody can be held to is not a termbase.
    */
   @Patch('projects/:projectId/glossary/:termId')

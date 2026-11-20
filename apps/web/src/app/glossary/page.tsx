@@ -52,7 +52,7 @@ interface Candidate {
  * already fixed. The editor is where a term is *obeyed*; this is where it is made.
  *
  * Two things on this page are the whole point. A term has a **state**, and only an approved one is a
- * rule: a violation of it fails QA and blocks a release, while a candidate only warns. And every row says
+ * rule: a violation of it fails the release check, while a candidate only warns. And every row says
  * whether it comes from the project or the organisation, including when a project term replaced one —
  * the disagreement used to be invisible, which is how a termbase starts contradicting itself.
  */
@@ -127,7 +127,7 @@ export default function GlossaryPage() {
     <>
       <PageHeader
         title="术语库"
-        description="每个项目一份属于它自己的词汇表：项目词条压过组织词条，已定稿的违反会挡住发布"
+        description="每个项目一份属于它自己的词汇表：项目词条压过组织词条，已定稿的违反会让发布前校验不通过"
         actions={
           projects?.length ? (
             <Select value={projectId ?? undefined} onValueChange={(value) => { setProjectId(value); setCandidates(null); }}>
@@ -160,7 +160,7 @@ export default function GlossaryPage() {
           <div className="grid gap-3 sm:grid-cols-3">
             <Stat label="生效中的词条" value={terms.length} hint="组织级与项目级合并后，一个词只算一次" />
             <Stat label="项目自己的" value={data?.counts.project ?? 0} hint="压过组织词条的也算在内" />
-            <Stat label="还没定稿" value={data?.counts.draft ?? 0} hint="草稿只警告，定稿了才挡发布" />
+            <Stat label="还没定稿" value={data?.counts.draft ?? 0} hint="草稿只警告，定稿了发布前校验就不通过" />
           </div>
 
           <Card>
@@ -289,7 +289,7 @@ export default function GlossaryPage() {
                                       (result) =>
                                         result.recheck?.queued === false
                                           ? '已定稿，但重查没排上（队列不可用）——请手动跑一次 QA'
-                                          : '已定稿——违反它现在会挡发布，已有译文正在重查',
+                                          : '已定稿——违反它现在会让发布前校验不通过，已有译文正在重查',
                                     )
                                   }
                                 >

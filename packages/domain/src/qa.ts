@@ -132,57 +132,73 @@ export function runQaRules(entries: QaCandidateEntry[], options: QaRunOptions = 
     if (enabled.has('SOURCE_UNCHANGED_TARGET_SAME_AS_SOURCE') && source && source === target) {
       findings.push(finding(entry, 'SOURCE_UNCHANGED_TARGET_SAME_AS_SOURCE', 'WARNING', 'Translation is identical to the source', {}));
     }
-    // A term somebody approved is a rule and blocks a release; a term a machine proposed is a
-    // suggestion and does not; a term that has been replaced is not a rule at all. That is the whole
-    // difference between a termbase and a list of words.
-    const loudness = (status: string | undefined): QaSeverity => (status === 'APPROVED' ? 'ERROR' : 'WARNING');
-    if (enabled.has('GLOSSARY_TERM_MISSING') && entry.glossaryTerms?.length) {
-      for (const term of entry.glossaryTerms) {
-        if (term.status === 'DEPRECATED') continue;
-        // `doNotTranslate` answers with the source term itself, so a product name is held to in every
-        // language without the termbase having to repeat it per locale — and a new locale cannot
-        // silently lose the rule.
-        const expected = term.doNotTranslate ? term.term : term.translations?.[entry.locale];
-        if (!expected) continue;
-        const sourceHasTerm = term.caseSensitive
-          ? source.includes(term.term)
-          : source.toLowerCase().includes(term.term.toLowerCase());
-        if (!sourceHasTerm) continue;
-        const targetHasTerm = term.caseSensitive
-          ? target.includes(expected)
-          : target.toLowerCase().includes(expected.toLowerCase());
-        if (!targetHasTerm) {
-          findings.push(
-            finding(
-              entry,
-              'GLOSSARY_TERM_MISSING',
-              loudness(term.status),
-              `Glossary term "${term.term}" should be "${expected}"`,
-              { term: term.term, expected, status: term.status ?? 'DRAFT' },
-            ),
-          );
-        }
-      }
+    // One implementation, two callers: the QA run above and the release check, which needs the same
+    // answer without the other twelve rules.
+    for (const item of glossaryFindings(entry)) {
+      if (enabled.has(item.ruleCode)) findings.push(item);
     }
-    if (enabled.has('GLOSSARY_TERM_FORBIDDEN') && entry.glossaryTerms?.length) {
-      for (const term of entry.glossaryTerms) {
-        if (term.status === 'DEPRECATED') continue;
-        for (const forbidden of term.forbiddenTargets?.[entry.locale] ?? []) {
-          const used = term.caseSensitive
-            ? target.includes(forbidden)
-            : target.toLowerCase().includes(forbidden.toLowerCase());
-          if (!used) continue;
-          findings.push(
-            finding(
-              entry,
-              'GLOSSARY_TERM_FORBIDDEN',
-              loudness(term.status),
-              `"${forbidden}" is ruled out by the termbase for "${term.term}"`,
-              { term: term.term, forbidden, status: term.status ?? 'DRAFT' },
-            ),
-          );
-        }
-      }
+  }
+  return findings;
+}
+
+/**
+ * The termbase rules on their own: is this translation allowed to say what it says?
+ *
+ * Extracted so the release check can ask the question without running — or having to have stored —
+ * a QA run. It used to be inline here, and the release path simply did not ask it at all: an
+ * approved term was documented as blocking a release, and was reported as an ERROR on the QA page,
+ * while `validate_release` returned `ok: true` for the same project. Same function now, so the two
+ * cannot disagree.
+ *
+ * A term somebody approved is a rule and blocks a release; a term a machine proposed is a suggestion
+ * and does not; a term that has been replaced is not a rule at all. That is the whole difference
+ * between a termbase and a list of words.
+ */
+export function glossaryFindings(entry: QaCandidateEntry): QaIssueFinding[] {
+  const findings: QaIssueFinding[] = [];
+  if (!entry.glossaryTerms?.length) return findings;
+  const source = entry.sourceValue ?? '';
+  const target = entry.value ?? '';
+  const loudness = (status: string | undefined): QaSeverity => (status === 'APPROVED' ? 'ERROR' : 'WARNING');
+
+  for (const term of entry.glossaryTerms) {
+    if (term.status === 'DEPRECATED') continue;
+    // `doNotTranslate` answers with the source term itself, so a product name is held to in every
+    // language without the termbase having to repeat it per locale — and a new locale cannot
+    // silently lose the rule.
+    const expected = term.doNotTranslate ? term.term : term.translations?.[entry.locale];
+    if (!expected) continue;
+    const sourceHasTerm = term.caseSensitive
+      ? source.includes(term.term)
+      : source.toLowerCase().includes(term.term.toLowerCase());
+    if (!sourceHasTerm) continue;
+    const targetHasTerm = term.caseSensitive
+      ? target.includes(expected)
+      : target.toLowerCase().includes(expected.toLowerCase());
+    if (targetHasTerm) continue;
+    findings.push(
+      finding(entry, 'GLOSSARY_TERM_MISSING', loudness(term.status), `Glossary term "${term.term}" should be "${expected}"`, {
+        term: term.term,
+        expected,
+        status: term.status ?? 'DRAFT',
+      }),
+    );
+  }
+
+  for (const term of entry.glossaryTerms) {
+    if (term.status === 'DEPRECATED') continue;
+    for (const forbidden of term.forbiddenTargets?.[entry.locale] ?? []) {
+      const used = term.caseSensitive
+        ? target.includes(forbidden)
+        : target.toLowerCase().includes(forbidden.toLowerCase());
+      if (!used) continue;
+      findings.push(
+        finding(entry, 'GLOSSARY_TERM_FORBIDDEN', loudness(term.status), `"${forbidden}" is ruled out by the termbase for "${term.term}"`, {
+          term: term.term,
+          forbidden,
+          status: term.status ?? 'DRAFT',
+        }),
+      );
     }
   }
   return findings;

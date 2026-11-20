@@ -559,7 +559,7 @@ PI_MODEL=ctyun/glm-5.3-flash
 
 | 状态 | 违反它 |
 | --- | --- |
-| `APPROVED` | **ERROR**——进发布闸门，挡住发布 |
+| `APPROVED` | **ERROR**——`validate_release` 会因此返回 `ok: false` |
 | `DRAFT` | WARNING——只是提醒 |
 | `DEPRECATED` | 不参与 |
 
@@ -567,7 +567,7 @@ Agent 这一侧：
 
 - `get_glossary` 读（`glossary.read`）。
 - `upsert_glossary_terms` 提（`glossary.write`，与读分开授权）。**只能落成草稿**：定稿是人的动作，
-  因为它会把一条建议变成一个挡发布的门槛。已经定稿或废弃的词条 Agent 改不动，会出现在返回值的
+  因为它会把一条建议变成发布前校验的一道门槛。已经定稿或废弃的词条 Agent 改不动，会出现在返回值的
   `untouched` 里，而不是被静默忽略。
 - 传 `term` 不传 `translations` 是合法的：那表示「这个词是固定的，译法待补」，平台不会替你猜。译法不确定
   就别猜——猜错的值会带着平台的权威留在词库里。
