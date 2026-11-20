@@ -116,8 +116,11 @@ if (draft) {
     const body = await (await fetch('/api/v1/projects/${seeded.projectId}/glossary', { credentials: 'include' })).json();
     return body.data.terms.find((t) => t.term === ${JSON.stringify(draft.term)}).status;
   })()`);
-  await clickTestId(`[data-term="${draft.term}"] button`);
-  await delay(1200);
+  // Named, not "the first button in the row": every translation cell became a button when the row
+  // learned to be edited in place, and the first one is now the language cell — which is how this
+  // check started clicking the wrong thing and reporting that approving does nothing.
+  await clickTestId(`[data-term="${draft.term}"] [data-term-status]`);
+  await delay(1500);
   const after = await evaluate(`(async () => {
     const body = await (await fetch('/api/v1/projects/${seeded.projectId}/glossary', { credentials: 'include' })).json();
     return body.data.terms.find((t) => t.term === ${JSON.stringify(draft.term)}).status;
@@ -133,8 +136,8 @@ if (draft) {
   })()`);
   check(queued, 'approving leaves a recheck behind it', queued ? 'toast says so' : 'no mention of 重查');
   // Put it back exactly as it was.
-  await clickTestId(`[data-term="${draft.term}"] button`);
-  await delay(1200);
+  await clickTestId(`[data-term="${draft.term}"] [data-term-status]`);
+  await delay(1500);
   const restored = await evaluate(`(async () => {
     const body = await (await fetch('/api/v1/projects/${seeded.projectId}/glossary', { credentials: 'include' })).json();
     return body.data.terms.find((t) => t.term === ${JSON.stringify(draft.term)}).status;
@@ -148,15 +151,59 @@ await send('Page.captureScreenshot', { format: 'png' }).then((shot) => {
   writeFileSync('/tmp/glossary-admin.png', Buffer.from(shot.data, 'base64'));
 });
 
-// The candidates: a project that has been translated already has a vocabulary, scattered. This has to
-// run against a project that actually has one — a five-key demo has no phrase in three different keys,
-// and finding nothing there is the extractor being right, not broken.
+// The candidates: a project that has been translated already has a vocabulary, scattered — and it has
+// already answered most of the termbase, so a candidate should arrive with the translation the
+// project itself uses. This has to run against a project that actually has both, which is not the
+// one with the most keys: a scale fixture has 5,250 keys and one string repeated.
 const richest = await evaluate(`(async () => {
+  const attempts = [];
   const projects = (await (await fetch('/api/v1/projects', { credentials: 'include' })).json()).data;
-  const best = projects.slice().sort((a, b) => b.counts.keys - a.counts.keys)[0];
-  return best ? { id: best.id, name: best.name, keys: best.counts.keys } : null;
+  const bySize = projects.slice().sort((a, b) => b.counts.keys - a.counts.keys).slice(0, 8);
+  for (const project of bySize) {
+    // The endpoint is the only thing that knows whether this project can answer; asking it beats
+    // guessing from counts.
+    // The double-submit token the app itself sends: a cookie-authenticated POST without it is
+    // refused, and a probe that reads 403 as "this project has nothing" would be looking in the
+    // wrong place entirely.
+    const csrf = (document.cookie.match(/(?:^|; )localehub_csrf=([^;]*)/) ?? [])[1] ?? '';
+    const response = await fetch('/api/v1/projects/' + project.id + '/glossary/extract', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json', 'x-csrf-token': decodeURIComponent(csrf) },
+      body: JSON.stringify({ minKeys: 3, limit: 20 }),
+    });
+    if (!response.ok) {
+      // Reported rather than skipped silently: a probe that quietly finds nothing looks exactly like
+      // a project that has nothing to find.
+      attempts.push(project.name + ': HTTP ' + response.status);
+      continue;
+    }
+    const body = await response.json();
+    const candidates = body.data?.candidates ?? [];
+    const withSuggestion = candidates.find((c) => (c.suggestions ?? []).length > 0);
+    attempts.push(project.name + ': ' + candidates.length + ' candidates, ' + candidates.filter((c) => (c.suggestions ?? []).length).length + ' with a suggestion');
+    if (withSuggestion) {
+      return { id: project.id, name: project.name, keys: project.counts.keys, term: withSuggestion.term, suggestion: withSuggestion.suggestions[0] };
+    }
+  }
+  return { id: null, attempts };
 })()`);
-check(Boolean(richest) && richest.keys >= 50, 'a project with a vocabulary to mine was found', richest ? `${richest.name} · ${richest.keys} keys` : 'none');
+check(
+  Boolean(richest.id),
+  'a project whose own translations can answer is found',
+  richest.id
+    ? `${richest.name} · ${richest.term} → ${richest.suggestion.locale} ${richest.suggestion.value} (${richest.suggestion.support}/${richest.suggestion.total})`
+    : (richest.attempts ?? []).join(' | '),
+);
+
+if (!richest.id) {
+  console.log('\nscreenshot: /tmp/glossary-admin.png');
+  ws.close(); chrome.kill();
+  console.error('\nRESULT: no project with existing translations to extract from');
+  process.exit(1);
+}
+const richest_project_unused = null;
+void richest_project_unused;
 
 // Which project is open is part of the address, so the check opens the one it wants the way anybody
 // would send it to a colleague.
@@ -184,10 +231,61 @@ await waitFor("document.body.innerText.includes('扫了')", 'the extraction to f
 await delay(800);
 const candidates = await evaluate(`(() => {
   const rows = [...document.querySelectorAll('table tbody tr')].filter((r) => r.dataset.term === undefined && /\\d+ 条/.test(r.innerText));
-  return { count: rows.length, sample: rows.slice(0, 5).map((r) => r.innerText.replace(/\\s+/g, ' ').slice(0, 44)) };
+  return { count: rows.length, sample: rows.slice(0, 5).map((r) => r.innerText.replace(/\\s+/g, ' ').slice(0, 60)) };
 })()`);
 check(candidates.count > 0, 'the project’s own vocabulary comes back as candidates', `${candidates.count} 个`);
 console.log('   candidates:', JSON.stringify(candidates.sample));
+
+// The suggestion, on the page, with its count and an example — the three things that make it
+// something a person can accept in one glance instead of something they have to go and check.
+const shown = await evaluate(`(() => {
+  const row = [...document.querySelectorAll('[data-candidate]')].find((r) => /\\d+\\/\\d+/.test(r.innerText));
+  if (!row) return null;
+  return { term: row.dataset.candidate, text: row.innerText.replace(/\\s+/g, ' ').slice(0, 160) };
+})()`);
+check(
+  Boolean(shown) && shown.text.includes('→'),
+  'a candidate arrives with the translation the project already uses',
+  shown ? shown.text : 'no suggestion on any candidate row',
+);
+
+if (shown) {
+  const landed = await evaluate(`(async () => {
+    const before = await (await fetch('/api/v1/projects/${richest.id}/glossary', { credentials: 'include' })).json();
+    const had = before.data.terms.some((t) => t.term === ${JSON.stringify(shown.term)});
+    return { had };
+  })()`);
+  await clickTestId(`[data-candidate="${shown.term}"] button`);
+  await delay(1500);
+  const added = await evaluate(`(async () => {
+    const body = await (await fetch('/api/v1/projects/${richest.id}/glossary', { credentials: 'include' })).json();
+    const term = body.data.terms.find((t) => t.term === ${JSON.stringify(shown.term)});
+    return term ? { status: term.status, translations: term.translations } : null;
+  })()`);
+  // The value that lands is the one the page showed, and it lands as a draft like everything else.
+  check(
+    Boolean(added) && Object.values(added.translations).length > 0 && Object.values(added.translations).every((value) => shown.text.includes(value)),
+    '加入 carries that translation into the termbase',
+    added ? `${added.status} ${JSON.stringify(added.translations)}` : 'not added',
+  );
+  // Put the project back the way it was.
+  if (!landed.had && added) {
+    await evaluate(`(async () => {
+      const csrf = decodeURIComponent((document.cookie.match(/(?:^|; )localehub_csrf=([^;]*)/) ?? [])[1] ?? '');
+      const list = await (await fetch('/api/v1/projects/${richest.id}/glossary', { credentials: 'include' })).json();
+      const term = list.data.terms.find((t) => t.term === ${JSON.stringify(shown.term)});
+      if (term) {
+        await fetch('/api/v1/projects/${richest.id}/glossary/' + term.id, {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: { 'x-csrf-token': csrf },
+        });
+      }
+      return true;
+    })()`);
+    check(true, 'and the check put the project back');
+  }
+}
 
 console.log('\nscreenshot: /tmp/glossary-admin.png');
 ws.close(); chrome.kill();

@@ -42,6 +42,16 @@ interface Candidate {
   term: string;
   keyCount: number;
   exampleKey: string;
+  /** What the project already calls it, per language, with the count that supports each answer. */
+  suggestions: {
+    locale: string;
+    value: string;
+    example: { source: string; target: string };
+    support: number;
+    total: number;
+  }[];
+  /** Every language that has an answer leaves the term alone. */
+  keepAsIs: boolean;
 }
 
 /**
@@ -99,6 +109,9 @@ export default function GlossaryPage() {
   }, [terms]);
   const targetLocales = (detail?.locales ?? []).map((entry) => entry.code).filter((code) => !locales.includes(code));
 
+  /** Which translation cell is open for editing, and what is typed in it. */
+  const [editing, setEditing] = useState<{ termId: string; locale: string } | null>(null);
+  const [draft, setDraft] = useState('');
   const [newTerm, setNewTerm] = useState('');
   const [newLocale, setNewLocale] = useState('');
   const [newValue, setNewValue] = useState('');
@@ -237,10 +250,49 @@ export default function GlossaryPage() {
                             <TableCell key={code} className="align-top text-sm">
                               {term.doNotTranslate ? (
                                 <span className="text-muted-foreground">{term.term}（保持原样）</span>
-                              ) : term.translations[code] ? (
-                                term.translations[code]
+                              ) : editing?.termId === term.id && editing.locale === code ? (
+                                <Input
+                                  autoFocus
+                                  value={draft}
+                                  className="h-7 w-40"
+                                  onChange={(event) => setDraft(event.target.value)}
+                                  onBlur={() => {
+                                    // Saved on the way out, including on Escape: the alternative is a
+                                    // cell that silently keeps a value nobody can see the state of.
+                                    const next = draft.trim();
+                                    setEditing(null);
+                                    if (next === (term.translations[code] ?? '')) return;
+                                    void run(
+                                      `${term.id}:${code}`,
+                                      () =>
+                                        patch(`/projects/${projectId}/glossary/${term.id}`, {
+                                          translations: { ...term.translations, ...(next ? { [code]: next } : {}) },
+                                        }),
+                                      `已更新 ${term.term} 的 ${code}`,
+                                    );
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Enter') event.currentTarget.blur();
+                                    if (event.key === 'Escape') {
+                                      setDraft(term.translations[code] ?? '');
+                                      setEditing(null);
+                                    }
+                                  }}
+                                />
                               ) : (
-                                <span className="text-muted-foreground">—</span>
+                                <button
+                                  type="button"
+                                  // A candidate arrives with a suggested value, and a suggestion somebody
+                                  // cannot correct is worse than none: this is where it gets corrected.
+                                  onClick={() => {
+                                    setDraft(term.translations[code] ?? '');
+                                    setEditing({ termId: term.id, locale: code });
+                                  }}
+                                  className="hover:bg-muted -mx-1 rounded px-1 text-left hover:underline"
+                                  title="点一下改这条译法"
+                                >
+                                  {term.translations[code] || <span className="text-muted-foreground">—</span>}
+                                </button>
                               )}
                             </TableCell>
                           ))}
@@ -267,6 +319,7 @@ export default function GlossaryPage() {
                                 <Button
                                   variant="ghost"
                                   size="sm"
+                                  data-term-status
                                   disabled={busy === term.id}
                                   onClick={() => void run(term.id, () => patch(`/projects/${projectId}/glossary/${term.id}`, { status: 'DRAFT' }), '已退回草稿')}
                                 >
@@ -277,6 +330,7 @@ export default function GlossaryPage() {
                                 <Button
                                   variant={term.status === 'DRAFT' ? 'default' : 'outline'}
                                   size="sm"
+                                  data-term-status
                                   disabled={busy === term.id}
                                   onClick={() =>
                                     void run(
@@ -322,8 +376,9 @@ export default function GlossaryPage() {
                 <div className="flex flex-col gap-1">
                   <CardTitle>候选</CardTitle>
                   <CardDescription>
-                    这个项目反复出现的说法。<span className="text-foreground font-medium">平台不猜译法</span>——一句话和它的译文对不出其中某一个词变成了什么，
-                    猜了就等于平台替你们背书。请填上你确定的答案，再加入。
+                    这个项目反复出现的说法，以及<span className="text-foreground font-medium">它已有的译法</span>——从现有译文里数出来的，括号里是几条这么说、
+                    共几条。数出来的不是猜的，但它也不是对齐：一句原文和它的译文对不出其中哪一个词变成了什么，
+                    所以每一条都带例子让你一眼核，加入后是草稿，随时可改。
                   </CardDescription>
                 </div>
                 <Button variant="ghost" size="sm" onClick={() => setCandidates(null)}>收起</Button>
@@ -338,17 +393,47 @@ export default function GlossaryPage() {
                         <TableRow>
                           <TableHead>候选词</TableHead>
                           <TableHead className="w-24">出现于</TableHead>
-                          <TableHead>例子</TableHead>
-                          <TableHead className="w-32" />
+                          <TableHead>建议译法</TableHead>
+                          <TableHead className="w-28" />
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {candidates.map((candidate) => (
-                          <TableRow key={candidate.term}>
-                            <TableCell className="font-medium">{candidate.term}</TableCell>
-                            <TableCell className="text-muted-foreground text-sm tabular-nums">{candidate.keyCount} 条</TableCell>
-                            <TableCell className="text-muted-foreground font-mono text-xs">{candidate.exampleKey}</TableCell>
-                            <TableCell>
+                          // `data-candidate` is for the browser check: `加入` has to be found on *this*
+                          // row, and the table has one button per candidate.
+                          <TableRow key={candidate.term} data-candidate={candidate.term}>
+                            <TableCell className="align-top font-medium">
+                              {candidate.term}
+                              {candidate.keepAsIs ? (
+                                <Badge variant="outline" className="ml-1 text-[10px]">保持原样</Badge>
+                              ) : null}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground align-top text-sm tabular-nums">{candidate.keyCount} 条</TableCell>
+                            <TableCell className="align-top">
+                              {candidate.suggestions.length ? (
+                                <span className="flex flex-col gap-1">
+                                  {candidate.suggestions.map((suggestion) => (
+                                    <span key={suggestion.locale} className="flex flex-wrap items-baseline gap-1.5 text-sm">
+                                      <span className="text-muted-foreground font-mono text-[11px]">{suggestion.locale}</span>
+                                      <span className="font-medium">{suggestion.value}</span>
+                                      {/* The count is the argument. `46/47` is a decision somebody can
+                                          make in a glance; a bare value is a claim they have to check. */}
+                                      <span className="text-muted-foreground text-[11px] tabular-nums">
+                                        {suggestion.support}/{suggestion.total}
+                                      </span>
+                                      <span className="text-muted-foreground truncate font-mono text-[11px]" title={`${suggestion.example.source} → ${suggestion.example.target}`}>
+                                        {suggestion.example.source} → {suggestion.example.target}
+                                      </span>
+                                    </span>
+                                  ))}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground text-sm">
+                                  这个项目里还没有一致的译法——填上你确定的那一个
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell className="align-top">
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -357,10 +442,18 @@ export default function GlossaryPage() {
                                   void run(
                                     candidate.term,
                                     async () => {
-                                      await post(`/projects/${projectId}/glossary`, { term: candidate.term, translations: {} });
+                                      await post(`/projects/${projectId}/glossary`, {
+                                        term: candidate.term,
+                                        // The suggestion is a starting point, not an approval: it lands as
+                                        // a draft like everything else, and the row above edits it.
+                                        translations: Object.fromEntries(candidate.suggestions.map((item) => [item.locale, item.value])),
+                                        ...(candidate.keepAsIs ? { doNotTranslate: true } : {}),
+                                      });
                                       setCandidates((current) => current?.filter((entry) => entry.term !== candidate.term) ?? null);
                                     },
-                                    `已加入 ${candidate.term}，填上译法再定稿`,
+                                    candidate.suggestions.length
+                                      ? `已加入 ${candidate.term}，译法取自现有译文，确认后定稿`
+                                      : `已加入 ${candidate.term}，填上译法再定稿`,
                                   )
                                 }
                               >

@@ -240,6 +240,9 @@ describe('proposing terms over MCP', () => {
               // Already says コース, so approving `Course → コース` must leave it alone. A rule that
               // fires on a translation that already complies is a rule people turn off.
               { key: 'home.cta', value: 'Start the course' },
+              // A run of keys that agree on one word, which is what the extraction counts.
+              { key: 'course.enroll', value: 'Course enrol' },
+              { key: 'course.cancel', value: 'Course cancel' },
             ],
           },
           {
@@ -249,6 +252,8 @@ describe('proposing terms over MCP', () => {
             entries: [
               { key: 'home.title', value: 'モジュール一覧' },
               { key: 'home.cta', value: 'コースを始める' },
+              { key: 'course.enroll', value: 'コース登録' },
+              { key: 'course.cancel', value: 'コース取消' },
             ],
           },
         ],
@@ -277,6 +282,28 @@ describe('proposing terms over MCP', () => {
       await reader.close();
     }
   }, 60_000);
+
+  it('reads the translation a project already uses out of its own translations', async () => {
+    const extracted = await call<{
+      candidates: { term: string; keyCount: number; suggestions: { locale: string; value: string; support: number; total: number; example: { source: string; target: string } }[] }[];
+      locales: string[];
+    }>(`/projects/${projectId}/glossary/extract`, { method: 'POST', token: session.token, body: { minKeys: 2, limit: 20 } });
+    expect(extracted.status, JSON.stringify(extracted.body.error)).toBe(201);
+
+    const course = extracted.body.data!.candidates.find((entry) => entry.term.toLowerCase() === 'course');
+    expect(course, JSON.stringify(extracted.body.data!.candidates.map((entry) => entry.term))).toBeTruthy();
+
+    const japanese = course!.suggestions.find((item) => item.locale === 'ja-JP');
+    // Three of the four keys containing `Course` say `コース`; the fourth says `モジュール`. The count
+    // is the whole point — it is what lets somebody accept this in one glance, and it is also what
+    // tells them it is not unanimous.
+    expect(japanese).toMatchObject({ value: 'コース', support: 3, total: 4 });
+    expect(japanese!.example.source).toContain('Course');
+    expect(japanese!.example.target).toContain('コース');
+    // The source language is not a language to translate into, and asking what a word is in the
+    // language it is already in is the one answer that is always right.
+    expect(extracted.body.data!.locales).toEqual(['ja-JP']);
+  }, 120_000);
 
   it('lands a proposed term as a draft, and re-reads the project against it', async () => {
     const proposed = await client!.callTool({

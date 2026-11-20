@@ -8,7 +8,7 @@ import { QueueService, QUEUE_NAMES } from '../../common/queue.service';
 import { AuditService } from '../../common/audit.service';
 import { zodBody } from '../../common/zod.pipe';
 import { TranslationsService } from '../translations/translations.service';
-import { AiService, resolveGlossary } from '@localehub/domain';
+import { AiService, mineTermTranslations, resolveGlossary, type TermOccurrence } from '@localehub/domain';
 
 /**
  * Glossary, translation memory, AI drafting and the platform-wide overview endpoints used by
@@ -282,13 +282,18 @@ export class ContentController {
   }
 
   /**
-   * The words this project keeps using, proposed as terms.
+   * The words this project keeps using, with what the project already calls them.
    *
-   * A project that has already been translated has a vocabulary — it is just scattered across the
-   * sentences. Nothing here guesses a translation: an alignment between a sentence and its translation
-   * cannot say what one word inside it became, and inventing one would put a wrong answer in the
-   * termbase with the platform's authority behind it. What comes out is the shape of the vocabulary —
-   * which phrases recur, in how many keys — for somebody who does know the answer to fill in.
+   * A project that has already been translated has a vocabulary — and it has already answered most of
+   * the termbase: 2,795 translated keys have said what `学习` is in Traditional Chinese 152 times.
+   * Reading that back is counting, not guessing, and the count travels with every suggestion so the
+   * person deciding can see exactly how much of the project agrees.
+   *
+   * It is still an *extraction*, not an alignment: a sentence pair cannot say which part of the
+   * translation a word inside the source became, so every suggestion lands as a DRAFT term that
+   * somebody approves — and a term with no clear answer comes back with no suggestion rather than a
+   * plausible one. See `packages/domain/src/term-mining.ts` for the two counting mistakes this
+   * refuses to make (a source boundary that is wrong, and machinery counted as vocabulary).
    */
   @Post('projects/:projectId/glossary/extract')
   @RequireRole(Role.PROJECT_MANAGER)
@@ -299,18 +304,37 @@ export class ContentController {
   ) {
     assertRole(actor, projectId, Role.PROJECT_MANAGER);
     return this.prisma.tenant.withOrganization(actor.organizationId, async (tx) => {
+      const project = await tx.project.findUnique({ where: { id: projectId }, select: { sourceLocale: true, locales: { select: { code: true } } } });
       const keys = await tx.translationKey.findMany({
         where: { projectId, archivedAt: null },
-        select: { id: true, key: true, sourceVersions: { orderBy: { version: 'desc' }, take: 1, select: { value: true } } },
+        select: {
+          id: true,
+          key: true,
+          sourceVersions: { orderBy: { version: 'desc' }, take: 1, select: { value: true } },
+          // The translations that make a suggestion possible at all. Only the target languages: the
+          // source locale's own values are the source, and asking what a Chinese term is in Chinese
+          // is the one answer that is always right and never useful.
+          entries: { select: { localeCode: true, value: true } },
+        },
         take: 5000,
       });
+      const sourceLocale = project?.sourceLocale ?? '';
+      const locales = (project?.locales ?? []).map((entry) => entry.code).filter((code) => code !== sourceLocale);
       const known = new Set((await resolveGlossary(tx, { organizationId: actor.organizationId, projectId })).map((term) => term.term.toLowerCase()));
 
+      const rows: TermOccurrence[] = keys
+        .map((row) => ({
+          key: row.key,
+          source: row.sourceVersions[0]?.value ?? '',
+          targets: Object.fromEntries(
+            row.entries.filter((entry) => entry.localeCode !== sourceLocale && entry.value).map((entry) => [entry.localeCode, entry.value]),
+          ),
+        }))
+        .filter((row) => row.source);
+
       const seen = new Map<string, { term: string; keys: Set<string>; example: string }>();
-      for (const row of keys) {
-        const source = row.sourceVersions[0]?.value ?? '';
-        if (!source) continue;
-        for (const candidate of candidatePhrases(source)) {
+      for (const row of rows) {
+        for (const candidate of candidatePhrases(row.source)) {
           const identity = candidate.toLowerCase();
           if (known.has(identity)) continue;
           const entry = seen.get(identity) ?? { term: candidate, keys: new Set<string>(), example: row.key };
@@ -318,13 +342,26 @@ export class ContentController {
           seen.set(identity, entry);
         }
       }
+      const has = (source: string, term: string): boolean => source.toLowerCase().includes(term.toLowerCase());
       const candidates = maximalPhrases([...seen.values()].filter((entry) => entry.keys.size >= body.minKeys))
         // Longest first at equal frequency: `课程学习` says more than `课程`, and the shorter one is
         // almost always its substring showing up in the same sentences.
         .sort((a, b) => b.keys.size - a.keys.size || b.term.length - a.term.length || a.term.localeCompare(b.term))
         .slice(0, body.limit)
-        .map((entry) => ({ term: entry.term, keyCount: entry.keys.size, exampleKey: entry.example }));
-      return { candidates, scannedKeys: keys.length, minKeys: body.minKeys };
+        .map((entry) => {
+          // What the project already says this term is, per language, with the count that supports it.
+          const occurrences = rows.filter((row) => has(row.source, entry.term));
+          const background = rows.filter((row) => !has(row.source, entry.term)).slice(0, 300);
+          const mined = mineTermTranslations(entry.term, occurrences, background, locales);
+          return {
+            term: entry.term,
+            keyCount: entry.keys.size,
+            exampleKey: entry.example,
+            suggestions: mined.suggestions,
+            keepAsIs: mined.keepAsIs,
+          };
+        });
+      return { candidates, scannedKeys: rows.length, minKeys: body.minKeys, locales };
     });
   }
 
