@@ -5,6 +5,9 @@ import { emitProjectEvent } from './events';
 import { upsertTranslation } from './translation-core';
 import type { PrismaClient } from '@prisma/client';
 import { TenantPrisma } from '@localehub/database';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 export interface AiProvider {
   id: string;
@@ -115,10 +118,182 @@ export class OllamaProvider implements AiProvider {
   }
 }
 
+/** The slice of pi's SDK this file uses. Structural, so the package can stay an optional dependency. */
+interface PiSdk {
+  createAgentSession(options: Record<string, unknown>): Promise<{
+    session: {
+      prompt(text: string, options?: Record<string, unknown>): Promise<void>;
+      getLastAssistantText(): string | undefined;
+      dispose(): void;
+    };
+  }>;
+  ModelRuntime: {
+    create(options?: Record<string, unknown>): Promise<{
+      getModel(providerId: string, modelId: string): unknown;
+      getAvailable(): Promise<readonly unknown[]>;
+    }>;
+  };
+  SessionManager: { inMemory(cwd?: string): unknown };
+}
+
+/**
+ * A real dynamic `import()`, kept out of the compiler's reach.
+ *
+ * This package builds as CommonJS, which rewrites `await import(x)` into `require(x)` — and the pi SDK
+ * is ESM with an `exports` map that defines no `require` entry, so the rewritten call is a coin flip
+ * that lands heads or tails depending on the Node version. The specifier lives in a string so the
+ * import stays a genuine one.
+ */
+const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
+
+/** Loads the SDK. Absence is explained where it surfaces, in `PiProvider.complete`. */
+async function loadPiSdk(): Promise<PiSdk> {
+  return (await dynamicImport('@earendil-works/pi-coding-agent')) as PiSdk;
+}
+
+/**
+ * Translation and review through `pi`, the terminal agent's own SDK.
+ *
+ * It exists because the machine that runs the platform already has pi configured — its own providers,
+ * its own credentials, its own model catalogue — so there is no second key to hand out and no second
+ * bill. It needs care for the same reason: this is the one provider here that runs *a model with an
+ * agent runtime behind it* rather than a bare completion, so the call is built to take its teeth out
+ * first.
+ *
+ *   - `noTools: 'all'` — no tools at all. The string being translated is data; there is no file to read
+ *     and no command to run that it should be able to talk the model into.
+ *   - `expandPromptTemplates: false` — a slash-command or skill name inside a string must not be
+ *     interpreted as one.
+ *   - a throwaway working directory — no AGENTS.md, no project settings, nothing discovered from
+ *     wherever the API happens to be running.
+ *   - a deadline, and `dispose()` in a `finally`: an agent that hangs must not hold the request open.
+ *
+ * The SDK is an *optional* dependency, loaded on first use, so a deployment that does not choose this
+ * provider neither installs an agent runtime nor pays for it at boot.
+ */
+export class PiProvider implements AiProvider {
+  readonly id = 'pi';
+
+  constructor(
+    private readonly options: {
+      /** `provider/model` as pi's catalogue names them — `gpt-61-sol` / `ctyun/glm-5.3-flash`. */
+      provider?: string;
+      model?: string;
+      /** Where pi keeps `auth.json` / `models.json`. Defaults to pi's own (`~/.pi/agent`). */
+      agentDir?: string;
+      timeoutMs?: number;
+      /** Injected by tests, so the missing-SDK path is exercised without uninstalling anything. */
+      load?: () => Promise<PiSdk>;
+    } = {},
+  ) {}
+
+  private async complete(system: string, user: string): Promise<string> {
+    // Any loader failure becomes the same sentence: an unresolved module three frames down says
+    // "MODULE_NOT_FOUND" and leaves the operator to guess which of several providers asked for it.
+    const sdk = await (this.options.load ?? loadPiSdk)().catch((cause: unknown) => {
+      throw new LocaleHubError(
+        ErrorCode.INTERNAL_ERROR,
+        'The "pi" AI provider is selected but @earendil-works/pi-coding-agent could not be loaded. Install it in the ' +
+          'workspace (`pnpm add @earendil-works/pi-coding-agent`) or on the machine that runs the API, or choose a ' +
+          'different provider with AI_DEFAULT_POLICY.',
+        500,
+        { provider: 'pi', cause: cause instanceof Error ? cause.message : String(cause) },
+      );
+    });
+    const agentDir = this.options.agentDir;
+    const runtime = await sdk.ModelRuntime.create({
+      refreshOnCreate: false,
+      ...(agentDir ? { authPath: join(agentDir, 'auth.json'), modelsPath: join(agentDir, 'models.json') } : {}),
+    });
+
+    const model =
+      this.options.provider && this.options.model
+        ? runtime.getModel(this.options.provider, this.options.model)
+        : (await runtime.getAvailable())[0];
+    if (!model) {
+      throw new LocaleHubError(
+        ErrorCode.INTERNAL_ERROR,
+        this.options.provider && this.options.model
+          ? `pi has no model ${this.options.provider}/${this.options.model}. Check \`pi list\` or the models.json it reads.`
+          : 'pi has no model with usable credentials. Set PI_PROVIDER and PI_MODEL, or run `pi auth login`.',
+        502,
+      );
+    }
+
+    // A directory with nothing in it, so no project resource can reach the model.
+    const cwd = mkdtempSync(join(tmpdir(), 'localehub-pi-'));
+    try {
+      const { session } = await sdk.createAgentSession({
+        cwd,
+        model,
+        modelRuntime: runtime,
+        noTools: 'all',
+        sessionManager: sdk.SessionManager.inMemory(cwd),
+      });
+      try {
+        await withDeadline(
+          session.prompt(`${system}\n\n${user}`, { expandPromptTemplates: false }),
+          this.options.timeoutMs ?? 90_000,
+        );
+        return (session.getLastAssistantText() ?? '').trim();
+      } finally {
+        session.dispose();
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }
+
+  async translate(input: { text: string; sourceLocale: string; targetLocale: string; glossary?: { term: string; translation: string }[] }) {
+    const glossary = (input.glossary ?? []).map((term) => `${term.term} => ${term.translation}`).join('\n');
+    const text = await this.complete(
+      'You are a professional software localisation engine. Return only the translated string, preserving every placeholder and markup token exactly.',
+      `Source (${input.sourceLocale}) -> Target (${input.targetLocale})\n${glossary ? `Glossary:\n${glossary}\n` : ''}\n${input.text}`,
+    );
+    return { text, provider: this.id, confidence: 0.75 };
+  }
+
+  async review(input: { source: string; target: string; targetLocale: string }) {
+    const raw = await this.complete(
+      'You review software translations. Reply with JSON: {"issues":[{"code":"...","message":"...","severity":"ERROR|WARNING|INFO"}]}.',
+      `Source: ${input.source}\nTarget (${input.targetLocale}): ${input.target}`,
+    );
+    try {
+      const start = raw.indexOf('{');
+      const end = raw.lastIndexOf('}');
+      const parsed = JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : raw) as {
+        issues: { code: string; message: string; severity: 'ERROR' | 'WARNING' | 'INFO' }[];
+      };
+      return { issues: parsed.issues ?? [], provider: this.id };
+    } catch {
+      // A model that answered in prose is not a review. Said plainly rather than thrown as a parse error.
+      return { issues: [{ code: 'AI_UNPARSEABLE', message: raw.slice(0, 500), severity: 'INFO' as const }], provider: this.id };
+    }
+  }
+}
+
+/** Rejects rather than letting an agent run hold a request open forever. */
+function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new LocaleHubError(ErrorCode.INTERNAL_ERROR, `pi did not answer within ${ms} ms`, 504)), ms);
+    work.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+}
+
 export function createProvider(kind?: string): AiProvider {
   const requested = kind ?? process.env.AI_DEFAULT_POLICY ?? 'heuristic';
   if (requested === 'anthropic' && process.env.ANTHROPIC_API_KEY) return new AnthropicProvider(process.env.ANTHROPIC_API_KEY);
   if (requested === 'ollama' && process.env.OLLAMA_BASE_URL) return new OllamaProvider(process.env.OLLAMA_BASE_URL);
+  // `pi` needs no key of its own: it reads the credentials the machine already has. Which model to use
+  // comes from the environment, because the catalogue is the operator's, not the platform's.
+  if (requested === 'pi') {
+    return new PiProvider({
+      provider: process.env.PI_PROVIDER,
+      model: process.env.PI_MODEL,
+      agentDir: process.env.PI_AGENT_DIR,
+      ...(process.env.PI_TIMEOUT_MS ? { timeoutMs: Number(process.env.PI_TIMEOUT_MS) } : {}),
+    });
+  }
   return new HeuristicProvider();
 }
 

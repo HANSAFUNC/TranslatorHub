@@ -32,3 +32,6 @@ packages/database/generated/
 .localehub-bundles/
 __pycache__/
 *.pyc
+
+# Machine-specific compose overrides (mounts, local models).
+compose.override.yaml

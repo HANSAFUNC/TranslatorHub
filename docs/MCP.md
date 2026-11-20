@@ -525,15 +525,26 @@ finding 就退出码非零——可以在提交前或 CI 里卡住「本地过�
 **AI 翻译**（走 `POST /projects/:id/ai/translate`，与 MCP 的 `translate_entries` 是同一个服务、同一个 provider、
 同一套术语库，写进去的永远是 **DRAFT**——AI 不能自己通过审核）。两者都不离开这个页面。
 
-**AI 要真翻译得先配 provider**（否则是离线启发式，只做术语替换、基本等于返回原文）：
+**AI 要真翻译得先配 provider**（否则是离线启发式，只做术语替换、基本等于返回原文）。三种名字有效：
+`pi`、`anthropic`、`ollama`；其余（含默认的 `hybrid`）都落到启发式。
 
 ```bash
-# localehub.env
-ANTHROPIC_API_KEY=sk-ant-...
-AI_DEFAULT_POLICY=anthropic     # 只设 key 不够：createProvider 读的是这个，默认 'hybrid' 会落到启发式
+# localehub.env —— 用这台机器上已配好的 pi（自带供应商与凭据，不用再发一把 key）
+AI_DEFAULT_POLICY=pi
+PI_PROVIDER=gpt-61-sol          # pi 目录里的供应商名（pi list 或 ~/.pi/agent/models.json）
+PI_MODEL=ctyun/glm-5.3-flash
+# PI_AGENT_DIR=                 # pi 的 auth.json/models.json 在哪，默认 ~/.pi/agent
+# PI_TIMEOUT_MS=90000
+
+# 或者用 anthropic：AI_DEFAULT_POLICY=anthropic + ANTHROPIC_API_KEY
 ```
 
-`OPENAI_API_KEY` 目前在配置里但**代码没有读它**，设了不起作用。
+**`pi` 这条路的两个要点**：SDK 是**可选依赖**（`pnpm add @earendil-works/pi-coding-agent`，只在这个 provider
+真被用到的地方装）；调用时**模型没有任何工具**（`noTools: 'all'`）、不许展开斜杠命令/技能、工作目录是临时目录、
+带超时——被翻译的字符串是数据，它没有理由能指挥一个 agent 去读文件或跑命令。容器里要挂 pi 的凭据目录，
+见本机 gitignore 掉的 `compose.override.yaml`。
+
+`OPENAI_API_KEY` 在配置里但**没有任何 provider 读它**，设了不起作用。
 
 ## 3. 本地仓库操作：CLI（不是 MCP）
 

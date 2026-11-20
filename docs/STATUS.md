@@ -1946,6 +1946,48 @@ AI DRAFTED IN PLACE  : true
 `OPENAI_API_KEY` 在配置 schema 里但**代码从未读取**——是个空旋钮。这次实测里 provider 就是启发式，
 所以「译文」等于原文（`docs/STATUS.md:945` 早就记过这条，现在 web 端也能看见了）。已写进 `docs/MCP.md`。
 
+### 1.59 把 pi 接进来（走它的 SDK，不是命令行）
+
+用户说「不要补这个 把 pi 接进去」「接代码版的」。第一轮我猜成了 shell 调 `pi` CLI，被否掉——他要的是
+**SDK**。`pi` 是 `@earendil-works/pi-coding-agent@1.5.2`（这台机器上全局装着），SDK 入口是
+`createAgentSession` + `ModelRuntime` + `SessionManager`。
+
+**为什么值得接**：这台机器上的 pi 已经配好了供应商与凭据（`~/.pi/agent/models.json` 里一个自定义供应商
+`gpt-61-sol`，`https://io.immchina.cn`，模型 `ctyun/glm-5.3-flash`），平台不用再分发一把 key。这也解释了
+最初那次 `pi -p` 报 401：**没指定 provider/model 时它挑了个没有凭据的默认**，`~/.pi/agent/auth.json` 只有 2 字节（`{}`）。
+
+**为什么必须小心**：这是唯一一个「背后是**带 agent 运行时的模型**，而不是裸 completion」的 provider。所以调用
+是先拔牙再说话（`PiProvider.complete`，注释里逐条写了理由）：
+
+- `noTools: 'all'` —— **一个工具都没有**。被翻译的字符串是数据，它没有理由能指挥模型去读文件或跑命令。
+- `expandPromptTemplates: false` —— 字符串里出现斜杠命令或技能名，不许被当成命令展开。
+- **临时工作目录**（`mkdtemp`）—— 不带进 AGENTS.md、项目设置，任何从"API 恰好在哪个目录跑"发现的东西。
+- **超时 + `finally` 里 `dispose()`** —— 挂住的 agent 不能把请求一直占着。
+
+**工程上的三个决定**：
+
+1. **SDK 是可选依赖**，用「真正的动态 import」加载：TS 编到 CommonJS 会把 `await import(x)` 改写成
+   `require(x)`，而 pi 是 ESM-only、`exports` 里没有 `require` 入口，改写的调用成不成就看 Node 版本——
+   所以说明符放在字符串里（`new Function('s','return import(s)')`），保住它是一次真正的 import。
+   没用它的部署不装这 ~100MB 的 agent 运行时，启动也不加载。
+2. **依赖没写进 package.json**：`pnpm add` 卡在 tarball 的 ECONNRESET（这条链路一贯如此），而它已经把
+   依赖写进了 lockfile 却没写 package.json——那是个 CI 上 `--frozen-lockfile` 会炸的不一致状态，已回退。
+   改为：代码里按名字给出安装指引，部署方自己决定装不装。
+3. **失败要说人话**：任何 loader 失败都包装成一句「选了 pi，但装不上，装它或者换 provider」。
+   这条包装放在失败**浮现的地方**而不是默认 loader 里——第一版的测试正是因为这个位置错了而失败
+   （注入的 loader 绕过了包装），说明测试确实在测用户看到的行为。
+
+**让它在容器里也能用**（本机 gitignore 的 `compose.override.yaml`）：挂 pi 的 agent 目录 + 全局 SDK 目录，
+设 `AI_DEFAULT_POLICY=pi` / `PI_PROVIDER` / `PI_MODEL` / `PI_AGENT_DIR`。**凭据目录必须可写**——
+pi 的凭据存储要在 `auth.json` 旁边建锁文件，只读挂载会以 `EROFS: mkdir '/pi-agent/auth.json.lock'` 失败
+（这个错误我先撞到了才改的）。SDK 目录保持只读。
+
+**验证**（三处，都是真调用）：宿主 SDK——`去学习` → `Start learning`（4.9s）；容器里的 REST——
+`分享文章自动带上个人名片，追踪客户线索` → `Share articles with your personal card automatically attached
+to track customer leads`（3.6s，`provider: pi`）；草图页上点 **AI 翻译** 按钮——
+`Automatically attach your personal card when…`，状态 `DRAFT`，页面没跳。456 单元（新增 4 条，含把
+`noTools: 'all'` 与 `expandPromptTemplates: false` 钉住的那条）/ typecheck / lint 全绿。
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |
