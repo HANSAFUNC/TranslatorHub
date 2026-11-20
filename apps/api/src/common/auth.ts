@@ -145,8 +145,19 @@ export class AuthGuard implements CanActivate {
     const projectId = (request.params?.projectId ?? request.body?.projectId) as string | undefined;
     if (projectId) assertProjectBound(actor, projectId);
 
-    // Track last use without blocking the request path.
-    void this.prisma.mcpClient.update({ where: { id: client.id }, data: { lastUsedAt: new Date() } }).catch(() => undefined);
+    // Track last use without blocking the request path — inside the same scope bypass the lookup
+    // above needed, and with `updateMany` rather than `update`.
+    //
+    // Both halves were bugs, and the pair of them hid each other. `mcp_clients` is behind row level
+    // security, so an unscoped `update` matched no row and Prisma raised P2025; the `.catch()` here
+    // swallowed the rejection but not Prisma's own `prisma:error` line, so the only visible symptom
+    // was log noise — while every token in the database said it had never been used. The page that
+    // exists to tell somebody their token was leaked was telling them none of their tokens had ever
+    // been used at all. `updateMany` reports "0 rows" instead of throwing, which is the honest answer
+    // for a best-effort touch of a token that has since been deleted.
+    void this.prisma.tenant
+      .withoutTenantScope((tx) => tx.mcpClient.updateMany({ where: { id: client.id }, data: { lastUsedAt: new Date() } }))
+      .catch(() => undefined);
 
     return actor;
   }

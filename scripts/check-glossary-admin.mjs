@@ -235,6 +235,11 @@ const candidates = await evaluate(`(() => {
 })()`);
 check(candidates.count > 0, 'the project’s own vocabulary comes back as candidates', `${candidates.count} 个`);
 console.log('   candidates:', JSON.stringify(candidates.sample));
+// The candidate table on its own: this one is about how it reads, and the layout is the thing under
+// discussion when a row can be as wide as a sentence.
+await send('Page.captureScreenshot', { format: 'png' }).then((shot) => {
+  writeFileSync('/tmp/glossary-candidates.png', Buffer.from(shot.data, 'base64'));
+});
 
 // The suggestion, on the page, with its count and an example — the three things that make it
 // something a person can accept in one glance instead of something they have to go and check.
@@ -247,6 +252,41 @@ check(
   Boolean(shown) && shown.text.includes('→'),
   'a candidate arrives with the translation the project already uses',
   shown ? shown.text : 'no suggestion on any candidate row',
+);
+
+// The action has to survive the row's own content: a suggestion's example can be a whole sentence, and
+// a table that scrolls sideways takes the button off-screen — leaving out the one thing the row is for.
+//
+// Measured at a narrow window with the table scrolled fully *left*, which is the only measurement that
+// says anything: scrolled right, the last column is on screen whether it is pinned or not, and at
+// 1500px the table simply fits — both of which let a first version of this check pass for the wrong
+// reason. What is being asked is "can the button be seen while reading the row", not "can it be
+// scrolled to".
+const measure = async () => evaluate(`(() => {
+  const row = document.querySelector('[data-candidate]');
+  const container = row ? row.closest('[data-slot="table-container"]') : null;
+  if (!row || !container) return null;
+  container.scrollLeft = 0;
+  const button = [...row.querySelectorAll('button')].pop();
+  const box = container.getBoundingClientRect();
+  const spot = button.getBoundingClientRect();
+  return {
+    overflow: container.scrollWidth - container.clientWidth,
+    visibleWithoutScrolling: spot.width > 0 && spot.right <= box.right + 1 && spot.left >= box.left - 1,
+    fromTheRightEdge: Math.round(box.right - spot.right),
+  };
+})()`);
+await send('Emulation.setDeviceMetricsOverride', { width: 820, height: 1000, deviceScaleFactor: 1, mobile: false });
+await delay(500);
+const pinned = await measure();
+await send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 1100, deviceScaleFactor: 1, mobile: false });
+await delay(300);
+check(
+  Boolean(pinned) && pinned.visibleWithoutScrolling && pinned.fromTheRightEdge <= 24,
+  '加入 is on screen without scrolling sideways, at the narrow end',
+  pinned
+    ? `表格宽出 ${pinned.overflow}px，未横向滚动时按钮距右边缘 ${pinned.fromTheRightEdge}px`
+    : 'no candidate row',
 );
 
 if (shown) {

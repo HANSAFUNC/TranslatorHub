@@ -92,6 +92,22 @@ async function authenticate(req: Request, prisma: PrismaClient, tenant: TenantPr
   const projectRoles: Record<string, Role | null> = {};
   for (const role of client.user.projectRoles) projectRoles[role.projectId] = role.role as Role;
 
+  /**
+   * Record that the token was used — here, where a token is actually used.
+   *
+   * The API does the same for bearer calls to REST, and this is the path that matters more: an agent
+   * talks to the MCP server, not to REST. Without it every token on the settings page read "never
+   * used" no matter how much work it had done, which is the one question that page exists to answer
+   * — and a token you cannot tell is in use is a token you cannot tell has leaked.
+   *
+   * `withoutTenantScope` because `mcp_clients` is behind row level security and this write runs
+   * before any tenant context exists; `updateMany` because a token deleted between the lookup above
+   * and here is not an error, it is a token that is gone.
+   */
+  void tenant
+    .withoutTenantScope((tx) => tx.mcpClient.updateMany({ where: { id: client.id }, data: { lastUsedAt: new Date() } }))
+    .catch(() => undefined);
+
   void prisma;
   return {
     kind: 'mcp',

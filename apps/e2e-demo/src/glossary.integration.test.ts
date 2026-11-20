@@ -32,6 +32,8 @@ const runId = Date.now().toString(36);
 let api: ApiHandle | null = null;
 let mcp: ApiHandle | null = null;
 let client: Client | null = null;
+/** The MCP token this suite uses, kept so a test can call the REST API with it directly. */
+let mcpToken = '';
 let worker: { stop(): Promise<void> } | null = null;
 const session = { email: '', password: '', token: '' };
 
@@ -202,6 +204,7 @@ beforeAll(async () => {
   });
   expect(issued.status, JSON.stringify(issued.body.error)).toBe(201);
 
+  mcpToken = issued.body.data!.token;
   mcp = await ensureRemoteMcp(MCP_PORT, { root: ROOT });
   client = new Client({ name: 'glossary-suite', version: '0.0.0' });
   await client.connect(transport(issued.body.data!.token));
@@ -262,6 +265,26 @@ describe('proposing terms over MCP', () => {
     expect(imported.isError, JSON.stringify(imported.content)).toBeFalsy();
   }, 120_000);
 
+  it('records that a token was used', async () => {
+    // `mcp_clients` is behind row level security, so the "touch lastUsedAt" write has to run inside
+    // the same scope bypass the token lookup needs. It did not, the update matched no row, and
+    // because the rejection was caught the only symptom was log noise — every token in the database
+    // claimed it had never been used, which is precisely the question that page exists to answer.
+    const used = await call('/projects', { token: mcpToken });
+    expect(used.status, JSON.stringify(used.body.error)).toBe(200);
+
+    const prisma = new PrismaClient();
+    try {
+      const row = await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SELECT set_config('app.bypass_rls', 'on', true)`);
+        return tx.mcpClient.findFirstOrThrow({ where: { name: 'glossary-suite' }, orderBy: { createdAt: 'desc' } });
+      });
+      expect(row.lastUsedAt).not.toBeNull();
+    } finally {
+      await prisma.$disconnect();
+    }
+  }, 60_000);
+
   it('needs the scope that allows writing a term', async () => {
     const issued = await call<{ token: string }>('/mcp-tokens', {
       method: 'POST',
@@ -298,7 +321,10 @@ describe('proposing terms over MCP', () => {
     // is the whole point — it is what lets somebody accept this in one glance, and it is also what
     // tells them it is not unanimous.
     expect(japanese).toMatchObject({ value: 'コース', support: 3, total: 4 });
-    expect(japanese!.example.source).toContain('Course');
+    // The example is one occurrence, whole. Which one is not fixed — the term matches its source
+    // case-insensitively, so a key that says `the course` is as much an occurrence as one that says
+    // `Course` — but it does have to be an occurrence, and the value has to be in it.
+    expect(japanese!.example.source.toLowerCase()).toContain('course');
     expect(japanese!.example.target).toContain('コース');
     // The source language is not a language to translate into, and asking what a word is in the
     // language it is already in is the one answer that is always right.

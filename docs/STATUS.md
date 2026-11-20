@@ -2133,6 +2133,32 @@ QA 页面上 `课程 → Course` 是红色 ERROR，而发布前校验对同一�
 两个坑：一是 `data-term` 行里第一个按钮原本是状态开关，加了就地编辑后变成了语言格子，于是检查脚本点错了地方、
 报「批准无效」——**检查脚本点错东西，看起来和功能坏掉一模一样**，所以给按钮加了 `data-term-status` 这种名字锚点；
 二是检查脚本里裸 `fetch` 发 POST 全 403，一开始被我读成「这些项目没有可抽的东西」——其实是缺 CSRF 双提交头。
+### 1.64 候选的「加入」钉在右边；以及日志里那串 prisma:error 的真身
+
+用户两条：候选的「加入」按钮应该固定在右边；以及贴来的一串 `prisma:error: Invalid prisma.mcpClient.update()`。
+
+**加入钉在右边**。候选行里的例子可以是一整句，行一宽就把按钮顶出屏幕——那是这一行存在的唯一理由。现在：
+
+- 操作列 `sticky right-0`（表头一起），横向滚动时钉在右边缘；
+- 例子的**两半各自截断**（原文 11rem、译文 13rem，各自带 title 全文），而不是整行截一刀——整行截会把后半句
+  切掉，而**后半句正是要判断的那个译文**。
+
+检查脚本的这条断言改过两次，两次都是「通过了，但通过的理由是错的」：第一版在 1500px 下量，表格根本没溢出，
+`按钮在右边缘` 恒真；第二版把表滚到最右边再量——滚到底时最后一列**本来就**在屏幕里，钉不钉都一样。现在量的是
+**不横向滚动**时按钮是否可见（820px 窗口，`scrollLeft = 0`）——这才是「固定在右边」的意思。
+
+**那串 prisma:error**：`mcp_clients` 在 RLS 后面，而 `apps/api/src/common/auth.ts` 记录「最后使用时间」的那个
+update 是**裸的**（没进 tenant scope）→ 匹配 0 行 → Prisma 抛 P2025 → `.catch()` 吞掉了 rejection 但吞不掉
+Prisma 自己打的 `prisma:error`。于是症状只有日志噪音，而**数据库里每一个 token 的 last_used_at 都是 NULL**：
+`/developers/tokens` 页面对所有 token 显示「从未使用」——一个用来回答「我的 token 有没有被人用」的页面，
+对所有 token 都说没有。
+
+两处都修了：API 那条改成 `withoutTenantScope` + `updateMany`（0 行不是错误，是 token 已经不在了）；
+**MCP server 那条根本没有**（`apps/mcp-remote/src/main.ts` 只查不写）——而 Agent 走的就是 MCP server 而不是 REST，
+所以只修 API 等于没修。实测：只经 MCP server 用过的 token（`onboarding-…`）现在也记下了使用时间，`prisma:error` 归零。
+
+**验证**：新增集成测试「用过的 token 会记下被用过」（改之前必然失败：断言 `lastUsedAt` 非空）；488 单元 /
+183 集成 / 浏览器 17 项 / lint / typecheck 全绿。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

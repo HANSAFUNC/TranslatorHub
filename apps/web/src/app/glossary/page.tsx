@@ -229,7 +229,9 @@ export default function GlossaryPage() {
                         ))}
                         <TableHead className="w-24">状态</TableHead>
                         <TableHead className="w-28">来源</TableHead>
-                        <TableHead className="w-40" />
+                        {/* Pinned like the candidates' action column: with six languages the row is
+                            wider than the screen, and the buttons have to stay reachable. */}
+                        <TableHead className="bg-card sticky right-0 w-40 border-l" />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -313,7 +315,7 @@ export default function GlossaryPage() {
                               <span className="text-muted-foreground">组织</span>
                             )}
                           </TableCell>
-                          <TableCell className="align-top">
+                          <TableCell className="bg-card sticky right-0 border-l align-top">
                             <span className="flex flex-wrap items-center gap-1">
                               {term.status === 'APPROVED' ? (
                                 <Button
@@ -391,10 +393,13 @@ export default function GlossaryPage() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>候选词</TableHead>
-                          <TableHead className="w-24">出现于</TableHead>
+                          <TableHead className="w-40">候选词</TableHead>
+                          <TableHead className="w-20">出现于</TableHead>
                           <TableHead>建议译法</TableHead>
-                          <TableHead className="w-28" />
+                          {/* Pinned to the right edge. The example beside it can be a whole sentence,
+                              and a table that scrolls sideways takes the button with it — leaving the
+                              one thing the row exists for off-screen. */}
+                          <TableHead className="bg-card sticky right-0 w-24 border-l" />
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -413,16 +418,27 @@ export default function GlossaryPage() {
                               {candidate.suggestions.length ? (
                                 <span className="flex flex-col gap-1">
                                   {candidate.suggestions.map((suggestion) => (
-                                    <span key={suggestion.locale} className="flex flex-wrap items-baseline gap-1.5 text-sm">
-                                      <span className="text-muted-foreground font-mono text-[11px]">{suggestion.locale}</span>
-                                      <span className="font-medium">{suggestion.value}</span>
-                                      {/* The count is the argument. `46/47` is a decision somebody can
-                                          make in a glance; a bare value is a claim they have to check. */}
-                                      <span className="text-muted-foreground text-[11px] tabular-nums">
-                                        {suggestion.support}/{suggestion.total}
+                                    <span key={suggestion.locale} className="flex flex-col gap-0.5">
+                                      <span className="flex flex-wrap items-baseline gap-1.5 text-sm">
+                                        <span className="text-muted-foreground font-mono text-[11px]">{suggestion.locale}</span>
+                                        <span className="font-medium">{suggestion.value}</span>
+                                        {/* The count is the argument. `46/47` is a decision somebody can
+                                            make in a glance; a bare value is a claim they have to check. */}
+                                        <span className="text-muted-foreground text-[11px] tabular-nums">
+                                          {suggestion.support}/{suggestion.total}
+                                        </span>
                                       </span>
-                                      <span className="text-muted-foreground truncate font-mono text-[11px]" title={`${suggestion.example.source} → ${suggestion.example.target}`}>
-                                        {suggestion.example.source} → {suggestion.example.target}
+                                      {/* Truncated per half rather than as one line: the example is
+                                          `what the source said → what the project wrote`, and cutting
+                                          the end off would hide the translation — the half being judged. */}
+                                      <span className="text-muted-foreground flex items-baseline gap-1 font-mono text-[11px]">
+                                        <span className="max-w-[11rem] truncate" title={suggestion.example.source}>
+                                          {suggestion.example.source}
+                                        </span>
+                                        <span aria-hidden>→</span>
+                                        <span className="max-w-[13rem] truncate" title={suggestion.example.target}>
+                                          {suggestion.example.target}
+                                        </span>
                                       </span>
                                     </span>
                                   ))}
@@ -433,7 +449,7 @@ export default function GlossaryPage() {
                                 </span>
                               )}
                             </TableCell>
-                            <TableCell className="align-top">
+                            <TableCell className="bg-card sticky right-0 border-l align-top">
                               <Button
                                 variant="outline"
                                 size="sm"
