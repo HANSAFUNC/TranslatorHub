@@ -125,6 +125,38 @@ console.log('row after            :', JSON.stringify((after.text ?? '').slice(0,
 console.log('value on the platform:', JSON.stringify(String(persisted).slice(0, 40)));
 console.log('SAVED IN PLACE       :', persisted === NEW && after.url === urlBefore);
 
+// ---- and the other way to fill the same box: ask the platform's AI -------------
+// One endpoint for both (`POST /ai/translate`), which is the point: a draft produced from the screen is
+// the same draft the MCP tool and the editor produce — same provider, same glossary, written as DRAFT,
+// and it can never approve itself.
+const beforeAi = await evaluate(`(async () => {
+  const r = await fetch('/api/v1/projects/${setup.projectId}/translations/${setup.found.entryId}', { credentials: 'include' });
+  return (await r.json()).data.value;
+})()`);
+await waitFor("document.querySelector('[role=dialog] [data-marker-ai]') !== null", 'the AI button');
+await evaluate(`(() => { document.querySelector('[role=dialog] [data-marker-ai]').click(); return true; })()`);
+await waitFor(
+  `(async () => {
+    const r = await fetch('/api/v1/projects/${setup.projectId}/translations/${setup.found.entryId}', { credentials: 'include' });
+    const body = await r.json();
+    return body.data.value !== ${JSON.stringify(beforeAi)};
+  })()`,
+  'the AI draft to land',
+  60000,
+);
+await delay(800);
+const afterAi = await evaluate(`(async () => {
+  const r = await fetch('/api/v1/projects/${setup.projectId}/translations/${setup.found.entryId}', { credentials: 'include' });
+  const body = await r.json();
+  const row = document.querySelector('[role=dialog] [data-marker-row="' + CSS.escape(${JSON.stringify(rowBefore.identity)}) + '"]');
+  return { value: body.data.value, status: body.data.status, url: location.href, row: row ? row.innerText.replace(/\\s+/g, ' ').slice(0, 120) : null };
+})()`);
+console.log('AI draft written     :', JSON.stringify(String(afterAi.value).slice(0, 44)));
+console.log('its status           :', afterAi.status);
+console.log('page stayed put      :', afterAi.url === urlBefore);
+console.log('row now shows        :', JSON.stringify(afterAi.row));
+console.log('AI DRAFTED IN PLACE  :', afterAi.value !== beforeAi && afterAi.status === 'DRAFT' && afterAi.url === urlBefore);
+
 await send('Page.captureScreenshot', { format: 'png' }).then((shot) => {
   writeFileSync('/tmp/inline-edit.png', Buffer.from(shot.data, 'base64'));
 });

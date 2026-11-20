@@ -167,6 +167,14 @@ check(tool?.description?.includes('localehub://screen-sketch-guide'), 'the tool 
 
 check(discovery.resources.includes('localehub://screen-sketch-guide'), 'GET /mcp/tools advertises the guide');
 check(discovery.prompts.includes('upload-screen-sketch'), 'GET /mcp/tools advertises the prompt');
+// The platform's own MCP page renders this list, and it comes from a hand-written array in
+// `@localehub/contracts` — so a prompt registered on the server and not added there is a prompt the
+// platform hides from itself. That is how `map-app-screens` was missing from the page.
+check(
+  discovery.prompts.includes('map-app-screens'),
+  'GET /mcp/tools advertises the map-first prompt',
+  discovery.prompts.join(', '),
+);
 
 /* --------------------------------------------------- the example, taken literally */
 

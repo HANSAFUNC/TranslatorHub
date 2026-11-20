@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ExternalLink, ImageIcon, Monitor, Pencil } from 'lucide-react';
+import { ExternalLink, ImageIcon, Monitor, Pencil, Sparkles } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -218,6 +218,26 @@ export function ScreenMockupDialog({
    * call is the editor's own (`POST /translations/:id/draft`), so a draft written here and a draft
    * written there are the same draft: same endpoint, same revision check, same review workflow.
    */
+  /**
+   * Ask the platform's AI for a draft of one string, in the locale being reviewed.
+   *
+   * The same endpoint the MCP tool and the editor would use (`POST /ai/translate`), so a draft produced
+   * here is indistinguishable from one produced anywhere else: same provider, same glossary, same
+   * DRAFT status, and it can never approve itself.
+   */
+  const draftWithAi = useCallback(
+    async (entryId: string, targetLocale: string): Promise<string | null> => {
+      const result = await post<{ results: { value: string }[] }>(`/projects/${projectId}/ai/translate`, {
+        entryIds: [entryId],
+        targetLocales: [targetLocale],
+        writeDrafts: true,
+      });
+      await reloadDetail();
+      return result.results?.[0]?.value ?? null;
+    },
+    [projectId, reloadDetail],
+  );
+
   const saveMarkerValue = useCallback(
     async (entryId: string, value: string): Promise<void> => {
       await post(`/projects/${projectId}/translations/${entryId}/draft`, { value });
@@ -770,6 +790,8 @@ export function ScreenMockupDialog({
                         onSelect={() => select(markerKey(marker))}
                         onOpenInEditor={onOpenInEditor}
                         onSave={saveMarkerValue}
+                        onAiDraft={draftWithAi}
+                        locale={locale ?? ''}
                         register={(node) => {
                           if (node) rowRefs.current.set(markerKey(marker), node);
                           else rowRefs.current.delete(markerKey(marker));
@@ -799,6 +821,8 @@ function MarkerRow({
   onSelect,
   onOpenInEditor,
   onSave,
+  onAiDraft,
+  locale,
   register,
 }: {
   index: number;
@@ -816,6 +840,10 @@ function MarkerRow({
   onOpenInEditor: (entry: { entryId: string; value: string }) => void;
   /** Write this entry's draft. The editor's own call, so the two cannot disagree. */
   onSave: (entryId: string, value: string) => Promise<void>;
+  /** Ask the platform's AI for a draft, written as DRAFT. Resolves to the text it produced. */
+  onAiDraft: (entryId: string, locale: string) => Promise<string | null>;
+  /** The locale under review: the one an AI draft would be written into. */
+  locale: string;
   register: (node: HTMLElement | null) => void;
 }) {
   // `platform === null` is the marker's "this key is not in the project" signal, from the domain's
@@ -827,10 +855,33 @@ function MarkerRow({
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [aiRunning, setAiRunning] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
   const cancelEdit = (): void => {
     setEditing(false);
     setSaveError(null);
   };
+  /**
+   * Draft this one string with AI, without leaving the screen.
+   *
+   * Read-only reviewers cannot do this (the API requires PRODUCT_MANAGER) and the refusal comes back
+   * into the row, the same as a manual save's does. What it writes is a DRAFT — AI never approves
+   * itself — so the row's badge changing to DRAFT is the honest sign that it ran.
+   */
+  const runAi = async (): Promise<void> => {
+    if (!marker.entry) return;
+    setAiRunning(true);
+    setAiError(null);
+    try {
+      const result = await onAiDraft(marker.entry.entryId, locale);
+      if (!result) setAiError('AI 没有返回译文（这条 Key 可能还没有原文）');
+    } catch (error) {
+      setAiError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAiRunning(false);
+    }
+  };
+
   const save = async (): Promise<void> => {
     if (!marker.entry) return;
     setSaving(true);
@@ -967,6 +1018,23 @@ function MarkerRow({
             </div>
           ) : (
             <div className="mt-2 flex flex-wrap items-center gap-2">
+              {marker.entry ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-marker-ai={markerKey(marker)}
+                  disabled={aiRunning}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void runAi();
+                  }}
+                >
+                  <Sparkles data-icon="inline-start" />
+                  {aiRunning ? '生成中…' : 'AI 翻译'}
+                </Button>
+              ) : null}
+              {aiError ? <span className="text-destructive text-xs">{aiError}</span> : null}
               {marker.entry ? (
                 <Button
                   type="button"

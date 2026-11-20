@@ -1917,6 +1917,35 @@ SAVED IN PLACE       : true
 真正的修法是把长描述搬进 `@localehub/contracts`，让 MCP server 与 API 读同一份——那是 19 个工具搬一次的机械活，
 这轮没做，留了口子。
 
+### 1.58 草图上就地改译文之后，把 AI 翻译也放到同一处
+
+用户说：「帮我把ai翻译也加上去」。AI 翻译此前**只有 MCP 工具**（`translate_entries`）和一条 REST 路由
+（`POST /projects/:id/ai/translate`），**web 端没有任何入口**——编辑器页面也没有。既然刚把「就地改译文」做在草图行上，
+AI 起草就应该在同一处，否则读者还是得两头跑。
+
+- 草图每一行现在三个动作：**AI 翻译**（`Sparkles`）／**编辑**／在编辑器中打开（次级）。
+- AI 那条走 `POST /projects/:id/ai/translate`，一次一条、写进**当前正在审的语言**；写完重拉详情，
+  行上的值与 DRAFT 徽标立刻更新。与 MCP 的 `translate_entries` 是**同一个服务、同一个 provider、同一套术语库**，
+  写进去的永远是 DRAFT——AI 不能自己通过审核。
+- 权限与其他失败一样**落在那一行上**：这个接口要 `PRODUCT_MANAGER`，不够就是 403，行内显示原因。
+- 不做「AI 直接覆盖后自动保存」这种隐式写：它就是一次起草，结果应当是可见、可改、可丢弃的。
+
+**验证**：`scripts/check-inline-edit.mjs` 扩展了一段——真项目真译文上点 `AI 翻译`，断言值变了、
+状态是 `DRAFT`、**URL 没变**，最后把原值写回。实测：
+
+```
+AI draft written     : "     分享文章自动带上个人名片，追踪客户线索"
+its status           : DRAFT
+page stayed put      : true
+AI DRAFTED IN PLACE  : true
+```
+
+**一个必须写下来的坑**：`createProvider()` 只认 `anthropic` 与 `ollama` 两个分支，其余一律落到
+`HeuristicProvider`（离线、不真翻）；而它读的是 `AI_DEFAULT_POLICY`（schema 默认 `'hybrid'`），
+所以**只设 `ANTHROPIC_API_KEY` 不起作用**，必须同时设 `AI_DEFAULT_POLICY=anthropic`。
+`OPENAI_API_KEY` 在配置 schema 里但**代码从未读取**——是个空旋钮。这次实测里 provider 就是启发式，
+所以「译文」等于原文（`docs/STATUS.md:945` 早就记过这条，现在 web 端也能看见了）。已写进 `docs/MCP.md`。
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

@@ -39,6 +39,9 @@ export const REMOTE_MCP_PROMPTS = [
   'fix-translation-issues',
   'import-localization-files',
   'upload-screen-sketch',
+  // The step before the upload: know which screens exist at all. It is also a reserved name, so a
+  // published skill cannot take it.
+  'map-app-screens',
 ] as const;
 
 export const REMOTE_MCP_TOOLS = [

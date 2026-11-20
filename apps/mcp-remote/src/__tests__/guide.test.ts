@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { PrismaClient, TenantPrisma } from '@localehub/database';
-import { REMOTE_MCP_SKETCH_GUIDE, REMOTE_MCP_TOOLS, Role, remoteToolSchemas } from '@localehub/contracts';
+import { REMOTE_MCP_PROMPTS, REMOTE_MCP_SKETCH_GUIDE, REMOTE_MCP_TOOLS, Role, remoteToolSchemas } from '@localehub/contracts';
 import { resolveMockupInput } from '@localehub/domain';
 import type { ActorContext } from '@localehub/permissions';
 
@@ -191,6 +191,22 @@ describe('the upload prompt', () => {
       expect(text).toContain('localehub://import-guide');
       // And it must stop before writing when the two irreversible decisions are wrong.
       expect(text).toContain('先停下来');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('advertises exactly the hand-written prompts the server registers', async () => {
+    // `/mcp/tools` is what the platform's own MCP page renders, and it answers from a hand-written list
+    // in `@localehub/contracts` — a second source of truth for "which prompts are there", with nothing
+    // keeping it in step. Adding `map-app-screens` to the server and not to the list is how the page came
+    // to show four prompts while a client saw five.
+    const client = await connect();
+    try {
+      const registered = (await client.listPrompts()).prompts
+        .map((row) => row.name)
+        .filter((name) => !name.startsWith('skill-'));
+      expect([...registered].sort()).toEqual([...REMOTE_MCP_PROMPTS].sort());
     } finally {
       await client.close();
     }

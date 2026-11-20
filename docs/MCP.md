@@ -519,6 +519,22 @@ localehub mockup --page src/app/projects/page.tsx --name 项目列表 --confirm 
 `localehub mockup check <file.html>` 跑的是**平台同一套规则**（同一个分析器），不写文件、不上传，有 warning 级
 finding 就退出码非零——可以在提交前或 CI 里卡住「本地过、平台不过」。传上去之后的 `report` 是同一份结果。
 
+### 草图上就能改译文，也能让 AI 起草
+
+草图的每一行有两个动作：**编辑**（就地改，保存走编辑器自己那条 `POST /translations/:entryId/draft`）和
+**AI 翻译**（走 `POST /projects/:id/ai/translate`，与 MCP 的 `translate_entries` 是同一个服务、同一个 provider、
+同一套术语库，写进去的永远是 **DRAFT**——AI 不能自己通过审核）。两者都不离开这个页面。
+
+**AI 要真翻译得先配 provider**（否则是离线启发式，只做术语替换、基本等于返回原文）：
+
+```bash
+# localehub.env
+ANTHROPIC_API_KEY=sk-ant-...
+AI_DEFAULT_POLICY=anthropic     # 只设 key 不够：createProvider 读的是这个，默认 'hybrid' 会落到启发式
+```
+
+`OPENAI_API_KEY` 目前在配置里但**代码没有读它**，设了不起作用。
+
 ## 3. 本地仓库操作：CLI（不是 MCP）
 
 > 仓库里的落点固定是 `.localehub/`：`config.yaml` 与 `mockups/`（图 + 说明）**要提交**，`state.json` /
