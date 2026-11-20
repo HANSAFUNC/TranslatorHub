@@ -1,7 +1,7 @@
 import { Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { PrismaClient, TenantPrisma } from '@localehub/database';
-import { runQaRules, type QaCandidateEntry } from '@localehub/domain';
+import { resolveGlossary, runQaRules, type QaCandidateEntry } from '@localehub/domain';
 import { QUEUE_NAMES } from './queues';
 import { startWebhookWorker } from './webhooks';
 
@@ -51,7 +51,8 @@ export function startWorker(connection: IORedis, prisma: PrismaClient): Worker[]
           where: { projectId, ...(locale ? { localeCode: locale } : {}) },
           include: { key: { include: { namespace: true, sourceVersions: { orderBy: { version: 'desc' }, take: 1 } } } },
         });
-        const glossary = await tx.glossaryTerm.findMany({ where: { organizationId, OR: [{ projectId }, { projectId: null }] } });
+        // One resolver, so the two scopes are reconciled the same way the API reconciles them.
+        const glossary = await resolveGlossary(tx, { organizationId, projectId });
 
         const candidates: QaCandidateEntry[] = entries.map((entry) => ({
           entryId: entry.id,
@@ -65,8 +66,11 @@ export function startWorker(connection: IORedis, prisma: PrismaClient): Worker[]
           sourceLocale: project.sourceLocale,
           glossaryTerms: glossary.map((term) => ({
             term: term.term,
-            translations: (term.translations ?? {}) as Record<string, string>,
+            translations: term.translations,
             caseSensitive: term.caseSensitive,
+            status: term.status,
+            doNotTranslate: term.doNotTranslate,
+            forbiddenTargets: term.forbiddenTargets,
           })),
         }));
 

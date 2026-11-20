@@ -1988,6 +1988,49 @@ to track customer leads`（3.6s，`provider: pi`）；草图页上点 **AI 翻�
 `Automatically attach your personal card when…`，状态 `DRAFT`，页面没跳。456 单元（新增 4 条，含把
 `noTools: 'all'` 与 `expandPromptTemplates: false` 钉住的那条）/ typecheck / lint 全绿。
 
+### 1.60 项目固定词库：模型、解析、策展、分级，以及后台管理里的那个页面
+
+用户说「三个都按你倾向的做 我是说要在后台管理显示」。设计见 `docs/TERMBASE.md`（§9 是这次的实施状态）。
+按设计做的七步里做了第 1–4、6、7 步；**第 5 步（改了词条触发重查）没做**——而设计里写着那一条才是"固定"成立的地方。
+
+**模型**（迁移 `20261120000000_glossary_termbase`）：`status`（`TermStatus` 枚举）/ `do_not_translate` /
+`forbidden_targets` / `disabled` / `created_by_id` / `updated_at`，以及 `(project_id, lower(term))` 的**部分唯一索引**。
+`status` 默认 **DRAFT** 是刻意的：既有词条与新词条都先是草稿，QA 对它们的行为与改动前**完全一致**（警告）。
+把违规升成"挡发布"的错误必须是某个人的决定，不能是迁移的决定。
+
+**解析**（`packages/domain/src/glossary.ts`）：`resolveGlossary` 一处定优先级——组织级被项目级覆盖（并把被覆盖的
+那条一起返回，不让两边悄悄打架）、项目行带 `disabled` 表示"在这里关掉"而不是"定义一个新词"。
+三个读点（API QA、worker、AI 起草）都改走它，于是**同名词报两次**这个既有毛病一起消失了。
+顺带修掉 AI 那条路把 `caseSensitive` 丢掉的问题（`formatGlossary` 把大小写与禁用词一并写进提示词）。
+
+**分级**：`GLOSSARY_TERM_MISSING` 按状态定严重度——违反 `APPROVED` 是 **ERROR**（发布校验因此自动生效，
+不用再改一处），`DRAFT` 是 WARNING，`DEPRECATED` 不参与；新增 `GLOSSARY_TERM_FORBIDDEN`。
+
+**策展**：`PATCH` / `DELETE` / `POST .../glossary/import`（按 term upsert，带审计），`GET` 返回
+`scope`、`overrides` 与计数。**MCP 写工具没做**，Agent 仍然只能读。
+
+**后台管理**：新增 `/glossary`，挂在侧边栏「翻译管理」下（和「所有翻译」「待审核」并列）。三段统计、
+词条表（逐语言译法、状态、来源、覆盖提示）、定稿/退回/删除、**从已有译文抽候选**、手工加一条。
+项目记在 URL 上（`?project=`），所以"看看 X 项目的术语库"是一个能发给别人的链接。
+
+**抽候选不猜译法**——这是实现时对设计的一处修正。设计里写"把现有译法作为建议值"，做的时候去掉了：
+一句话和它的译文对不出其中某一个词变成了什么，给一个猜的值就等于平台替使用者背书。抽出来的是**词汇的形状**
+（哪些短语反复出现、出现在几条 key、举例），由知道答案的人填。
+
+**验证**：`scripts/check-glossary-admin.mjs`（真实浏览器）10 项全过——侧边栏入口、三段统计、词条逐行、
+来源与覆盖、**定稿真的写进去**（DRAFT→APPROVED→DRAFT 原样退回）、URL 里带着项目**且页面真的打开了它**、
+抽候选在真数据上出结果。456 单元 / typecheck / lint 全绿。
+
+过程中三个坑，都值得记：
+
+1. **抽取器对英文项目一个都抽不出**：`(?:\s+word){0,2}` 是**按 3 个词的步长**跳的，不是重叠窗口，
+   所以跨边界的窗口永远试不到。中文能抽出来纯属侥幸（字符级 n-gram 是逐位推进的）。改成逐词滑窗。
+2. **web 镜像 291 层**，超过 Docker 上限，`docker create` 都做不了——连拍平都拍不了。整份重建后降到 21 层。
+3. **整份重建时漏了构建参数** `API_BASE_URL_INTERNAL=http://api:3001/api/v1`（compose 当 build arg 传的），
+   镜像里烤进了 `localhost:3001`，在 web 容器里那就是它自己——浏览器走 Next 转发全 500，而 curl 直连 API 一切正常。
+   同时发现我的检查**断言太弱**：只查了 URL 里的 `?project=`，没查页面是否真的打开了那个项目，所以它"假通过"了一次。
+   断言改硬（改查选择器上显示的项目名）之后，才真正卡住。
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

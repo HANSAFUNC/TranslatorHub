@@ -4,26 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import {
-  Boxes,
-  Building2,
-  Check,
-  GitBranch,
-  KeyRound,
-  LayoutDashboard,
-  ListChecks,
-  Menu,
-  Moon,
-  Plug,
-  ScrollText,
-  ShieldCheck,
-  Sun,
-  TriangleAlert,
-  UsersRound,
-  Webhook,
-  LogOut,
-  Languages,
-} from 'lucide-react';
+import { BookMarked, Boxes, Building2, Check, GitBranch, KeyRound, Languages, LayoutDashboard, ListChecks, LogOut, Menu, Moon, Plug, ScrollText, ShieldCheck, Sun, TriangleAlert, UsersRound, Webhook } from 'lucide-react';
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -64,6 +45,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     group: '翻译管理',
     items: [
       { href: '/translations', label: '所有翻译', icon: Languages },
+      { href: '/glossary', label: '术语库', icon: BookMarked },
       { href: '/review', label: '待审核', icon: ListChecks },
     ],
   },

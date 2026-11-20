@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ErrorCode, LocaleHubError, Role, type QaSeverity } from '@localehub/contracts';
 import { assertRole, type ActorContext } from '@localehub/permissions';
-import { BUILTIN_QA_RULES, runQaRules, type QaCandidateEntry } from '@localehub/domain';
+import { BUILTIN_QA_RULES, resolveGlossary, runQaRules, type QaCandidateEntry } from '@localehub/domain';
 import { PrismaService } from '../../common/prisma.service';
 
 @Injectable()
@@ -42,7 +42,9 @@ export class QaService {
         },
         include: { key: { include: { namespace: true, sourceVersions: { orderBy: { version: 'desc' }, take: 1 } } } },
       });
-      const glossary = await tx.glossaryTerm.findMany({ where: { organizationId: actor.organizationId, OR: [{ projectId }, { projectId: null }] } });
+      // One resolver, so the two scopes are reconciled the same way the worker reconciles them. A term
+      // that existed both organisation-wide and per project used to arrive twice and be reported twice.
+      const glossary = await resolveGlossary(tx, { organizationId: actor.organizationId, projectId });
 
       const candidates: QaCandidateEntry[] = entries.map((entry) => ({
         entryId: entry.id,
@@ -56,8 +58,11 @@ export class QaService {
         sourceLocale: project.sourceLocale,
         glossaryTerms: glossary.map((term) => ({
           term: term.term,
-          translations: (term.translations ?? {}) as Record<string, string>,
+          translations: term.translations,
           caseSensitive: term.caseSensitive,
+          status: term.status,
+          doNotTranslate: term.doNotTranslate,
+          forbiddenTargets: term.forbiddenTargets,
         })),
       }));
 

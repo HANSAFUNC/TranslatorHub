@@ -19,6 +19,7 @@ export const BUILTIN_QA_RULES: QaRuleDefinition[] = [
   { code: 'LEADING_TRAILING_WHITESPACE', name: 'Leading/trailing whitespace', severity: 'INFO', description: 'The value starts or ends with whitespace', enabledByDefault: true },
   { code: 'DOUBLE_SPACE', name: 'Double space', severity: 'INFO', description: 'The value contains consecutive spaces', enabledByDefault: false },
   { code: 'GLOSSARY_TERM_MISSING', name: 'Glossary term missing', severity: 'WARNING', description: 'A glossary term from the source is not used in the translation', enabledByDefault: true },
+  { code: 'GLOSSARY_TERM_FORBIDDEN', name: 'Forbidden term used', severity: 'WARNING', description: 'The translation uses a wording the termbase rules out', enabledByDefault: true },
   { code: 'SOURCE_UNCHANGED_TARGET_SAME_AS_SOURCE', name: 'Untranslated copy', severity: 'WARNING', description: 'The target equals the source for a non-source locale', enabledByDefault: false },
 ];
 
@@ -32,7 +33,20 @@ export interface QaCandidateEntry {
   status: string;
   sourceValue: string;
   sourceLocale: string;
-  glossaryTerms?: { term: string; translations: Record<string, string>; caseSensitive?: boolean }[];
+  /**
+   * The terms that apply to this project, already reconciled across the organisation and project scopes.
+   *
+   * `status` is what decides how loud a violation is: a term somebody approved is a rule, a term a
+   * machine proposed is a suggestion, and treating the two the same is how a termbase ends up ignored.
+   */
+  glossaryTerms?: {
+    term: string;
+    translations: Record<string, string>;
+    caseSensitive?: boolean;
+    status?: 'DRAFT' | 'APPROVED' | 'DEPRECATED';
+    doNotTranslate?: boolean;
+    forbiddenTargets?: Record<string, string[]>;
+  }[];
 }
 
 export interface QaIssueFinding {
@@ -118,9 +132,17 @@ export function runQaRules(entries: QaCandidateEntry[], options: QaRunOptions = 
     if (enabled.has('SOURCE_UNCHANGED_TARGET_SAME_AS_SOURCE') && source && source === target) {
       findings.push(finding(entry, 'SOURCE_UNCHANGED_TARGET_SAME_AS_SOURCE', 'WARNING', 'Translation is identical to the source', {}));
     }
+    // A term somebody approved is a rule and blocks a release; a term a machine proposed is a
+    // suggestion and does not; a term that has been replaced is not a rule at all. That is the whole
+    // difference between a termbase and a list of words.
+    const loudness = (status: string | undefined): QaSeverity => (status === 'APPROVED' ? 'ERROR' : 'WARNING');
     if (enabled.has('GLOSSARY_TERM_MISSING') && entry.glossaryTerms?.length) {
       for (const term of entry.glossaryTerms) {
-        const expected = term.translations?.[entry.locale];
+        if (term.status === 'DEPRECATED') continue;
+        // `doNotTranslate` answers with the source term itself, so a product name is held to in every
+        // language without the termbase having to repeat it per locale — and a new locale cannot
+        // silently lose the rule.
+        const expected = term.doNotTranslate ? term.term : term.translations?.[entry.locale];
         if (!expected) continue;
         const sourceHasTerm = term.caseSensitive
           ? source.includes(term.term)
@@ -131,10 +153,33 @@ export function runQaRules(entries: QaCandidateEntry[], options: QaRunOptions = 
           : target.toLowerCase().includes(expected.toLowerCase());
         if (!targetHasTerm) {
           findings.push(
-            finding(entry, 'GLOSSARY_TERM_MISSING', 'WARNING', `Glossary term "${term.term}" should be "${expected}"`, {
-              term: term.term,
-              expected,
-            }),
+            finding(
+              entry,
+              'GLOSSARY_TERM_MISSING',
+              loudness(term.status),
+              `Glossary term "${term.term}" should be "${expected}"`,
+              { term: term.term, expected, status: term.status ?? 'DRAFT' },
+            ),
+          );
+        }
+      }
+    }
+    if (enabled.has('GLOSSARY_TERM_FORBIDDEN') && entry.glossaryTerms?.length) {
+      for (const term of entry.glossaryTerms) {
+        if (term.status === 'DEPRECATED') continue;
+        for (const forbidden of term.forbiddenTargets?.[entry.locale] ?? []) {
+          const used = term.caseSensitive
+            ? target.includes(forbidden)
+            : target.toLowerCase().includes(forbidden.toLowerCase());
+          if (!used) continue;
+          findings.push(
+            finding(
+              entry,
+              'GLOSSARY_TERM_FORBIDDEN',
+              loudness(term.status),
+              `"${forbidden}" is ruled out by the termbase for "${term.term}"`,
+              { term: term.term, forbidden, status: term.status ?? 'DRAFT' },
+            ),
           );
         }
       }

@@ -42,6 +42,19 @@ enum PlatformKind {
   universal
 }
 
+/**
+ * How settled a glossary term is.
+ *
+ * `DRAFT` is what a machine or an import produces and what QA warns about; `APPROVED` is somebody having
+ * decided, which is what makes a violation an error that blocks a release; `DEPRECATED` stays on the
+ * record, because a translator who meets an old term should find out what replaced it.
+ */
+enum TermStatus {
+  DRAFT
+  APPROVED
+  DEPRECATED
+}
+
 enum ReviewStatus {
   DRAFT
   PENDING_REVIEW
@@ -498,15 +511,32 @@ model ReviewAction {
 
 /* -------------------------------------------------------- glossary / TM */
 
+/**
+ * One term, in one scope.
+ *
+ * `projectId` null means the organisation's — shared by every project. A project row with the same term
+ * overrides it; a project row with `disabled` switches it off here without defining anything. Which of
+ * those applies is decided in one place (`resolveGlossary`), because three readers used to merge the two
+ * scopes themselves and a term that existed in both was reported twice.
+ */
 model GlossaryTerm {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @map("organization_id") @db.Uuid
-  projectId      String?  @map("project_id") @db.Uuid
+  id             String     @id @default(uuid()) @db.Uuid
+  organizationId String     @map("organization_id") @db.Uuid
+  projectId      String?    @map("project_id") @db.Uuid
   term           String
   translations   Json
   description    String?
-  caseSensitive  Boolean  @default(false) @map("case_sensitive")
-  createdAt      DateTime @default(now()) @map("created_at")
+  caseSensitive  Boolean    @default(false) @map("case_sensitive")
+  status         TermStatus @default(DRAFT)
+  /** Kept as written in every language: a product name, an acronym, a legal entity. */
+  doNotTranslate Boolean    @default(false) @map("do_not_translate")
+  /** `{ "<locale>": ["never this"] }` — the other half of a termbase, and the half with nowhere to go. */
+  forbiddenTargets Json?    @map("forbidden_targets")
+  /** Project rows only: switch an organisation term off here rather than overriding it. */
+  disabled       Boolean    @default(false)
+  createdById    String?    @map("created_by_id") @db.Uuid
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @default(now()) @updatedAt @map("updated_at")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   project      Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)

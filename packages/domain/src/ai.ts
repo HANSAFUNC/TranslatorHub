@@ -2,6 +2,7 @@
 import { assertRole, type ActorContext } from '@localehub/permissions';
 import { ErrorCode, LocaleHubError, Role, extractPlaceholders } from '@localehub/contracts';
 import { emitProjectEvent } from './events';
+import { resolveGlossary, termTarget } from './glossary';
 import { upsertTranslation } from './translation-core';
 import type { PrismaClient } from '@prisma/client';
 import { TenantPrisma } from '@localehub/database';
@@ -11,8 +12,36 @@ import { join } from 'node:path';
 
 export interface AiProvider {
   id: string;
-  translate(input: { text: string; sourceLocale: string; targetLocale: string; glossary?: { term: string; translation: string }[] }): Promise<{ text: string; provider: string; confidence: number }>;
+  translate(input: {
+    text: string;
+    sourceLocale: string;
+    targetLocale: string;
+    /**
+     * The terms that apply, with the parts that change how they are obeyed.
+     *
+     * `caseSensitive` and `forbidden` used to be dropped here — the pair `term => translation` was all a
+     * provider ever saw — which quietly turned a rule with conditions into an unconditional one.
+     */
+    glossary?: { term: string; translation: string; caseSensitive?: boolean; forbidden?: string[] }[];
+  }): Promise<{ text: string; provider: string; confidence: number }>;
   review(input: { source: string; target: string; targetLocale: string }): Promise<{ issues: { code: string; message: string; severity: 'ERROR' | 'WARNING' | 'INFO' }[]; provider: string }>;
+}
+
+/**
+ * A term as a provider should read it: the mapping, then the conditions that change it.
+ *
+ * Kept in one place because the conditions are the part that gets dropped when each provider writes its
+ * own line — a case-sensitive term presented as a plain pair tells the model something untrue.
+ */
+export function formatGlossary(glossary: { term: string; translation: string; caseSensitive?: boolean; forbidden?: string[] }[]): string {
+  return glossary
+    .map((entry) => {
+      const notes: string[] = [];
+      if (entry.caseSensitive) notes.push('case-sensitive');
+      if (entry.forbidden?.length) notes.push(`never: ${entry.forbidden.join(', ')}`);
+      return `${entry.term} => ${entry.translation}${notes.length ? ` (${notes.join('; ')})` : ''}`;
+    })
+    .join('\n');
 }
 
 /**
@@ -72,7 +101,7 @@ export class AnthropicProvider implements AiProvider {
   }
 
   async translate(input: { text: string; sourceLocale: string; targetLocale: string; glossary?: { term: string; translation: string }[] }) {
-    const glossary = (input.glossary ?? []).map((term) => `${term.term} => ${term.translation}`).join('\n');
+    const glossary = formatGlossary(input.glossary ?? []);
     const text = await this.complete(
       'You are a professional software localisation engine. Return only the translated string, preserving every placeholder and markup token exactly.',
       `Source (${input.sourceLocale}) -> Target (${input.targetLocale})\n${glossary ? `Glossary:\n${glossary}\n` : ''}\n${input.text}`,
@@ -245,7 +274,7 @@ export class PiProvider implements AiProvider {
   }
 
   async translate(input: { text: string; sourceLocale: string; targetLocale: string; glossary?: { term: string; translation: string }[] }) {
-    const glossary = (input.glossary ?? []).map((term) => `${term.term} => ${term.translation}`).join('\n');
+    const glossary = formatGlossary(input.glossary ?? []);
     const text = await this.complete(
       'You are a professional software localisation engine. Return only the translated string, preserving every placeholder and markup token exactly.',
       `Source (${input.sourceLocale}) -> Target (${input.targetLocale})\n${glossary ? `Glossary:\n${glossary}\n` : ''}\n${input.text}`,
@@ -316,7 +345,9 @@ export class AiService {
         where: { id: { in: input.entryIds }, projectId },
         include: { key: { include: { sourceVersions: { orderBy: { version: 'desc' }, take: 1 } } } },
       });
-      const glossary = await tx.glossaryTerm.findMany({ where: { organizationId: actor.organizationId, OR: [{ projectId }, { projectId: null }] } });
+      // Through the resolver, so a project term overrides the organisation's rather than being offered
+      // alongside it — a model given both readings of one word picks whichever it prefers.
+      const glossary = await resolveGlossary(tx, { organizationId: actor.organizationId, projectId });
       const results: { entryId: string; key: string; locale: string; value: string; provider: string; written: boolean }[] = [];
 
       for (const entry of entries) {
@@ -324,8 +355,14 @@ export class AiService {
         if (!source) continue;
         for (const locale of input.targetLocales) {
           const glossaryPairs = glossary
-            .filter((term: { translations: unknown }) => (term.translations as Record<string, string>)?.[locale])
-            .map((term: { term: string; translations: unknown }) => ({ term: term.term, translation: (term.translations as Record<string, string>)[locale] as string }));
+            .map((term) => ({ term, translation: termTarget(term, locale) }))
+            .filter((pair): pair is { term: (typeof glossary)[number]; translation: string } => pair.translation !== null)
+            .map((pair) => ({
+              term: pair.term.term,
+              translation: pair.translation,
+              caseSensitive: pair.term.caseSensitive,
+              forbidden: pair.term.forbiddenTargets?.[locale] ?? [],
+            }));
           const { text } = await provider.translate({
             text: source,
             sourceLocale: project.sourceLocale,
