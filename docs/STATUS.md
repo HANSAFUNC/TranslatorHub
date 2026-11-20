@@ -2031,6 +2031,53 @@ to track customer leads`（3.6s，`provider: pi`）；草图页上点 **AI 翻�
    同时发现我的检查**断言太弱**：只查了 URL 里的 `?project=`，没查页面是否真的打开了那个项目，所以它"假通过"了一次。
    断言改硬（改查选择器上显示的项目名）之后，才真正卡住。
 
+### 1.61 术语库能写、能重查了：Agent 可以提，定稿由人；改了词条全项目跟着收敛
+
+上一轮把词库建起来了，但留着两个洞，都是我自己在设计里写下、当时没做的那两条：**Agent 不能写**（只有 REST 和后台页面
+能策展），以及**改了词条什么都不发生**——而设计里写着第二条才是「固定」成立的地方。这轮补上。
+
+**Agent 可以提，但只能提。** 新增 `upsert_glossary_terms`（Remote MCP 第 20 个工具），需要新的
+`glossary.write` scope——与 `glossary.read` **分开授权**：读是「知道这个词怎么译」，写是「决定别人以后怎么译」。
+它有两个做不到的事，都是刻意的：**不能定稿**（违反 `APPROVED` 是 ERROR，会挡住发布；把这件事交给模型，词库迟早
+塞满没人同意过的指令），**也改不动已定稿的词条**（会出现在返回值的 `untouched` 里，而不是被静默忽略）。
+传 `term` 不传 `translations` 是合法的：那表示「这个词固定，译法待补」，平台不替谁猜。
+
+**写一条术语 = 排一次重查。** 四条 REST 写入口与 MCP 那条都会入队一次该项目的 QA 运行，写进 `qa_run.scope` 的
+`reason` 与 `terms` 里——QA 历史里突然冒出来的问题，得能回答「因为什么」。三个刻意的选择：**跑整个项目**
+（设计里写的「只重排含这个词的条目」要先扫一遍全项目原文才知道挑哪些，而重跑只发生一次，结论一样；等人抱怨慢了再按词筛）；
+**入队失败不抛错**（词已经写进去了，Redis 抖一下把一次成功的保存变成 500 是对使用者说谎；`recheck.queued` 如实回报，
+页面据此换成「已定稿，但重查没排上——请手动跑一次 QA」）；**一个项目一个 jobId + `removeOnComplete`**
+（导入一次再改一条合并成一次运行，跑完 id 立刻释放）。
+
+**MCP server 现在也要 Redis。** `apps/mcp-remote` 为此加了 `bullmq` + `ioredis`（原来只有 API 和 worker 有）。
+生产者是懒建 + 容错的：读工具在 Redis 挂掉时照常工作。生产环境的 `docker/api.Dockerfile` 会正常装上这两个依赖；
+这台机器上的镜像仍是「把源码叠到上一个镜像」的层构建，所以**额外做了一步 `cp -a` 把已有的 bullmq/ioredis 符号链接
+复制给 mcp-remote**——否则镜像能构建、容器能起，第一次写术语才炸 `MODULE_NOT_FOUND`。
+
+**顺手修掉一处正在漂的字**：`/mcp` 教程页第 2 步写着「十九个工具里有十七个把它当第一个参数」——那是上一轮我亲手改的数，
+这一轮加了工具又过期了。改成**从注册表数出来**（页面拿 `/mcp/tools` 自己数），并且检查脚本断言「页面说的数 = 注册表里的数」，
+而不是把 20/18 再写死一遍。同一处的 `skill-delivery` 集成测试也把写死的 19 换成注册表长度（并补一条「服务端真实注册数
+也要等于它」）——写死的数字只会被下一个人「顺手加一」，不会有人问它为什么在那儿。
+
+**验证**（都在容器栈上跑，不是本地）：
+
+| 验证 | 结果 |
+| --- | --- |
+| `packages/domain` 术语库单测（新增） | 17 passed：优先级/覆盖/禁用/大小写去重、`termTarget` 的 do-not-translate 与废弃、以及「已定稿违反 = ERROR、草稿 = WARNING、废弃不参与」 |
+| `apps/e2e-demo/src/glossary.integration.test.ts`（新增，真 MCP + 真 worker 子进程） | 6 passed：缺 `glossary.write` 被拒且报出缺哪个 scope；提的术语落成 DRAFT；**批准后同一句话从 WARNING 变 ERROR**；Agent 改不动已定稿的词条且译文未被改写；删掉词条后它的抱怨一并消失；`qa_run.scope.reason` 记着原因 |
+| 数据库实证 | `SELECT scope->>'reason', scope->>'term' FROM qa_runs` 有 `glossary.term_updated ["cart"]`（后台页面点的按钮）、`glossary.terms_proposed ["Course"]`（MCP 提的）等 8 条 |
+| `scripts/check-mcp-tool-pages.mjs` | 11 项全过，含新增的「教程页说 20 / 18，注册表是 20 / 18」 |
+| `scripts/check-glossary-admin.mjs` | 11 项全过，含新增的「批准会留下一次重查」 |
+| `scripts/check-mcp-sketch-guide.mjs` / `check-mcp-onboarding.mjs` | 全过（guide 文本改过，重跑确认没碰坏） |
+| 单元 / 集成 / lint / typecheck | 473 + 181 passed；lint 0 warning |
+
+镜像这一步踩了两个坑，都值得记：
+
+1. **层构建里 `WORKDIR` 会覆盖镜像原有的**。web 的层 Dockerfile 写了 `WORKDIR /app`，而运行阶段的
+   `CMD` 是相对路径 `node node_modules/next/dist/bin/next start`——容器起得来、日志里是 `MODULE_NOT_FOUND`，
+   因为它在 `/app` 下找 next。**修法是把 `WORKDIR /app/apps/web` 放回层构建的最后一行**。
+2. **`docker compose up -d --no-build` 之后要真的看端口**，不要只看 `ps`。三个服务都报 `Up`，而 web 是崩溃重启
+   循环里的 Up。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

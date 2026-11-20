@@ -123,6 +123,15 @@ if (draft) {
     return body.data.terms.find((t) => t.term === ${JSON.stringify(draft.term)}).status;
   })()`);
   check(before === 'DRAFT' && after === 'APPROVED', 'a draft can be approved', `${before} → ${after}`);
+
+  // Approving is what turns a suggestion into a rule, and a rule that nobody applied to the
+  // translations already written is a document. The button is supposed to leave a recheck behind it.
+  const queued = await evaluate(`(async () => {
+    // The run history is not exposed over REST in a way this check can read, so it reads the same
+    // page the audit trail does: the toast the button raised, which says what happened.
+    return document.body.innerText.includes('重查');
+  })()`);
+  check(queued, 'approving leaves a recheck behind it', queued ? 'toast says so' : 'no mention of 重查');
   // Put it back exactly as it was.
   await clickTestId(`[data-term="${draft.term}"] button`);
   await delay(1200);

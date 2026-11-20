@@ -1,6 +1,6 @@
 # 项目固定词库：设计
 
-> 状态：**第 1–4、6 步已实现**（见 §9）；第 5 步（改动触发重查）、MCP 写工具与编辑器提示还没做。
+> 状态：**第 1–7 步已实现**（见 §9）；只剩编辑器里的术语提示没做。
 > 文末三个待定项已按本文的倾向实现：项目覆盖组织并写明覆盖了谁、已定稿的违反升 ERROR（发布校验因此自动生效）、
 > 第一份词库从已有译文抽候选。
 
@@ -131,12 +131,27 @@ CREATE UNIQUE INDEX glossary_project_term_key
 | 1. 模型补齐 | ✅ | 迁移 `20261120000000_glossary_termbase`：`status`（默认 **DRAFT**，不让既有词条突然变成会挡发布的规则）、`do_not_translate`、`forbidden_targets`、`disabled`、`created_by_id`、`updated_at`，以及 `(project_id, lower(term))` 的部分唯一索引 |
 | 2. 优先级与去重 | ✅ | `packages/domain/src/glossary.ts` 的 `resolveGlossary` / `termTarget`；API、worker、AI 三个读点都走它，同名词不再报两次 |
 | 3. 能被策展（REST） | ✅ | `PATCH` / `DELETE` / `POST .../glossary/import`（按 term upsert，带审计），`GET` 返回 `scope`、`overrides` 与计数 |
-| 3. 能被策展（MCP） | ❌ | Agent 仍然只能读（`get_glossary`），不能提词条 |
+| 3. 能被策展（MCP） | ✅ | `upsert_glossary_terms`（需 `glossary.write`，与读分开授权）。只能落 **DRAFT**：定稿是人的动作。已定稿/已废弃的词条改不动，返回 `untouched` 而不是静默忽略 |
 | 4. 严重度分级 | ✅ | `GLOSSARY_TERM_MISSING` 按状态定严重度（`APPROVED` → ERROR），新增 `GLOSSARY_TERM_FORBIDDEN`；`DEPRECATED` 不参与 |
-| 5. 改动触发重查 | ❌ | **这条是设计里说"固定才真的成立"的那一条，还没做**：改了词条，已有译文不会重新检查 |
+| 5. 改动触发重查 | ✅ | 四条写入口（新增/改动/删除/导入 + MCP 的 upsert）都会入队一次该项目的 QA 运行；`jobId` 每项目一个，连着改几条合并成一次。这次运行的 `qa_run.scope` 里记着 `reason` 与改了哪些词 |
 | 6. 界面 | ✅ 部分 | 后台管理新增 `/glossary`（侧边栏「翻译管理」下）：三段统计、词条表（逐语言译法、状态、来源、覆盖提示）、定稿/退回/删除、抽候选、手工加一条 |
 | 7. 抽候选 | ✅ | `POST .../glossary/extract` + 页面上的候选队列。**不猜译法**（见下） |
-| 编辑器里的术语提示 | ❌ | 设计里的那一格还没做 |
+| 编辑器里的术语提示 | ❌ | 设计里的那一格还没做——译者现在只能在后台管理里看词库，不能在句子里就地看到它 |
+
+### 重查是怎么触发的
+
+`recheckAfterGlossaryChange`（`apps/api/src/modules/misc/content.controller.ts`）与 MCP 的
+`enqueueQaRecheck`（`apps/mcp-remote/src/qa-queue.ts`）做同一件事：把一次全项目 QA 运行排进 `qa` 队列。
+
+三个刻意的选择：
+
+- **跑整个项目，不挑条目。** 设计里写的是「把原文含这个词的条目重排一次」，实现时改成整项目重跑：挑条目要先扫一遍全项目的原文
+  才知道挑哪些，而重跑本来就只发生一次、算完的结论一样。等真有人抱怨大项目上慢，再按词筛。
+- **入队失败不抛错。** 术语已经写进去了；Redis 抖一下就把一次成功的保存变成 500，是在对使用者说谎。
+  `recheck.queued` 会如实告诉调用方排没排上，页面据此换一句提示（「已定稿，但重查没排上——请手动跑一次 QA」）。
+- **一个项目一个 jobId + `removeOnComplete`。** 导入一次、再改一条，合并成一次运行；跑完 id 立刻释放，
+  否则下一次改动会被当成重复任务丢掉。
+
 
 ### 实现时改掉的两处判断
 
@@ -149,6 +164,6 @@ CREATE UNIQUE INDEX glossary_project_term_key
 
 ### 已知的两处不完整
 
-- `disabled`（项目里关掉某条组织词条）与 `forbiddenTargets`（不要译成 X）**接口支持，界面还没有编辑入口**。
+- `disabled`（项目里关掉某条组织词条）与 `forbiddenTargets`（不要译成 X）**接口支持（含 MCP），后台管理界面还没有编辑入口**。
 - 抽取是按出现频次抽短语（CJK 2–5 字、拉丁 1–3 词的重叠窗口），用"更长的包含它且不更少见"过滤掉碎片。
   对合成的规模测试数据（`after 0`、`after 1`…）只会抽出 `after` 一个——那是数据的问题，不是提取器的问题。

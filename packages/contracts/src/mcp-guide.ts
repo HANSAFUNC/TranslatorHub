@@ -39,8 +39,12 @@ export const REMOTE_MCP_INSTRUCTIONS = [
   '有 shell 权限时更省事：localehub mockup --page <页面文件> --confirm 读同一个页面的源码并直接上传。',
   '注意没有 dry run：同名屏幕再传一次是整体替换（旧图与旧标记不再保留），别拿它「先试一下」。细节见 localehub://screen-sketch-guide。',
   '',
+  '术语（可选，但那是「同一个词只有一种译法」的唯一办法）：get_glossary 读，upsert_glossary_terms 提。',
+  '提上去的一律是草稿——定稿由人在后台做，也只有定稿的术语会挡发布；已定稿的词条你改不动，会在 untouched 里告诉你。',
+  '你在仓库里反复看到同一种固定说法（产品名、导航词、按钮文案）时，那正是该提的；译法不确定就只传 term，不要猜。',
+  '',
   '先看不写这件事只有两个工具提供：import_translations 用 confirm=true 才落库，mark_applied 用 dry_run=true 只看结果。',
-  '其余写工具（translate_entries、review_translation_entries、update_translation_draft、create_project、upload_screen_mockup）一调即写，没有预演。',
+  '其余写工具（translate_entries、review_translation_entries、update_translation_draft、glossary 的 upsert_glossary_terms、create_project、upload_screen_mockup）一调即写，没有预演。',
   'AI 生成的译文一律是草稿；审核与发布必须由具备权限的人类完成，Agent 的批准会被拒绝——这是设计。',
 ].join('\n');
 
@@ -133,7 +137,9 @@ export const REMOTE_MCP_IMPORT_GUIDE = `# 把本地语言文件上传到平台
    文件是安全的**——看这个数就知道上次是不是已经生效了。
 4. 分批 \`confirm: true\` 导入，从源语言文件开始。
 5. 全部导入后 \`get_project\` 看 counts，再用 \`get_qa_issues\` 跑一遍。
-6. 平台 → 仓库方向：\`get_pending_platform_changes\` → 写文件 → \`mark_applied\`（需要 \`translation.apply\` scope）。
+6. 若同一个说法在整个仓库里反复出现，用 \`upsert_glossary_terms\` 提成术语草稿：提上去的是候选，不改变任何已有译文，
+   由人定稿后才会挡发布。**译法不确定就只传 \`term\`**——平台会把「有这个原始词、没有译法」当作待补，而不是当作答案。
+7. 平台 → 仓库方向：\`get_pending_platform_changes\` → 写文件 → \`mark_applied\`（需要 \`translation.apply\` scope）。
 
 ## 5. 为什么可以放心分批
 

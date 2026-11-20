@@ -79,7 +79,7 @@ Web 端「MCP 管理 → 接入教程」是同一份流程，且会用**你自�
 export LOCALEHUB_TOKEN="lh_mcp_…"   # 存进环境变量，不要提交到 Git
 ```
 
-**第 2 步：拿到你的 `project_id`。** 19 个工具里有 17 个把它当第一个参数，而它是个 UUID——
+**第 2 步：拿到你的 `project_id`。** 20 个工具里有 18 个把它当第一个参数，而它是个 UUID——
 不能靠猜。
 
 两种拿法：
@@ -155,19 +155,20 @@ claude mcp add --transport http localehub-remote http://localhost:3003/mcp \
 - 只支持 `POST /mcp`；`GET /mcp` 返回 405（无状态，没有 SSE 流可订阅）。
 
 工具：`list_projects`、`get_project`、`list_project_locales`、`search_translation_keys`、
-`get_translation_entry`、`get_glossary`、`search_translation_memory`、`translate_entries`、
-`review_translation_entries`、`get_qa_issues`、`update_translation_draft`、`submit_review`、
-`get_project_sync_status`、`get_pending_platform_changes`、`validate_release`、`create_project`、
-`import_translations`、`mark_applied`、`upload_screen_mockup`。
+`get_translation_entry`、`get_glossary`、`upsert_glossary_terms`、`search_translation_memory`、
+`translate_entries`、`review_translation_entries`、`get_qa_issues`、`update_translation_draft`、
+`submit_review`、`get_project_sync_status`、`get_pending_platform_changes`、`validate_release`、
+`create_project`、`import_translations`、`mark_applied`、`upload_screen_mockup`。
 
 工具标注（MCP `annotations`）：`create_project`、`import_translations`、`translate_entries`、
 `review_translation_entries`、`update_translation_draft`、`submit_review`、`mark_applied`、
-`upload_screen_mockup` 声明 `readOnlyHint: false`，其余 11 个为只读。
+`upload_screen_mockup`、`upsert_glossary_terms` 声明 `readOnlyHint: false`，其余 11 个为只读。
 客户端据此可以判断哪些调用会改动平台数据。
 
 只有两个写工具能预演：`import_translations`（`confirm: true` 才落库）与 `mark_applied`
 （`dry_run: true` 只看结果）。其余写工具——`create_project`、`translate_entries`、
-`review_translation_entries`、`update_translation_draft`、`upload_screen_mockup`——一调即写，
+`review_translation_entries`、`update_translation_draft`、`upsert_glossary_terms`、
+`upload_screen_mockup`——一调即写，
 没有 dry-run 开关；`upload_screen_mockup` 还会整体替换同名屏幕，`destructiveHint` 为 true。
 
 约束：
@@ -209,6 +210,7 @@ MCP 的写工具与 REST 写入**同一张 `audit_logs`**，所以「谁在什�
 | `submit_review`              | `translation.submit_review` | 提交数、跳过数、备注                                 |
 | `mark_applied`               | `sync.apply`                | `via: mark_applied`、条数、跳过原因、git commit      |
 | `upload_screen_mockup`       | `mockup.upload`             | `via`、屏幕名、端、标记数、未匹配数、字节数、**服务端读出的格式** |
+| `upsert_glossary_terms`      | `glossary.terms_proposed`   | 新增数、更新数、未动数（已定稿的词条不归 Agent 改） |
 
 - `actor_type` 为 `mcp`，`actor_id` 是 Token 所属用户，`mcp_client_id` 是具体那一把 Token
   ——「有人半夜推了四十个 key」因此能落到「哪把 Token」，可以直接撤销它。
@@ -275,6 +277,7 @@ apply report，所以 Agent 的落地在同步历史里和人跑 CLI 的落地�
 | `review_translation_entries` | `translation.review`                        |
 | `mark_applied`               | `translation.apply`                         |
 | `upload_screen_mockup`       | `sync.push`（与 `import_translations` 同类：把本地读到的内容送上来） |
+| `upsert_glossary_terms`      | `glossary.write`（与 `glossary.read` 分开：读是知道词怎么译，写是决定别人以后怎么译） |
 
 其余工具与 REST 对应路由一致：只需要角色。`translation.apply` 不在默认 scope 集合里，所以默认签发的
 Token 推得上去、落不下来——这正是规格要的分离。
@@ -546,6 +549,36 @@ PI_MODEL=ctyun/glm-5.3-flash
 
 `OPENAI_API_KEY` 在配置里但**没有任何 provider 读它**，设了不起作用。
 
+### 2.11 术语库：Agent 能提，定稿由人
+
+术语（`glossary_terms`）是平台里唯一能回答「这个词在这个项目里只能这么译」的东西。两档作用域：组织级
+（跨项目的既有说法）与项目级（这个产品的词汇表），**同名词项目级压过组织级**，由 `resolveGlossary` 一处
+定优先级——同名词不再各返回一条让调用方自己猜，项目行覆盖了组织行时还会把被覆盖的那条一起返回。
+
+一条术语有状态，状态决定违反它的后果：
+
+| 状态 | 违反它 |
+| --- | --- |
+| `APPROVED` | **ERROR**——进发布闸门，挡住发布 |
+| `DRAFT` | WARNING——只是提醒 |
+| `DEPRECATED` | 不参与 |
+
+Agent 这一侧：
+
+- `get_glossary` 读（`glossary.read`）。
+- `upsert_glossary_terms` 提（`glossary.write`，与读分开授权）。**只能落成草稿**：定稿是人的动作，
+  因为它会把一条建议变成一个挡发布的门槛。已经定稿或废弃的词条 Agent 改不动，会出现在返回值的
+  `untouched` 里，而不是被静默忽略。
+- 传 `term` 不传 `translations` 是合法的：那表示「这个词是固定的，译法待补」，平台不会替你猜。译法不确定
+  就别猜——猜错的值会带着平台的权威留在词库里。
+
+**写一条术语 = 排一次重查。** 术语变了，已有译文就有可能需要重新判定，所以 REST 与 MCP 两条写入口都会入队
+一次该项目的 QA 运行（`jobId` 每个项目一个，连着改几条会合并成一次）。这次运行会在 `qa_run.scope` 里记下
+`reason`（例如 `glossary.terms_proposed`）与改了哪些词——QA 历史里突然冒出的问题，得能回答「因为什么」。
+
+后台管理在 `/glossary`（侧边栏「翻译管理」下）：逐语言译法、状态、来源与覆盖提示、定稿/退回/删除、
+从已有译文抽候选，以及手工加一条。设计与取舍见 [docs/TERMBASE.md](./TERMBASE.md)。
+
 ## 3. 本地仓库操作：CLI（不是 MCP）
 
 > 仓库里的落点固定是 `.localehub/`：`config.yaml` 与 `mockups/`（图 + 说明）**要提交**，`state.json` /
@@ -619,7 +652,7 @@ Server 每个请求建一次（无状态），所以 Skill 是**实时**的：�
 不需要重启任何客户端。
 
 取数走数据库、受 RLS 约束，与 `GET /skills` 的可见性规则一致。查询失败时只记 stderr 并返回空清单
-——Skill 是附加能力，不能因为读不到它而让 19 个工具一起报错。
+——Skill 是附加能力，不能因为读不到它而让 20 个工具一起报错。
 
 ## 5. Token 与 Scope
 

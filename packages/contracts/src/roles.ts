@@ -28,6 +28,12 @@ export const McpScope = {
   TRANSLATION_REVIEW: 'translation.review',
   QA_EXECUTE: 'qa.execute',
   GLOSSARY_READ: 'glossary.read',
+  /**
+   * Proposing terms. Deliberately separate from reading them, and deliberately *not* in the default
+   * token: a term a company fixed is an instruction every future translation has to follow, so the
+   * right to add one is a right somebody grants on purpose.
+   */
+  GLOSSARY_WRITE: 'glossary.write',
   RELEASE_PUBLISH: 'release.publish',
   ADMIN: 'admin',
 } as const;

@@ -71,6 +71,28 @@ const check = (ok, what, detail = '') => {
 
 await send('Page.navigate', { url: `${WEB}/mcp` });
 await waitFor("document.body.innerText.includes('MCP 管理')", 'the MCP page');
+
+// The onboarding step tells the reader how many tools take `project_id`. It used to say
+// "十四 / 十五" long after the platform had fifteen tools, so the number is now counted from the
+// registry and this checks it says the count the registry actually has.
+const counts = await evaluate(`(async () => {
+  const body = await (await fetch('/api/v1/mcp/tools', { credentials: 'include' })).json();
+  const tools = body.data?.remote ?? [];
+  return {
+    tools: tools.length,
+    projectScoped: tools.filter((t) => t.inputSchema && t.inputSchema.properties && 'project_id' in t.inputSchema.properties).length,
+    said: (document.body.innerText.match(/(\\d+) 个工具里有 (\\d+) 个/) ?? []).slice(1).map(Number),
+    // The onboarding steps are on the tab the page opens on; this runs before the check moves to
+    // the tool table, so a missing sentence means the page is wrong rather than that we looked away.
+    sawSentence: /个工具里有|多数工具/.test(document.body.innerText),
+  };
+})()`);
+check(
+  counts.said[0] === counts.tools && counts.said[1] === counts.projectScoped,
+  'the onboarding step counts the tools it actually has',
+  `页面说 ${counts.said.join(' / ') || (counts.sawSentence ? '（没解析出数字）' : '（这一步不在当前标签页）')}，注册表是 ${counts.tools} / ${counts.projectScoped}`,
+);
+
 // The tools live under their own tab (the page opens on the guide), so a reader gets there by clicking
 // it — and so does this check, rather than reaching into a table Radix has not mounted yet.
 const tabBox = await evaluate(`(() => {

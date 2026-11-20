@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { REMOTE_MCP_TOOLS } from '@localehub/contracts';
 import { PrismaClient } from '@localehub/database';
 import { ensureApi, ensureRemoteMcp, type ApiHandle } from './api-harness';
 
@@ -274,12 +275,16 @@ describe('the registry page agrees with the servers', () => {
 
     // One MCP. A `local` key here would advertise a server that does not exist any more.
     expect(discovery.data).not.toHaveProperty('local');
-    // 15 platform tools from spec §6.4, plus the two bootstrap tools, `mark_applied` and
-    // `upload_screen_mockup`.
     // Pinned on purpose: a tool added to the contract but never registered here would otherwise
     // pass unnoticed, because this endpoint reads the contract rather than the server.
-    expect(discovery.data!.remote).toHaveLength(19);
+    //
+    // Pinned to the registry's own length rather than to a number. The literal that used to be here
+    // (19) was correct the day it was written and had to be remembered on every later addition — the
+    // kind of assertion that gets "fixed" by bumping the number without reading why it moved. What
+    // actually matters is that the three lists agree, in both directions.
+    expect(discovery.data!.remote).toHaveLength(REMOTE_MCP_TOOLS.length);
     const liveTools = (await client!.listTools()).tools.map((tool) => tool.name);
+    expect(liveTools).toHaveLength(REMOTE_MCP_TOOLS.length);
     for (const tool of discovery.data!.remote as { name: string }[]) {
       expect(liveTools).toContain(tool.name);
     }

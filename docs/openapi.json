@@ -654,6 +654,7 @@
                         "translation.review",
                         "qa.execute",
                         "glossary.read",
+                        "glossary.write",
                         "release.publish",
                         "admin"
                       ]

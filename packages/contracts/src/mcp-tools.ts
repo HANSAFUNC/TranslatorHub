@@ -53,6 +53,7 @@ export const REMOTE_MCP_TOOLS = [
   'search_translation_keys',
   'get_translation_entry',
   'get_glossary',
+  'upsert_glossary_terms',
   'search_translation_memory',
   'translate_entries',
   'review_translation_entries',
@@ -87,6 +88,9 @@ export const REMOTE_MCP_TOOL_SCOPES: Partial<Record<RemoteMcpTool, McpScope[]>> 
   // translator would type) and not an apply (nothing is written into anyone's repository), so the
   // scope that already means "put local content on the platform" is the right one.
   upload_screen_mockup: [McpScope.SYNC_PUSH],
+  // A separate scope from `glossary.read` on purpose: reading the termbase tells you what the words
+  // are, writing it tells everybody else what they will be.
+  upsert_glossary_terms: [McpScope.GLOSSARY_WRITE],
 };
 
 export const remoteToolSchemas = {
@@ -179,6 +183,22 @@ export const remoteToolSchemas = {
   }),
   get_translation_entry: z.object({ project_id: z.string(), key: z.string(), locale: localeTagSchema }),
   get_glossary: z.object({ project_id: z.string(), locale: localeTagSchema.optional() }),
+  upsert_glossary_terms: z.object({
+    project_id: z.string().describe('项目 id'),
+    terms: z
+      .array(
+        z.object({
+          term: z.string().min(1).max(200).describe('原文词'),
+          translations: z.record(localeTagSchema, z.string()).optional().describe('语言 → 译法；不确定就不要填'),
+          case_sensitive: z.boolean().optional().describe('这个词是否区分大小写，默认否'),
+          do_not_translate: z.boolean().optional().describe('任何语言都保持原文（产品名、缩写）'),
+          note: z.string().max(500).optional().describe('给译者的说明：为什么这么译'),
+        }),
+      )
+      .min(1)
+      .max(200)
+      .describe('要提的词条。已定稿的词条不会被改动，会被列在 skipped 里'),
+  }),
   search_translation_memory: z.object({
     project_id: z.string(),
     query: z.string().min(1),

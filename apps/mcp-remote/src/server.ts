@@ -40,6 +40,7 @@ import {
 } from '@localehub/contracts';
 import { assertProjectBound, assertRole, assertScope, type ActorContext } from '@localehub/permissions';
 import { TenantPrisma } from '@localehub/database';
+import { enqueueQaRecheck } from './qa-queue';
 
 /**
  * Remote MCP server (Streamable HTTP).
@@ -131,6 +132,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
     'submit_review',
     'mark_applied',
     'upload_screen_mockup',
+    'upsert_glossary_terms',
   ]);
 
   /**
@@ -526,6 +528,109 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       }),
     );
   });
+
+  /**
+   * Propose terms.
+   *
+   * The caller that has just read a whole repository is the one that notices "this word is always
+   * rendered as X" first, so it is allowed to write into the termbase — as a **candidate**, and
+   * nothing else. Two things it cannot do, both deliberate:
+   *
+   *  * it cannot approve. A term somebody approved is rule that blocks a release; handing that to a
+   *    model is how a termbase fills with instructions nobody agreed to.
+   *  * it cannot touch an already-approved term. Those rows come back under `untouched`, so the
+   *    caller learns it was heard and that the answer belongs to a person.
+   *
+   * Every write is followed by a recheck, because writing a term is the moment the project's
+   * translations have to be re-read against it — the same run the back office queues when somebody
+   * approves one there.
+   */
+  define(
+    'upsert_glossary_terms',
+    '提出术语，落成草稿（不能定稿，也改不动已定稿的词条）。你在仓库里发现的固定说法用这个提上来；译法不确定就留空，不要猜',
+    async (input: {
+      project_id: string;
+      terms: {
+        term: string;
+        translations?: Record<string, string>;
+        case_sensitive?: boolean;
+        do_not_translate?: boolean;
+        note?: string;
+      }[];
+    }) => {
+      assertRole(actor, input.project_id, Role.TRANSLATOR);
+      const result = await tenant.withOrganization(actor.organizationId, async (tx) => {
+        const created: string[] = [];
+        const updated: string[] = [];
+        const untouched: { term: string; status: string; reason: string }[] = [];
+        for (const term of input.terms) {
+          // Case-insensitive, matching the unique index: `Course` and `course` are one term, and
+          // creating the second one would fail against the index rather than say why.
+          const existing = await tx.glossaryTerm.findFirst({
+            where: {
+              organizationId: actor.organizationId,
+              projectId: input.project_id,
+              term: { equals: term.term, mode: 'insensitive' },
+            },
+          });
+          if (existing && existing.status !== 'DRAFT') {
+            untouched.push({
+              term: existing.term,
+              status: existing.status,
+              reason: '已定稿或已废弃的词条只能由人改动',
+            });
+            continue;
+          }
+          // Built by assignment rather than a conditional spread: an omitted field must stay absent,
+          // never present-and-undefined, or Prisma reads it as "set this Json column to nothing".
+          const data: Record<string, unknown> = {};
+          // Omitted translations keep whatever is there: a caller that only knows the source word
+          // saying "here it is" must not blank out the answer somebody already filled in.
+          if (term.translations !== undefined) data.translations = term.translations;
+          if (term.note !== undefined) data.description = term.note;
+          if (term.case_sensitive !== undefined) data.caseSensitive = term.case_sensitive;
+          if (term.do_not_translate !== undefined) data.doNotTranslate = term.do_not_translate;
+          if (existing) {
+            await tx.glossaryTerm.update({ where: { id: existing.id }, data: data as never });
+            updated.push(existing.term);
+          } else {
+            await tx.glossaryTerm.create({
+              data: {
+                organizationId: actor.organizationId,
+                projectId: input.project_id,
+                term: term.term,
+                status: 'DRAFT',
+                createdById: actor.userId,
+                ...data,
+              } as never,
+            });
+            created.push(term.term);
+          }
+        }
+        return { created, updated, untouched };
+      });
+
+      const proposed = [...result.created, ...result.updated];
+      const recheck = proposed.length
+        ? await enqueueQaRecheck({
+            organizationId: actor.organizationId,
+            projectId: input.project_id,
+            requestedBy: actor.userId,
+            reason: 'glossary.terms_proposed',
+            terms: proposed,
+          })
+        : { queued: true };
+
+      await audit({
+        action: 'glossary.terms_proposed',
+        resourceType: 'glossary_term',
+        projectId: input.project_id,
+        metadata: { created: result.created.length, updated: result.updated.length, untouched: result.untouched.length },
+      });
+
+      return { ...result, recheck };
+    },
+  );
 
   define(
     'search_translation_memory',

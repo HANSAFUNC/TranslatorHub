@@ -7,7 +7,8 @@
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 架构、服务划分、包依赖、关键模块与设计理由 |
 | [DATABASE.md](DATABASE.md) | 迁移、ER、约束、RLS 与租户隔离、版本语义 |
 | [API.md](API.md) | REST 端点、请求示例、错误码、幂等与并发约定 |
-| [MCP.md](MCP.md) | Remote MCP 边界、19 个工具、Token 与 Scope、配置校验 |
+| [MCP.md](MCP.md) | Remote MCP 边界、20 个工具、Token 与 Scope、配置校验 |
+| [TERMBASE.md](TERMBASE.md) | 项目固定词库：作用域优先级、状态分级、生效点、实施状态 |
 | [SYNC.md](SYNC.md) | 三方比较算法、基线、计划防篡改、冲突、安全回写、测试映射 |
 | [SKILLS.md](SKILLS.md) | 内置 Skill、权限模型、脚本执行边界 |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | 生产部署、Secret、备份恢复、可观测性、升级 |

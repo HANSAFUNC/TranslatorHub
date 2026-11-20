@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { assertRole, type ActorContext } from '@localehub/permissions';
 import { Actor, RequireRole } from '../../common/auth';
 import { PrismaService } from '../../common/prisma.service';
+import { QueueService, QUEUE_NAMES } from '../../common/queue.service';
 import { AuditService } from '../../common/audit.service';
 import { zodBody } from '../../common/zod.pipe';
 import { TranslationsService } from '../translations/translations.service';
@@ -54,7 +55,38 @@ export class ContentController {
     private readonly translations: TranslationsService,
     /* Named `auditService` because this controller already has an `audit` route of its own. */
     private readonly auditService: AuditService,
+    private readonly queue: QueueService,
   ) {}
+
+  /**
+   * A term changed, so what this project's translations are supposed to say changed with it.
+   *
+   * This is the line between a termbase and a document. Approving `课程 → Course` has to turn every
+   * existing translation that says otherwise into an issue *without* anybody remembering to run QA,
+   * or the "fixed" vocabulary is only fixed for whoever reads it next.
+   *
+   * Queued rather than run here: it recomputes a whole project, and the API has no business doing
+   * that inside somebody's save. One job id per project collapses a burst — an import followed by a
+   * correction — into a single run, and `removeOnComplete` frees the id again for the next edit.
+   *
+   * Failure to queue is reported, never thrown: the term is saved either way, and a Redis hiccup
+   * must not make a saved term look unsaved.
+   */
+  private async recheckAfterGlossaryChange(
+    actor: ActorContext,
+    projectId: string,
+    reason: string,
+    terms: string[],
+  ): Promise<{ queued: boolean }> {
+    if (!terms.length) return { queued: true };
+    const result = await this.queue.enqueue(
+      QUEUE_NAMES.QA,
+      'qa.run',
+      { organizationId: actor.organizationId, projectId, requestedBy: actor.userId, reason, terms },
+      { jobId: `qa-glossary-${projectId}`, removeOnComplete: true, removeOnFail: true },
+    );
+    return { queued: result.queued };
+  }
 
   /* --------------------------------------------------------------- glossary */
 
@@ -92,7 +124,7 @@ export class ContentController {
   @RequireRole(Role.PROJECT_MANAGER)
   async addTerm(@Actor() actor: ActorContext, @Param('projectId') projectId: string, @Body(zodBody(glossarySchema)) body: z.infer<typeof glossarySchema>) {
     assertRole(actor, projectId, Role.PROJECT_MANAGER);
-    return this.prisma.tenant.withOrganization(actor.organizationId, (tx) =>
+    const created = await this.prisma.tenant.withOrganization(actor.organizationId, (tx) =>
       tx.glossaryTerm.create({
         data: {
           organizationId: actor.organizationId,
@@ -108,6 +140,8 @@ export class ContentController {
         },
       }),
     );
+    const recheck = await this.recheckAfterGlossaryChange(actor, projectId, 'glossary.term_added', [created.term]);
+    return { ...created, recheck };
   }
 
   /**
@@ -126,10 +160,10 @@ export class ContentController {
     @Body(zodBody(glossaryUpdateSchema)) body: z.infer<typeof glossaryUpdateSchema>,
   ) {
     assertRole(actor, projectId, Role.PROJECT_MANAGER);
-    const updated = await this.prisma.tenant.withOrganization(actor.organizationId, async (tx) => {
+    const change = await this.prisma.tenant.withOrganization(actor.organizationId, async (tx) => {
       const existing = await tx.glossaryTerm.findFirst({ where: { id: termId, organizationId: actor.organizationId } });
       if (!existing) return null;
-      return tx.glossaryTerm.update({
+      const updated = await tx.glossaryTerm.update({
         where: { id: termId },
         data: {
           ...(body.term !== undefined ? { term: body.term } : {}),
@@ -142,8 +176,12 @@ export class ContentController {
           ...(body.disabled !== undefined ? { disabled: body.disabled } : {}),
         },
       });
+      // The spelling it had before is part of the change: entries containing the term as it *was*
+      // have to be re-read too, or renaming a term quietly leaves its old issues behind.
+      return { updated, previousTerm: existing.term };
     });
-    if (!updated) throw new LocaleHubError(ErrorCode.NOT_FOUND, `No glossary term ${termId} in this organisation`, 404);
+    if (!change) throw new LocaleHubError(ErrorCode.NOT_FOUND, `No glossary term ${termId} in this organisation`, 404);
+    const { updated, previousTerm } = change;
     await this.auditService.record({
       organizationId: actor.organizationId,
       actorId: actor.userId,
@@ -153,7 +191,10 @@ export class ContentController {
       projectId,
       metadata: { term: updated.term, status: updated.status, fields: Object.keys(body) },
     });
-    return updated;
+    const recheck = await this.recheckAfterGlossaryChange(actor, projectId, 'glossary.term_updated', [
+      ...new Set([previousTerm, updated.term]),
+    ]);
+    return { ...updated, recheck };
   }
 
   @Delete('projects/:projectId/glossary/:termId')
@@ -175,7 +216,10 @@ export class ContentController {
       projectId,
       metadata: { term: deleted.term, scope: deleted.projectId ? 'project' : 'organization' },
     });
-    return { deleted: true, termId };
+    // A deleted term's violations have to stop being reported; the run recomputes the project and
+    // therefore clears them, which is the other half of "the termbase is the rule".
+    const recheck = await this.recheckAfterGlossaryChange(actor, projectId, 'glossary.term_deleted', [deleted.term]);
+    return { deleted: true, termId, recheck };
   }
 
   /**
@@ -228,7 +272,13 @@ export class ContentController {
       projectId,
       metadata: result,
     });
-    return result;
+    const recheck = await this.recheckAfterGlossaryChange(
+      actor,
+      projectId,
+      'glossary.imported',
+      body.terms.map((term) => term.term),
+    );
+    return { ...result, recheck };
   }
 
   /**

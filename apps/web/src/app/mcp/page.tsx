@@ -103,13 +103,27 @@ function ToolTable({ tools, loading }: { tools?: ToolDescriptor[]; loading: bool
  * Written as steps rather than a reference because the page previously assumed a reader already
  * knew what they needed: it listed the tools, the resources and a config snippet, but never said
  * "sign a token, then find your project id, then paste this, then check it worked". The project id
- * in particular was the step nobody could guess — fourteen of the fifteen tools take it, and it
- * was not visible anywhere in the UI.
+ * in particular was the step nobody could guess, and it was not visible anywhere in the UI.
+ *
+ * How many tools take it is **counted from the registry**, not written down here. The sentence used
+ * to say "fourteen of the fifteen", and stayed saying it while the platform grew to twenty — a
+ * number in prose is a fact with no way to notice it stopped being true.
  *
  * The example prompts are built from the reader's own projects, so what they copy is already about
  * their work rather than about a demo.
  */
-function McpOnboarding({ snippets, remoteUrl }: { snippets?: McpClientSnippets; remoteUrl: string }) {
+function McpOnboarding({
+  snippets,
+  remoteUrl,
+  toolCount,
+  projectScoped,
+}: {
+  snippets?: McpClientSnippets;
+  remoteUrl: string;
+  /** `undefined` until the registry has loaded; the step then says it without numbers. */
+  toolCount?: number;
+  projectScoped?: number;
+}) {
   const { data: projects } = useAsync(() => get<ProjectSummary[]>('/projects'), []);
   const { data: me } = useAsync(() => get<Me>('/auth/me'), []);
   const first = projects?.[0];
@@ -169,7 +183,11 @@ function McpOnboarding({ snippets, remoteUrl }: { snippets?: McpClientSnippets; 
       <Step
         n={2}
         title="记下你的 project_id"
-        description="十九个工具里有十七个把它当第一个参数。它同时是你项目页地址的最后一段。"
+        description={
+          toolCount && projectScoped
+            ? `${toolCount} 个工具里有 ${projectScoped} 个把它当第一个参数。它同时是你项目页地址的最后一段。`
+            : '多数工具把它当第一个参数。它同时是你项目页地址的最后一段。'
+        }
       >
         {projects?.length ? (
           <div className="flex flex-col gap-2">
@@ -373,7 +391,14 @@ export default function McpPage() {
         </TabsList>
 
         <TabsContent value="guide">
-          <McpOnboarding snippets={data?.snippets} remoteUrl={data?.remoteUrl ?? ''} />
+          <McpOnboarding
+            snippets={data?.snippets}
+            remoteUrl={data?.remoteUrl ?? ''}
+            toolCount={data?.remote.length}
+            projectScoped={
+              data?.remote.filter((tool) => tool.inputSchema?.properties && 'project_id' in tool.inputSchema.properties).length
+            }
+          />
         </TabsContent>
 
         <TabsContent value="remote">

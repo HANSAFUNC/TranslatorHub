@@ -35,6 +35,7 @@ const SCOPES = [
   { scope: 'translation.review', hint: '提交审核决定' },
   { scope: 'qa.execute', hint: '运行 QA 规则' },
   { scope: 'glossary.read', hint: '读取术语库' },
+  { scope: 'glossary.write', hint: '提出术语（只能落成草稿）' },
   { scope: 'release.publish', hint: '发布（需单独授权）' },
 ];
 

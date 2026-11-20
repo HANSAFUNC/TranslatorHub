@@ -16,6 +16,13 @@ export interface QaJobPayload {
   projectId: string;
   locale?: string;
   requestedBy?: string;
+  /**
+   * Why this run happened, carried into `qa_run.scope` so the history answers the question somebody
+   * actually asks when issues appear from nowhere: "what changed?".
+   */
+  reason?: string;
+  /** The terms that changed, when a termbase edit is what triggered the run. */
+  terms?: string[];
 }
 
 export function startWorker(connection: IORedis, prisma: PrismaClient): Worker[] {
@@ -29,7 +36,7 @@ export function startWorker(connection: IORedis, prisma: PrismaClient): Worker[]
     new Worker<QaJobPayload>(
       QUEUE_NAMES.QA,
       async (job: Job<QaJobPayload>) => {
-        const { organizationId, projectId, locale, requestedBy } = job.data;
+        const { organizationId, projectId, locale, requestedBy, reason, terms } = job.data;
         // Scoped: `projects`, `translation_entries` and `glossary_terms` all carry a row level
         // security policy, and an unscoped read returns nothing rather than everything.
         return tenant.withOrganization(organizationId, async (tx) => {
@@ -42,7 +49,15 @@ export function startWorker(connection: IORedis, prisma: PrismaClient): Worker[]
             projectId,
             status: 'RUNNING',
             triggeredById: requestedBy ?? null,
-            scope: { locale: locale ?? null, source: 'queue', jobId: job.id ?? null } as never,
+            scope: {
+              locale: locale ?? null,
+              source: 'queue',
+              jobId: job.id ?? null,
+              // Absent for an ordinary QA run; present when a termbase edit queued this one, which is
+              // the only way a run's cause is knowable after the fact.
+              ...(reason ? { reason } : {}),
+              ...(terms?.length ? { terms: terms.slice(0, 50) } : {}),
+            } as never,
             startedAt: new Date(),
           },
         });

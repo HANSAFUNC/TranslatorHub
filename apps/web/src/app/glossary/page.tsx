@@ -103,11 +103,16 @@ export default function GlossaryPage() {
   const [newLocale, setNewLocale] = useState('');
   const [newValue, setNewValue] = useState('');
 
-  async function run<T>(key: string, work: () => Promise<T>, done: string): Promise<T | null> {
+  /**
+   * `done` may be a function of the result, because one of these actions has an answer worth reading:
+   * approving a term queues the recheck that makes it a rule, and if the queue was unreachable the
+   * person needs to be told to run it themselves rather than believe the project has been re-read.
+   */
+  async function run<T>(key: string, work: () => Promise<T>, done: string | ((result: T) => string)): Promise<T | null> {
     setBusy(key);
     try {
       const result = await work();
-      toast.success(done);
+      toast.success(typeof done === 'function' ? done(result) : done);
       await reload();
       return result;
     } catch (failure) {
@@ -273,7 +278,20 @@ export default function GlossaryPage() {
                                   variant={term.status === 'DRAFT' ? 'default' : 'outline'}
                                   size="sm"
                                   disabled={busy === term.id}
-                                  onClick={() => void run(term.id, () => patch(`/projects/${projectId}/glossary/${term.id}`, { status: 'APPROVED' }), '已定稿——违反它现在会挡发布')}
+                                  onClick={() =>
+                                    void run(
+                                      term.id,
+                                      () =>
+                                        patch<{ recheck?: { queued: boolean } }>(
+                                          `/projects/${projectId}/glossary/${term.id}`,
+                                          { status: 'APPROVED' },
+                                        ),
+                                      (result) =>
+                                        result.recheck?.queued === false
+                                          ? '已定稿，但重查没排上（队列不可用）——请手动跑一次 QA'
+                                          : '已定稿——违反它现在会挡发布，已有译文正在重查',
+                                    )
+                                  }
                                 >
                                   <Check data-icon="inline-start" />
                                   定稿
