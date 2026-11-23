@@ -469,5 +469,51 @@ describe('deleting a project', () => {
 
     const detail = await call(`/projects/${project.id}`, { token });
     expect(detail.status).toBe(200);
+
+    // The list reports the same effective role the guard compares, so the page can hide the button
+    // without keeping its own copy of the rule. If this ever said ORG_OWNER, the page would offer a
+    // delete to someone the API refuses; if it under-reported, the button would vanish for people who
+    // could have used it.
+    const list = await call<{ id: string; role: string | null }[]>('/projects', { token: readerToken });
+    expect(list.body.data!.find((row) => row.id === project.id)?.role).toBe('READONLY');
+  });
+});
+
+/**
+ * The list the project page is built on.
+ *
+ * Two things the page cannot decide for itself: the order (it renders what the API returns) and the
+ * creation time it prints next to each row. Both are pinned here because a regression in either is
+ * invisible in a screenshot — rows would still be rows, just in yesterday's order.
+ */
+describe('listing projects', () => {
+  it('returns the newest project first', async () => {
+    const older = await createProject({ name: `Older ${runId}`, sourceLocale: 'en-US' });
+    const newer = await createProject({ name: `Newer ${runId}`, sourceLocale: 'en-US' });
+
+    const list = await call<{ id: string; createdAt: string }[]>('/projects', { token });
+    expect(list.status).toBe(200);
+    const rows = list.body.data!;
+
+    const names = rows.map((row) => row.id);
+    expect(names.indexOf(newer.id)).toBeGreaterThanOrEqual(0);
+    expect(names.indexOf(newer.id)).toBeLessThan(names.indexOf(older.id));
+
+    // Not just those two: the whole list is in creation order, newest first.
+    const createdAt = rows.map((row) => Date.parse(row.createdAt));
+    expect(createdAt.every((value) => Number.isFinite(value))).toBe(true);
+    expect([...createdAt].sort((a, b) => b - a)).toEqual(createdAt);
+  });
+
+  it('reports when each project was created', async () => {
+    const before = Date.now();
+    const project = await createProject({ name: `Timed ${runId}`, sourceLocale: 'en-US' });
+    const list = await call<{ id: string; createdAt: string }[]>('/projects', { token });
+    const row = list.body.data!.find((entry) => entry.id === project.id);
+
+    expect(row).toBeTruthy();
+    const createdAt = Date.parse(row!.createdAt);
+    expect(createdAt).toBeGreaterThanOrEqual(before - 5_000);
+    expect(createdAt).toBeLessThanOrEqual(Date.now() + 5_000);
   });
 });

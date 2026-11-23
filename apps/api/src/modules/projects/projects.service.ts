@@ -15,7 +15,10 @@ export class ProjectsService {
           actor.isPlatformAdmin || actor.kind === 'user'
             ? {}
             : { id: { in: actor.boundProjectIds?.length ? actor.boundProjectIds : undefined } },
-        orderBy: { createdAt: 'asc' },
+        // Newest first: the project somebody just made is the one they are looking for, and a list
+        // that grows downwards buries it. The name is the tie-break so two projects created inside
+        // the same millisecond (a test suite, a script) still come back in a stable order.
+        orderBy: [{ createdAt: 'desc' }, { name: 'asc' }],
         include: { _count: { select: { keys: true, locales: true, entries: true } } },
       });
       return projects.map((project) => ({
@@ -26,6 +29,7 @@ export class ProjectsService {
         sourceLocale: project.sourceLocale,
         defaultPlatform: project.defaultPlatform,
         revision: project.revision,
+        createdAt: project.createdAt,
         counts: project._count,
         role: actor.projectRoles[project.id] ?? actor.orgRole,
       }));

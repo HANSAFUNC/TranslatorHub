@@ -24,10 +24,7 @@ import { StatCard } from '@/components/stat-card';
 import { StatusBadge } from '@/components/status-badge';
 import { timeAgo, useAsync } from '@/components/use-async';
 import { del, get, patch, post } from '@/lib/api';
-// The `roles` subpath, not the package root: the root reaches `node:crypto` through its hashing
-// helpers, which webpack refuses to bundle — the same reason this app imports `contracts/locale`
-// rather than `contracts`.
-import { Role } from '@localehub/contracts/roles';
+import { canDeleteProject } from '@/lib/project-access';
 import { localeDisplayName } from '@localehub/contracts/locale';
 import { toast } from 'sonner';
 
@@ -89,9 +86,9 @@ export default function ProjectPage() {
 
   const hasEntries = (dashboard?.entries ?? 0) > 0;
   // The API ranks roles (ORG_OWNER 90 > ORG_ADMIN 80 > PROJECT_MANAGER 60 …) and took the stronger of
-  // the org and project roles when it reported `role`, so this list is exactly "may delete".
-  const DELETE_ROLES: string[] = [Role.PLATFORM_ADMIN, Role.ORG_OWNER, Role.ORG_ADMIN, Role.PROJECT_MANAGER];
-  const canDelete = Boolean(project?.role && DELETE_ROLES.includes(project.role));
+  // the org and project roles when it reported `role`, so this is exactly "may delete". The rule
+  // itself lives in `@/lib/project-access` because the project list offers the same button.
+  const canDelete = canDeleteProject(project?.role);
   const fromProject: SettingsForm | null = project
     ? {
         name: project.name,

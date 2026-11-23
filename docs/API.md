@@ -90,7 +90,7 @@ public 路由不受影响，负载均衡仍可探测。
 
 | Method   | Path                                                    | 最低角色                   |
 | -------- | ------------------------------------------------------- | -------------------------- |
-| GET      | `/projects`                                             | READONLY                   |
+| GET      | `/projects`                                             | READONLY（按创建时间倒序，响应含 `createdAt` 与调用者的有效角色 `role`） |
 | POST     | `/projects`                                             | ORG 成员                   |
 | GET      | `/projects/:projectId`                                  | READONLY（响应含调用者的有效角色 `role`） |
 | PATCH    | `/projects/:projectId`                                  | PROJECT_MANAGER            |
@@ -124,9 +124,10 @@ public 路由不受影响，负载均衡仍可探测。
 
 **删除项目**（`DELETE /projects/:projectId`）需要 `confirmName` 与项目名完全一致：缺参数返回 422 并
 说明要传什么，名字不符同样 422。这个项目下的 Key、译文、界面草图与同步记录会级联删除，**没有撤销**；
-仓库里的语言文件不受影响。`GET /projects/:projectId` 的 `role` 字段是调用者的**有效角色**（组织角色与
-项目角色中更高的那个，与服务端守卫同一套排序），项目设置页据此决定是否显示删除入口——不会出现「按钮
-点了被拒」或「有权限却看不到按钮」。
+仓库里的语言文件不受影响。`GET /projects` 与 `GET /projects/:projectId` 的 `role` 字段是调用者的**有效
+角色**（组织角色与项目角色中更高的那个，与服务端守卫同一套排序，见 `@localehub/contracts/roles` 的
+`ROLE_WEIGHT`），**项目列表**与**项目设置页**据此决定是否显示删除入口——不会出现「按钮点了被拒」或
+「有权限却看不到按钮」。
 
 ### 4.1 界面草图
 

@@ -1,4 +1,4 @@
-import { ErrorCode, LocaleHubError, Role, type McpScope } from '@localehub/contracts';
+import { ErrorCode, LocaleHubError, Role, ROLE_WEIGHT, roleMeets, type McpScope } from '@localehub/contracts';
 
 /**
  * Authorization rules shared by the REST API, the Remote MCP and the Web UI.
@@ -29,18 +29,11 @@ export interface ActorContext {
   credentialSource?: 'bearer' | 'cookie';
 }
 
-const ROLE_WEIGHT: Record<Role, number> = {
-  [Role.PLATFORM_ADMIN]: 100,
-  [Role.ORG_OWNER]: 90,
-  [Role.ORG_ADMIN]: 80,
-  [Role.PROJECT_MANAGER]: 60,
-  [Role.PRODUCT_MANAGER]: 50,
-  [Role.REVIEWER]: 40,
-  [Role.TRANSLATOR]: 30,
-  [Role.DEVELOPER]: 20,
-  [Role.READONLY]: 10,
-};
-
+/**
+ * The ranking lives in `@localehub/contracts/roles` rather than here, because the web pages compare
+ * roles too (to decide whether to offer a button) and this package is not importable from a browser
+ * bundle — it reaches the `@localehub/contracts` root, and that reaches `node:crypto`.
+ */
 export function highestRole(roles: (Role | null | undefined)[]): Role | null {
   let best: Role | null = null;
   for (const role of roles) {
@@ -52,9 +45,7 @@ export function highestRole(roles: (Role | null | undefined)[]): Role | null {
 
 export function roleAtLeast(actor: ActorContext, projectId: string, required: Role): boolean {
   if (actor.isPlatformAdmin) return true;
-  const role = highestRole([actor.orgRole, actor.projectRoles[projectId]]);
-  if (!role) return false;
-  return ROLE_WEIGHT[role] >= ROLE_WEIGHT[required];
+  return roleMeets(highestRole([actor.orgRole, actor.projectRoles[projectId]]), required);
 }
 
 export function assertRole(actor: ActorContext, projectId: string, required: Role): void {

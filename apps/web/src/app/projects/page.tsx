@@ -2,9 +2,10 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { Boxes, GitBranch, Languages, Plus } from 'lucide-react';
+import { Boxes, GitBranch, Languages, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -16,8 +17,9 @@ import { EmptyState } from '@/components/empty-state';
 import { ErrorAlert } from '@/components/error-alert';
 import { PageHeader } from '@/components/page-header';
 import { StatusBadge } from '@/components/status-badge';
-import { useAsync } from '@/components/use-async';
-import { get, post, type ProjectSummary } from '@/lib/api';
+import { timeAgo, formatDateTime, useAsync } from '@/components/use-async';
+import { del, get, post, type ProjectSummary } from '@/lib/api';
+import { canDeleteProject } from '@/lib/project-access';
 import { LocalePicker } from '@/components/locale-picker';
 import { LocaleChips } from '@/components/locale-chips';
 import { PlatformPicker } from '@/components/platform-picker';
@@ -40,6 +42,13 @@ export default function ProjectsPage() {
   const [formError, setFormError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
+  // Deleting from the list. `target` is the whole row rather than an id: the dialog has to name the
+  // project it is about to destroy, and after the delete the row is gone from `data`.
+  const [target, setTarget] = useState<ProjectSummary | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [deleteError, setDeleteError] = useState<unknown>(null);
+  const [deleting, setDeleting] = useState(false);
+
   async function create(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -60,6 +69,29 @@ export default function ProjectsPage() {
       setFormError(err);
     } finally {
       setBusy(false);
+    }
+  }
+
+  /**
+   * Delete the project behind the open dialog, and reload the list in place.
+   *
+   * The name is required by the API, not only by this dialog: the project's keys, translations,
+   * sketches and sync history go with it and there is no undo. The repository's language files are
+   * untouched — this deletes the platform's copy.
+   */
+  async function remove() {
+    if (!target) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await del(`/projects/${target.id}?confirmName=${encodeURIComponent(deleteConfirm)}`);
+      toast.success(`项目「${target.name}」已删除`);
+      setTarget(null);
+      await reload();
+    } catch (err) {
+      setDeleteError(err);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -188,6 +220,7 @@ export default function ProjectsPage() {
                 <TableRow>
                   <TableHead>项目</TableHead>
                   <TableHead>源语言</TableHead>
+                  <TableHead>创建时间</TableHead>
                   <TableHead className="text-right">Key</TableHead>
                   <TableHead className="text-right">条目</TableHead>
                   <TableHead className="text-right">revision</TableHead>
@@ -205,6 +238,9 @@ export default function ProjectsPage() {
                       <div className="text-muted-foreground font-mono text-xs">{project.slug}</div>
                     </TableCell>
                     <TableCell className="font-mono text-xs">{project.sourceLocale}</TableCell>
+                    <TableCell className="text-muted-foreground text-xs" title={formatDateTime(project.createdAt)}>
+                      {timeAgo(project.createdAt)}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{project.counts.keys}</TableCell>
                     <TableCell className="text-right tabular-nums">{project.counts.entries}</TableCell>
                     <TableCell className="text-right font-mono text-xs">{project.revision}</TableCell>
@@ -225,6 +261,25 @@ export default function ProjectsPage() {
                             同步
                           </Link>
                         </Button>
+                        {/* Only for roles the API will accept — the same rule the project's own
+                            settings page uses, from one definition. A DEVELOPER who sees this button
+                            would be looking at a control whose only outcome is a 403. */}
+                        {canDeleteProject(project.role) ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                            data-delete={project.id}
+                            onClick={() => {
+                              setTarget(project);
+                              setDeleteConfirm('');
+                              setDeleteError(null);
+                            }}
+                          >
+                            <Trash2 data-icon="inline-start" />
+                            删除
+                          </Button>
+                        ) : null}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -236,6 +291,58 @@ export default function ProjectsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Deleting from the list, with the same guard the project's own page uses: the name typed
+          back exactly. The API enforces it too — this dialog is the explanation, not the security
+          boundary. */}
+      <AlertDialog
+        open={target !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setTarget(null);
+            setDeleteError(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除「{target?.name}」？</AlertDialogTitle>
+            <AlertDialogDescription>
+              这个操作无法撤销：项目里的 Key、译文、界面草图和同步历史会一起消失。仓库里的语言文件不动。
+              请输入项目名以确认。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <Field>
+            <FieldLabel htmlFor="delete-project-confirm">项目名</FieldLabel>
+            <Input
+              id="delete-project-confirm"
+              value={deleteConfirm}
+              autoComplete="off"
+              placeholder={target?.name ?? ''}
+              onChange={(event) => setDeleteConfirm(event.target.value)}
+            />
+            <FieldDescription>必须与项目名完全一致，删除按钮才会可用。</FieldDescription>
+          </Field>
+
+          <ErrorAlert error={deleteError} />
+
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
+            {/* A plain Button rather than AlertDialogAction: that one closes the dialog on click, so
+                a refused delete would take its error message with it. */}
+            <Button
+              variant="destructive"
+              data-delete-confirm
+              disabled={deleting || deleteConfirm !== (target?.name ?? '')}
+              onClick={() => void remove()}
+            >
+              {deleting ? <Spinner /> : <Trash2 />}
+              永久删除
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

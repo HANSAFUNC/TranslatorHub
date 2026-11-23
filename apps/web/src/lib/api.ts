@@ -136,6 +136,8 @@ export interface ProjectSummary {
   sourceLocale: string;
   defaultPlatform: string;
   revision: number;
+  /** ISO timestamp. The list is ordered by it, newest first. */
+  createdAt: string;
   counts: { keys: number; locales: number; entries: number };
   role: string | null;
 }

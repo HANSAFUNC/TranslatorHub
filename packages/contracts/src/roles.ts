@@ -15,6 +15,39 @@ export type Role = (typeof Role)[keyof typeof Role];
 export const ORG_ROLES: Role[] = [Role.ORG_OWNER, Role.ORG_ADMIN, Role.PROJECT_MANAGER, Role.DEVELOPER, Role.PRODUCT_MANAGER, Role.TRANSLATOR, Role.REVIEWER, Role.READONLY];
 export const PROJECT_ROLES: Role[] = [Role.PROJECT_MANAGER, Role.DEVELOPER, Role.PRODUCT_MANAGER, Role.TRANSLATOR, Role.REVIEWER, Role.READONLY];
 
+/**
+ * The ranking every "this role or higher" decision is made by — the API's `assertRole`, and the web
+ * pages that have to decide whether to offer a button at all.
+ *
+ * It lives next to the role names, in the one module the browser can import (`@localehub/contracts/roles`
+ * is pure; the package root reaches `node:crypto` and cannot be bundled). A page that re-states the
+ * order — "may delete = owner, admin, project manager" — is a second copy of this rule, and the copy
+ * that drifts is the one nobody is looking at: a button offered to somebody the API refuses, or a
+ * destructive action withheld from somebody it would have allowed.
+ */
+export const ROLE_WEIGHT: Record<Role, number> = {
+  [Role.PLATFORM_ADMIN]: 100,
+  [Role.ORG_OWNER]: 90,
+  [Role.ORG_ADMIN]: 80,
+  [Role.PROJECT_MANAGER]: 60,
+  [Role.PRODUCT_MANAGER]: 50,
+  [Role.REVIEWER]: 40,
+  [Role.TRANSLATOR]: 30,
+  [Role.DEVELOPER]: 20,
+  [Role.READONLY]: 10,
+};
+
+/**
+ * Whether `role` is at least `minimum`. Takes a plain string because the value arrives from the API
+ * as one, and answers false for anything it does not recognise — an unknown role is not a permission,
+ * and the roles have grown before now.
+ */
+export function roleMeets(role: string | null | undefined, minimum: Role): boolean {
+  if (!role) return false;
+  const weight = ROLE_WEIGHT[role as Role];
+  return weight !== undefined && weight >= ROLE_WEIGHT[minimum];
+}
+
 /** Spec §2.2 — MCP token scopes. Kept deliberately fine grained. */
 export const McpScope = {
   PROJECT_READ: 'project.read',

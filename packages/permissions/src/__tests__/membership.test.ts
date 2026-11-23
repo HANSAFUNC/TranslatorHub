@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Role } from '@localehub/contracts';
+import { Role, roleMeets } from '@localehub/contracts';
 
 import {
   assertCanGrantOrgRole,
@@ -8,6 +8,7 @@ import {
   canGrantOrgRole,
   canManageMember,
   canManageMembers,
+  highestRole,
 } from '../index';
 import type { ActorContext } from '../index';
 
@@ -102,5 +103,37 @@ describe('which members may be modified', () => {
   it('lets an admin manage members below them', () => {
     expect(canManageMember(actor({ orgRole: Role.ORG_ADMIN }), Role.DEVELOPER)).toBe(true);
     expect(canManageMember(actor({ orgRole: Role.ORG_ADMIN }), Role.READONLY)).toBe(true);
+  });
+});
+
+/**
+ * The ranking itself, now shared with the browser.
+ *
+ * `ROLE_WEIGHT` moved to `@localehub/contracts/roles` so a web page can ask "may this role delete a
+ * project?" without re-stating the order, and `highestRole`/`roleMeets` below are the two halves of
+ * what `assertRole` does. If these ever disagreed with the guard, the project list would offer a
+ * delete button to someone the API refuses — or hide it from someone who is allowed.
+ */
+describe('ranking roles', () => {
+  it('picks the stronger of the org and project roles, and stops at the project role', () => {
+    const effective = (orgRole: Role | null, projectRole: Role | null) => highestRole([orgRole, projectRole]);
+
+    expect(effective(Role.DEVELOPER, Role.PROJECT_MANAGER)).toBe(Role.PROJECT_MANAGER);
+    expect(effective(Role.ORG_OWNER, Role.READONLY)).toBe(Role.ORG_OWNER);
+    expect(effective(null, Role.TRANSLATOR)).toBe(Role.TRANSLATOR);
+    expect(effective(null, null)).toBeNull();
+  });
+
+  it('agrees with the comparison the delete guard uses', () => {
+    // `assertRole(…, PROJECT_MANAGER)` is `roleMeets(highestRole([org, project]), PROJECT_MANAGER)`.
+    const mayDelete = (orgRole: Role | null, projectRole: Role | null) =>
+      roleMeets(highestRole([orgRole, projectRole]), Role.PROJECT_MANAGER);
+
+    expect(mayDelete(Role.ORG_OWNER, null)).toBe(true);
+    expect(mayDelete(Role.DEVELOPER, Role.PROJECT_MANAGER)).toBe(true);
+    expect(mayDelete(Role.DEVELOPER, null)).toBe(false);
+    expect(mayDelete(Role.TRANSLATOR, Role.REVIEWER)).toBe(false);
+    expect(mayDelete(Role.READONLY, null)).toBe(false);
+    expect(mayDelete(null, null)).toBe(false);
   });
 });
