@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { createProvider, piSdkSpecifier, PiProvider } from '../ai';
 
@@ -77,87 +77,32 @@ describe('the pi provider', () => {
     );
   });
 
-  it('is chosen by name, with no key of its own', async () => {
-    // Unlike anthropic/ollama, there is nothing to configure for the provider to be *selected* — the
-    // credentials belong to the machine's pi, not to the platform.
-    const before = process.env.AI_DEFAULT_POLICY;
-    try {
-      process.env.AI_DEFAULT_POLICY = 'pi';
-      expect(createProvider().id).toBe('pi');
-    } finally {
-      if (before === undefined) delete process.env.AI_DEFAULT_POLICY;
-      else process.env.AI_DEFAULT_POLICY = before;
-    }
-  });
-
-  it('still falls back to the offline provider when nothing is chosen', () => {
-    const before = process.env.AI_DEFAULT_POLICY;
-    try {
-      delete process.env.AI_DEFAULT_POLICY;
-      expect(createProvider().id).toBe('heuristic');
-    } finally {
-      if (before !== undefined) process.env.AI_DEFAULT_POLICY = before;
-    }
+  it('needs no key of its own, and no policy to select it', () => {
+    // There is nothing to configure for the provider to be *selected* — the credentials belong to the
+    // machine's pi, not to the platform. (There used to be an `AI_DEFAULT_POLICY` to name one of
+    // several; with one provider left it went with the others.)
+    expect(createProvider().id).toBe('pi');
   });
 });
 
-describe('a policy that is not a provider', () => {
-  it('falls back to the heuristic loudly, once, and names the value', async () => {
-    // `hybrid` — the value the environment template shipped with — is not a provider. It fell through
-    // every branch into the offline heuristic without saying anything, so a deployment could believe
-    // it had AI drafting while "translation" was a glossary substitution over the source text.
-    vi.resetModules();
-    process.env.AI_DEFAULT_POLICY = 'hybrid';
-    const warnings: string[] = [];
-    const spy = vi.spyOn(console, 'warn').mockImplementation((message: unknown) => {
-      warnings.push(String(message));
-    });
+describe('the only provider there is', () => {
+  it('is pi, with no policy to configure', async () => {
+    process.env.PI_PROVIDER = 'gpt-61-sol';
+    process.env.PI_MODEL = 'ctyun/glm-5.3-flash';
     try {
-      const { createProvider: fresh } = await import('../ai');
-      expect(fresh().id).toBe('heuristic');
-      // Once, not per call: this runs on every draft request.
-      expect(fresh().id).toBe('heuristic');
-      expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toContain('hybrid');
-      expect(warnings[0]).toContain('heuristic');
+      expect(createProvider().id).toBe('pi');
     } finally {
-      spy.mockRestore();
-      delete process.env.AI_DEFAULT_POLICY;
-      vi.resetModules();
+      delete process.env.PI_PROVIDER;
+      delete process.env.PI_MODEL;
     }
   });
 
-  it('says which prerequisite is missing when the name is real', async () => {
-    vi.resetModules();
-    process.env.AI_DEFAULT_POLICY = 'anthropic';
-    delete process.env.ANTHROPIC_API_KEY;
-    const warnings: string[] = [];
-    const spy = vi.spyOn(console, 'warn').mockImplementation((message: unknown) => {
-      warnings.push(String(message));
-    });
-    try {
-      const { createProvider: fresh } = await import('../ai');
-      expect(fresh().id).toBe('heuristic');
-      expect(warnings[0]).toContain('ANTHROPIC_API_KEY');
-    } finally {
-      spy.mockRestore();
-      delete process.env.AI_DEFAULT_POLICY;
-      vi.resetModules();
-    }
-  });
-
-  it('says nothing when the heuristic is what was asked for', async () => {
-    vi.resetModules();
-    process.env.AI_DEFAULT_POLICY = 'heuristic';
-    const spy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    try {
-      const { createProvider: fresh } = await import('../ai');
-      expect(fresh().id).toBe('heuristic');
-      expect(spy).not.toHaveBeenCalled();
-    } finally {
-      spy.mockRestore();
-      delete process.env.AI_DEFAULT_POLICY;
-      vi.resetModules();
+  it('refuses a provider it does not have, by name', () => {
+    // `anthropic`, `ollama` and the offline heuristic used to be options. A caller still asking for one
+    // is told the truth rather than served by a different model — and a deployment that used to run on
+    // the heuristic now gets an error instead of "translations" that were the source text back.
+    for (const gone of ['anthropic', 'ollama', 'heuristic', 'hybrid', 'openai']) {
+      expect(() => createProvider(gone), gone).toThrowError(/pi is the only one/);
     }
   });
 });

@@ -2297,6 +2297,37 @@ README 教的是 `docker compose --env-file localehub.env up -d`，而我这一�
 **验证**：`pnpm install --frozen-lockfile --offline` 通过（CI 一致性）、`pnpm-lock.yaml` 里有它（3 处）、
 16 个包 typecheck 通过、507 单元、lint 全绿。顺带说明：`PI_SDK_PATH` 保留，但角色变了——从「没有它就不通」变成
 「想用这台机器已装的那份（省一次 24.8 MB、或跟着全局版本走）时的覆盖开关」。
+### 1.70 只留 pi：删掉 anthropic、ollama 和那个离线启发式，以及两张"配了等于没配"的表面
+
+用户：「不需要其他 只需要pi」。查完依赖面之后删的东西比三个 provider 多——都是同一类问题（看着像配置，其实没有作用）：
+
+| 删掉 | 为什么 |
+| --- | --- |
+| `AnthropicProvider` / `OllamaProvider` | 机器上已经有 pi（自带供应商与凭据），再多一把要分发的 key、一份要解释的账单，换不到什么 |
+| `HeuristicProvider` | 它不是"备选 provider"，是**假产出**：把术语替换过的原文当译文返回。没有 pi 的部署现在拿到的是指名道姓的错误，而不是一份看着像译文的原文 |
+| `AI_DEFAULT_POLICY` | 只剩一个 provider，没有可选的策略；而它的默认值 `hybrid` 根本不是 provider |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OLLAMA_BASE_URL` | 前两个所配的 provider 没了；`OPENAI_API_KEY` **从来没有任何代码读它** |
+| `GET /ai/providers` + `ai_provider_configs` 表 + `AiProviderKind` 枚举 | 迁移 `20261123000000_drop_ai_provider_configs`。这张表**没有任何写入方、一行数据都没有**，却列着 anthropic / openai / azure_openai / ollama / custom 五种这个平台没有的 provider |
+
+**删之前先确认过没人用**：`grep` 全仓（含 web、e2e-demo、cli）只有三处引用——provider 自己的实现、配置 schema、它自己的测试；
+**测试与演示都没有真的调过 AI 起草**，所以删掉启发式不会连累 CI 或离线 demo。
+
+**留下的一个字段**：`provider` 仍然在 REST 与 MCP 的 schema 里，但类型收成 `z.literal('pi')`。旧调用方传 `anthropic`
+会拿到 `VALIDATION_ERROR: Invalid literal value, expected "pi"`，而不是被静默换成别的模型——实测：
+
+| 调用 | 结果 |
+| --- | --- |
+| 不传 provider | 201，`provider: "pi"`，3.6 秒，返回 `カートは空です` |
+| `provider: "pi"` | 201 |
+| `provider: "anthropic"` | **422** `VALIDATION_ERROR`，指名要求 `pi` |
+| `GET /ai/providers` | **404** |
+
+**删设置项还有个尾巴**：不在 schema 里的环境变量 zod 会直接忽略，也就是说"升级后 env 里还留着 `AI_DEFAULT_POLICY=anthropic`"
+会**静默**变成 pi。我在 `env.example` 里先写了"会响亮地失败"，随即发现那是假的——所以改成让它真的响：
+`loadEnv` 现在会检查这四个名字是否还在环境里，在就打印一行说它们不再起作用。本机 `localehub.env` 与 `compose.override.yaml`
+里的那行已删除。
+
+**验证**：505 单元 / 188 集成 / 浏览器检查 / lint / typecheck 全绿；`docs/openapi.json` 重新生成（83 paths，少了一条）。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

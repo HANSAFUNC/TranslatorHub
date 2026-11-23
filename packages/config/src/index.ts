@@ -114,12 +114,13 @@ const envSchema = z.object({
   MCP_REMOTE_ENABLED: z.coerce.boolean().default(true),
   /** URL an MCP client should use to reach the Remote MCP. Shown in the web UI and the CLI. */
   MCP_PUBLIC_URL: z.string().default('http://localhost:3003/mcp'),
-  AI_DEFAULT_POLICY: z.string().default('hybrid'),
   SYNC_PLAN_TTL_SECONDS: z.coerce.number().default(1800),
   SYNC_MAX_ENTRIES_PER_BATCH: z.coerce.number().default(20000),
-  ANTHROPIC_API_KEY: z.string().optional(),
-  OPENAI_API_KEY: z.string().optional(),
-  OLLAMA_BASE_URL: z.string().optional(),
+  // `AI_DEFAULT_POLICY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and `OLLAMA_BASE_URL` are gone with the
+  // providers they configured: `pi` is the only one, and its settings are `PI_*`. Two of those four
+  // were knobs that did nothing at all (`OPENAI_API_KEY` was read by nobody, and `hybrid` — the
+  // default the template shipped with — was not a provider), which is the worst kind of setting to
+  // leave in a schema: it reads as configuration.
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
@@ -153,13 +154,24 @@ export function loadEnv(cwd?: string): AppEnv {
     CSRF_HEADER_NAME: process.env.CSRF_HEADER_NAME,
     MCP_REMOTE_ENABLED: process.env.MCP_REMOTE_ENABLED,
     MCP_PUBLIC_URL: process.env.MCP_PUBLIC_URL,
-    AI_DEFAULT_POLICY: process.env.AI_DEFAULT_POLICY,
     SYNC_PLAN_TTL_SECONDS: process.env.SYNC_PLAN_TTL_SECONDS,
     SYNC_MAX_ENTRIES_PER_BATCH: process.env.SYNC_MAX_ENTRIES_PER_BATCH,
-    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-    OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL,
   };
+  // Settings that used to mean something and no longer do.
+  //
+  // They are not in the schema, so nothing reads them — and zod ignoring an unknown key is exactly the
+  // silent kind of "configured" this file's callers keep getting bitten by. A deployment upgrading
+  // with `AI_DEFAULT_POLICY=anthropic` still sitting in its environment would otherwise just start
+  // using pi without a word.
+  const removed = ['AI_DEFAULT_POLICY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OLLAMA_BASE_URL'].filter(
+    (name) => process.env[name],
+  );
+  if (removed.length) {
+    console.warn(
+      `[config] ${removed.join(', ')} no longer do anything — pi is the only AI provider, and it is configured by PI_*. Remove them from your environment file.`,
+    );
+  }
+
   const result = envSchema.safeParse(stripUndefined(parsed));
   if (!result.success) {
     const issues = result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');

@@ -254,7 +254,7 @@ export const remoteToolSchemas = {
     project_id: z.string(),
     entry_ids: z.array(z.string()).min(1).max(200),
     target_locales: z.array(localeTagSchema).min(1),
-    provider: z.string().optional(),
+    provider: z.literal('pi').optional().describe('只有 pi 一个 provider；留着这个字段是为了让旧调用方收到明确的拒绝，而不是被静默换成别的模型'),
     write_drafts: z.boolean().default(true),
   }),
   review_translation_entries: z.object({

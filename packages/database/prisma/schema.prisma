@@ -200,13 +200,6 @@ enum SkillStatus {
   DISABLED
 }
 
-enum AiProviderKind {
-  anthropic
-  openai
-  azure_openai
-  ollama
-  custom
-}
 
 /* ------------------------------------------------------------- identity */
 
@@ -249,7 +242,6 @@ model Organization {
   projects               Project[]
   mcpClients             McpClient[]
   glossaryTerms          GlossaryTerm[]
-  aiProviders            AiProviderConfig[]
   skills                 Skill[]
   auditLogs              AuditLog[]
   translationMemory      TranslationMemoryEntry[]
@@ -998,23 +990,6 @@ model QaIssue {
   @@map("qa_issues")
 }
 
-model AiProviderConfig {
-  id              String         @id @default(uuid()) @db.Uuid
-  organizationId  String         @map("organization_id") @db.Uuid
-  name            String
-  kind            AiProviderKind
-  baseUrl         String?        @map("base_url")
-  model           String
-  apiKeyEncrypted String?        @map("api_key_encrypted")
-  isDefault       Boolean        @default(false) @map("is_default")
-  enabled         Boolean        @default(true)
-  createdAt       DateTime       @default(now()) @map("created_at")
-
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  @@index([organizationId])
-  @@map("ai_provider_configs")
-}
 
 /* -------------------------------------------------------------- skills */
 

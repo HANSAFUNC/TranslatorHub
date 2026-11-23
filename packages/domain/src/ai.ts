@@ -1,7 +1,7 @@
 
 import { pathToFileURL } from 'node:url';
 import { assertRole, type ActorContext } from '@localehub/permissions';
-import { ErrorCode, LocaleHubError, Role, extractPlaceholders } from '@localehub/contracts';
+import { ErrorCode, LocaleHubError, Role } from '@localehub/contracts';
 import { emitProjectEvent } from './events';
 import { resolveGlossary, termTarget } from './glossary';
 import { upsertTranslation } from './translation-core';
@@ -50,105 +50,6 @@ export function formatGlossary(glossary: { term: string; translation: string; ca
  * demo and the test-suite independent of network access. Anthropic / OpenAI / Ollama
  * providers are wired but only activate when their API key is configured.
  */
-export class HeuristicProvider implements AiProvider {
-  readonly id = 'heuristic';
-
-  async translate(input: { text: string; sourceLocale: string; targetLocale: string; glossary?: { term: string; translation: string }[] }) {
-    let text = input.text;
-    for (const term of input.glossary ?? []) {
-      text = text.replaceAll(term.term, term.translation);
-    }
-    // Keep the placeholders identical so the QA rule does not fire on AI output.
-    const placeholders = extractPlaceholders(input.text).map((placeholder) => placeholder.name);
-    return {
-      text,
-      provider: this.id,
-      confidence: placeholders.length ? 0.4 : 0.6,
-    };
-  }
-
-  async review(input: { source: string; target: string; targetLocale: string }) {
-    const issues: { code: string; message: string; severity: 'ERROR' | 'WARNING' | 'INFO' }[] = [];
-    if (!input.target.trim()) issues.push({ code: 'EMPTY', message: 'Empty translation', severity: 'ERROR' });
-    if (input.source === input.target && input.source.length > 0) {
-      issues.push({ code: 'COPY', message: 'Target is identical to the source', severity: 'WARNING' });
-    }
-    return { issues, provider: this.id };
-  }
-}
-
-export class AnthropicProvider implements AiProvider {
-  readonly id = 'anthropic';
-  constructor(private readonly apiKey: string, private readonly model = 'claude-sonnet-5-5') {}
-
-  private async complete(system: string, user: string): Promise<string> {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': this.apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: this.model,
-        max_tokens: 1024,
-        system,
-        messages: [{ role: 'user', content: user }],
-      }),
-    });
-    if (!response.ok) throw new LocaleHubError(ErrorCode.INTERNAL_ERROR, `Anthropic API error ${response.status}`, 502);
-    const payload = (await response.json()) as { content: { type: string; text?: string }[] };
-    return payload.content.filter((block) => block.type === 'text').map((block) => block.text ?? '').join('\n').trim();
-  }
-
-  async translate(input: { text: string; sourceLocale: string; targetLocale: string; glossary?: { term: string; translation: string }[] }) {
-    const glossary = formatGlossary(input.glossary ?? []);
-    const text = await this.complete(
-      'You are a professional software localisation engine. Return only the translated string, preserving every placeholder and markup token exactly.',
-      `Source (${input.sourceLocale}) -> Target (${input.targetLocale})\n${glossary ? `Glossary:\n${glossary}\n` : ''}\n${input.text}`,
-    );
-    return { text, provider: this.id, confidence: 0.75 };
-  }
-
-  async review(input: { source: string; target: string; targetLocale: string }) {
-    const raw = await this.complete(
-      'You review software translations. Reply with JSON: {"issues":[{"code":"...","message":"...","severity":"ERROR|WARNING|INFO"}]}.',
-      `Source: ${input.source}\nTarget (${input.targetLocale}): ${input.target}`,
-    );
-    try {
-      const parsed = JSON.parse(raw) as { issues: { code: string; message: string; severity: 'ERROR' | 'WARNING' | 'INFO' }[] };
-      return { issues: parsed.issues ?? [], provider: this.id };
-    } catch {
-      return { issues: [], provider: this.id };
-    }
-  }
-}
-
-export class OllamaProvider implements AiProvider {
-  readonly id = 'ollama';
-  constructor(private readonly baseUrl: string, private readonly model = 'llama3.1') {}
-
-  async translate(input: { text: string; sourceLocale: string; targetLocale: string }) {
-    const response = await fetch(`${this.baseUrl}/api/generate`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: this.model,
-        prompt: `Translate from ${input.sourceLocale} to ${input.targetLocale}. Keep placeholders unchanged. Reply with the translation only.\n\n${input.text}`,
-        stream: false,
-      }),
-    });
-    if (!response.ok) throw new LocaleHubError(ErrorCode.INTERNAL_ERROR, `Ollama error ${response.status}`, 502);
-    const payload = (await response.json()) as { response?: string };
-    return { text: (payload.response ?? '').trim(), provider: this.id, confidence: 0.6 };
-  }
-
-  async review(_input: { source: string; target: string; targetLocale: string }) {
-    return { issues: [] as { code: string; message: string; severity: 'ERROR' | 'WARNING' | 'INFO' }[], provider: this.id };
-  }
-}
-
-/** The slice of pi's SDK this file uses. Structural, so the package can stay an optional dependency. */
 interface PiSdk {
   createAgentSession(options: Record<string, unknown>): Promise<{
     session: {
@@ -332,47 +233,34 @@ function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
 }
 
 /**
- * Said once, not per request.
+ * The provider.
  *
- * The fallback is not an error — a demo with no provider has to keep working — but it is not a
- * translation either, and staying quiet about it is how a deployment runs for weeks believing it
- * has AI drafting. `AI_DEFAULT_POLICY=hybrid`, the value the template shipped with, is the exact case
- * this exists for: it is not a provider, it falls through every branch below, and the heuristic
- * "translates" by substituting glossary terms and otherwise handing back the source text.
+ * There is one. `anthropic`, `ollama` and the offline `heuristic` were removed rather than kept as
+ * options: the platform runs on a machine that already has `pi` configured, so a second key to hand
+ * out and a second bill to explain bought nothing — and the heuristic in particular was worse than
+ * nothing, because a "translation" that returns the source text with the glossary substituted looks
+ * like output. A deployment without `pi` now gets an error naming what is missing, which is the
+ * honest answer to "why is nothing translated".
+ *
+ * `kind` survives for the request-level override; anything but `pi` is refused by name rather than
+ * quietly served by a different model.
  */
-let warnedAboutFallback = false;
-
-function warnAboutFallback(reason: string): void {
-  if (warnedAboutFallback) return;
-  warnedAboutFallback = true;
-  console.warn(
-    `[ai] AI drafting is not using a model: ${reason}. The offline heuristic provider is in use — it substitutes glossary terms and otherwise returns the source text.`,
-  );
-}
-
 export function createProvider(kind?: string): AiProvider {
-  const requested = kind ?? process.env.AI_DEFAULT_POLICY ?? 'heuristic';
-  if (requested === 'anthropic' && process.env.ANTHROPIC_API_KEY) return new AnthropicProvider(process.env.ANTHROPIC_API_KEY);
-  if (requested === 'ollama' && process.env.OLLAMA_BASE_URL) return new OllamaProvider(process.env.OLLAMA_BASE_URL);
-  // `pi` needs no key of its own: it reads the credentials the machine already has. Which model to use
-  // comes from the environment, because the catalogue is the operator's, not the platform's.
-  if (requested === 'pi') {
-    return new PiProvider({
-      provider: process.env.PI_PROVIDER,
-      model: process.env.PI_MODEL,
-      agentDir: process.env.PI_AGENT_DIR,
-      ...(process.env.PI_TIMEOUT_MS ? { timeoutMs: Number(process.env.PI_TIMEOUT_MS) } : {}),
-    });
+  const requested = kind ?? 'pi';
+  if (requested !== 'pi') {
+    throw new LocaleHubError(
+      ErrorCode.VALIDATION_ERROR,
+      `Unknown AI provider "${requested}": pi is the only one this platform has.`,
+      400,
+      { provider: requested },
+    );
   }
-  if (requested === 'heuristic') return new HeuristicProvider();
-
-  // A provider was asked for by name and could not be built, or the name is not one. Both are worth
-  // saying out loud once: the first is a missing prerequisite, the second is a value that looks
-  // configured and is not.
-  if (requested === 'anthropic') warnAboutFallback('AI_DEFAULT_POLICY=anthropic but ANTHROPIC_API_KEY is not set');
-  else if (requested === 'ollama') warnAboutFallback('AI_DEFAULT_POLICY=ollama but OLLAMA_BASE_URL is not set');
-  else warnAboutFallback(`AI_DEFAULT_POLICY="${requested}" is not a provider this platform knows (pi | anthropic | ollama)`);
-  return new HeuristicProvider();
+  return new PiProvider({
+    provider: process.env.PI_PROVIDER,
+    model: process.env.PI_MODEL,
+    agentDir: process.env.PI_AGENT_DIR,
+    ...(process.env.PI_TIMEOUT_MS ? { timeoutMs: Number(process.env.PI_TIMEOUT_MS) } : {}),
+  });
 }
 
 export class AiService {

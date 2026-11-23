@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
-import { ErrorCode, LocaleHubError, Role, McpScope, platformSchema } from '@localehub/contracts';
+import { ErrorCode, LocaleHubError, Role, platformSchema } from '@localehub/contracts';
 import { z } from 'zod';
 import { assertRole, type ActorContext } from '@localehub/permissions';
 import { Actor, RequireRole } from '../../common/auth';
@@ -44,7 +44,12 @@ const tmSearchSchema = z.object({ query: z.string().min(1), locale: z.string().o
 const aiTranslateSchema = z.object({
   entryIds: z.array(z.string()).min(1).max(200),
   targetLocales: z.array(z.string()).min(1),
-  provider: z.string().optional(),
+  /**
+   * `pi` is the only provider, and this field says so out loud rather than being dropped from the
+   * schema: a caller that still sends `anthropic` gets told the value is not one this platform has,
+   * instead of having its choice silently ignored while a different model answers.
+   */
+  provider: z.literal('pi').optional(),
   writeDrafts: z.boolean().default(true),
 });
 
@@ -427,18 +432,6 @@ export class ContentController {
     );
   }
 
-  @Get('projects/:projectId/ai/providers')
-  async aiProviders(@Actor() actor: ActorContext, @Param('projectId') projectId: string) {
-    assertRole(actor, projectId, Role.READONLY);
-    void McpScope;
-    return this.prisma.tenant.withOrganization(actor.organizationId, async (tx) => {
-      const providers = await tx.aiProviderConfig.findMany({
-        where: { organizationId: actor.organizationId },
-        select: { id: true, name: true, kind: true, model: true, enabled: true, isDefault: true, baseUrl: true },
-      });
-      return providers;
-    });
-  }
 }
 
 /** Punctuation and symbols that never belong at the edge of a term. */

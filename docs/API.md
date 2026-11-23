@@ -289,7 +289,6 @@ Idempotency-Key: repo-commit-a1b2-plan-xyz
 | GET    | `/projects/:projectId/qa/report`    | 按规则/语言聚合报告           |
 | POST   | `/projects/:projectId/ai/translate` | AI 生成草稿（写入 DRAFT）     |
 | POST   | `/projects/:projectId/ai/review`    | AI 审核建议（只读，advisory） |
-| GET    | `/projects/:projectId/ai/providers` | Provider 列表                 |
 
 ### 6.1 导入导出格式
 

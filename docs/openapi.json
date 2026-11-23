@@ -2447,63 +2447,6 @@
         }
       }
     },
-    "/projects/{projectId}/ai/providers": {
-      "get": {
-        "operationId": "Content_aiProviders",
-        "tags": [
-          "术语、记忆、AI、审计"
-        ],
-        "summary": "GET /projects/{projectId}/ai/providers",
-        "security": [
-          {
-            "bearer": []
-          },
-          {
-            "sessionCookie": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Envelope with `data`",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiEnvelope"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "UNAUTHENTICATED / INVALID_TOKEN / TOKEN_EXPIRED"
-          },
-          "403": {
-            "description": "ROLE_INSUFFICIENT / SCOPE_INSUFFICIENT / PROJECT_ACCESS_DENIED"
-          },
-          "404": {
-            "description": "NOT_FOUND"
-          },
-          "422": {
-            "description": "VALIDATION_ERROR"
-          }
-        },
-        "x-localehub-auth": {
-          "public": false,
-          "role": null,
-          "scopes": [],
-          "enforcedBy": "authentication"
-        },
-        "parameters": [
-          {
-            "name": "projectId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
     "/projects/{projectId}/ai/review": {
       "post": {
         "operationId": "Content_aiReview",
@@ -2664,7 +2607,8 @@
                     "minItems": 1
                   },
                   "provider": {
-                    "type": "string"
+                    "type": "string",
+                    "const": "pi"
                   },
                   "writeDrafts": {
                     "type": "boolean",

@@ -532,19 +532,22 @@ finding 就退出码非零——可以在提交前或 CI 里卡住「本地过�
 **AI 翻译**（走 `POST /projects/:id/ai/translate`，与 MCP 的 `translate_entries` 是同一个服务、同一个 provider、
 同一套术语库，写进去的永远是 **DRAFT**——AI 不能自己通过审核）。两者都不离开这个页面。
 
-**AI 要真翻译得先配 provider**（否则是离线启发式，只做术语替换、基本等于返回原文）。三种名字有效：
-`pi`、`anthropic`、`ollama`；其余（含默认的 `hybrid`）都落到启发式。
+**只有一个 provider：`pi`**——这台机器自己的那份安装，用它自己的供应商与凭据，不用再发一把 key。
 
 ```bash
-# localehub.env —— 用这台机器上已配好的 pi（自带供应商与凭据，不用再发一把 key）
-AI_DEFAULT_POLICY=pi
+# localehub.env
 PI_PROVIDER=gpt-61-sol          # pi 目录里的供应商名（pi list 或 ~/.pi/agent/models.json）
 PI_MODEL=ctyun/glm-5.3-flash
 # PI_AGENT_DIR=                 # pi 的 auth.json/models.json 在哪，默认 ~/.pi/agent
 # PI_TIMEOUT_MS=90000
-
-# 或者用 anthropic：AI_DEFAULT_POLICY=anthropic + ANTHROPIC_API_KEY
 ```
+
+`anthropic`、`ollama` 和那个离线 `heuristic` **都删掉了**，不是藏起来：新增一把要分发的 key、一份要解释的账单，
+换来的东西并不比已有的多；而 heuristic 更糟——它会返回"把术语替换过的原文"，看着像译文。现在没有 pi 的部署会拿到
+一个**指名道姓的错误**（说缺 SDK 还是缺模型），而不是一份假产出。`AI_DEFAULT_POLICY` / `ANTHROPIC_API_KEY` /
+`OPENAI_API_KEY` / `OLLAMA_BASE_URL` 四个配置项随之删除，其中两个本来就没有任何代码读它们。
+`GET /ai/providers` 与 `ai_provider_configs` 表也一并删了：那张表没有任何写入方、一行数据都没有，
+却列着 anthropic / openai / azure_openai / ollama / custom 五种这个平台没有的 provider。
 
 **SDK 是 `@localehub/domain` 声明的依赖**（`optionalDependencies`，一个包同时提供 `pi` 命令行和 SDK），
 `pnpm install` 就会装上——发布包约 **25 MB**，不是什么负担。`optional` 而不是普通依赖的理由只有一个：
@@ -561,7 +564,8 @@ Registry 取不到时不要连带整个 workspace 装不上，而这条路本来
 调用时**模型没有任何工具**（`noTools: 'all'`）、不许展开斜杠命令/技能、工作目录是临时目录、带超时——
 被翻译的字符串是数据，它没有理由能指挥一个 agent 去读文件或跑命令。
 
-`OPENAI_API_KEY` 在配置里但**没有任何 provider 读它**，设了不起作用。
+调用方仍然可以传 `provider`，但只接受 `pi`：留着这个字段是为了让旧调用方收到明确的拒绝，
+而不是被静默换成别的模型。
 
 ### 2.11 术语库：Agent 能提，定稿由人
 
