@@ -189,7 +189,12 @@ export const remoteToolSchemas = {
     cursor: z.string().optional(),
   }),
   get_translation_entry: z.object({ project_id: z.string(), key: z.string(), locale: localeTagSchema }),
-  get_glossary: z.object({ project_id: z.string(), locale: localeTagSchema.optional() }),
+  get_glossary: z.object({
+    project_id: z.string(),
+    locale: localeTagSchema
+      .optional()
+      .describe('只返回在该语言适用的词条，并带上该语言的译法与禁用说法；省略则返回全部（每条带 scope 与 status）'),
+  }),
   import_glossary_terms: z.object({
     project_id: z.string().describe('项目 id'),
     terms: z

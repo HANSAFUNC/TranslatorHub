@@ -170,6 +170,8 @@ Scope 强制、源文变更致 STALE、apply report 推进基线。
 
 ```bash
 scripts/up.sh up -d --build                                     # 开发/演示（= docker compose --env-file localehub.env ...）
+# 改了代码要重建 api/worker/mcp-remote 的镜像时（本机网络跑不了冷构建）：
+# scripts/deploy-local.sh '<改动里的一个字符串>:/镜像里的文件>'  —— 构建、核对、部署，失败会停
 docker compose --env-file localehub.env -f compose.yaml -f compose.production.yaml up -d   # 生产（需 ./secrets/*）
 docker compose --env-file localehub.env run --rm api pnpm prisma migrate deploy
 ```

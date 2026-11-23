@@ -6,7 +6,7 @@ export const REMOTE_TOOL_DESCRIPTIONS: Record<string, string> = {
   list_project_locales: '读取项目语言列表',
   search_translation_keys: '检索翻译 Key',
   get_translation_entry: '读取单条翻译条目',
-  get_glossary: '读取术语库',
+  get_glossary: '读取术语库（解析后：项目覆盖组织级、被关掉的不出现）',
   upsert_glossary_terms: '提出术语（只能落成草稿，定稿由人决定）',
   extract_glossary_candidates: '从已有译文里数出候选术语与它已有的译法',
   import_glossary_terms: '导入整份词表（按 term 覆盖；默认草稿，可指定直接定稿）',

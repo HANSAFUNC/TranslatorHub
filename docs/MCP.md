@@ -583,7 +583,7 @@ Registry 取不到时不要连带整个 workspace 装不上，而这条路本来
 
 Agent 这一侧：
 
-- `get_glossary` 读（`glossary.read`）。
+- `get_glossary` 读（`glossary.read`），走与平台页面、QA、AI 草稿同一条解析规则：项目级压过组织级并写明覆盖了谁、被关掉的不出现、废弃的带状态返回。带 `locale` 时只返回该语言适用的词条，并给出该语言的译法与禁用说法。
 - `extract_glossary_candidates` 读**项目自己的词汇**（`glossary.read`）：从已有译文里数出反复出现的说法，连同每个语言已有的译法、支撑条数与例子。只读，什么都不写——**提之前先问一遍项目已经定了什么**，一个和 152 条既有译文相矛盾的提议比不提更糟。
 - `import_glossary_terms` 把**一份现成的词表**导进来（`glossary.write`）：按 term 覆盖，重复导入不会留下两条。它收的是**已经解析好的词条，不是文件**——和 `import_translations` 同一个道理：平台看不见调用方的磁盘，Excel/TBX 由调用方自己解析。`status` 默认 `DRAFT`；写 `APPROVED` 需要 `PROJECT_MANAGER`，因为那等于宣布这些词违反即挡发布。已定稿的词条不会被草稿导入改写，会出现在 `untouched` 里。
 - `upsert_glossary_terms` 提（`glossary.write`，与读分开授权）。**只能落成草稿**：定稿是人的动作，

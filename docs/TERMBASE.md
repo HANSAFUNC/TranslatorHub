@@ -129,7 +129,7 @@ CREATE UNIQUE INDEX glossary_project_term_key
 | 设计里的步骤 | 状态 | 落在哪 |
 | --- | --- | --- |
 | 1. 模型补齐 | ✅ | 迁移 `20261120000000_glossary_termbase`：`status`（默认 **DRAFT**，不让既有词条突然变成会挡发布的规则）、`do_not_translate`、`forbidden_targets`、`disabled`、`created_by_id`、`updated_at`，以及 `(project_id, lower(term))` 的部分唯一索引 |
-| 2. 优先级与去重 | ✅ | `packages/domain/src/glossary.ts` 的 `resolveGlossary` / `termTarget`；API、worker、AI 三个读点都走它，同名词不再报两次 |
+| 2. 优先级与去重 | ✅ | `packages/domain/src/glossary.ts` 的 `resolveGlossary` / `termTarget`；API、worker、AI 三个读点都走它，同名词不再报两次。**MCP 的 `get_glossary` 一开始漏了**（还是裸 `findMany`：同名词返回两次、把「在这里关掉」当成词条），2026-11-23 补上 |
 | 3. 能被策展（REST） | ✅ | `PATCH` / `DELETE` / `POST .../glossary/import`（按 term upsert，带审计），`GET` 返回 `scope`、`overrides` 与计数 |
 | 3. 能被策展（MCP） | ✅ | `upsert_glossary_terms`（需 `glossary.write`，与读分开授权）。只能落 **DRAFT**：定稿是人的动作。已定稿/已废弃的词条改不动，返回 `untouched` 而不是静默忽略 |
 | 批量导入（MCP） | ✅ | `import_glossary_terms`：收**已解析的词条**而不是文件（平台看不见调用方的磁盘，Excel/TBX 由调用方解析）。按 term 覆盖、重复导入不重复；`status` 默认 DRAFT，APPROVED 需 PROJECT_MANAGER；已定稿的词条不被草稿导入改写 |

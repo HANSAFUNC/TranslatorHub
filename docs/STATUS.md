@@ -2423,6 +2423,40 @@ API 路径、数据库表、数据契约字段），结果与发现：
 §12 的 Skill 设计、§15 的可观测性。这几节上一版就是这样写的，改动风险低，但"低"不等于"验过"。
 
 **docx 随之重新生成**（md 改了就得不一致）：`marked` → HTML → `textutil -convert docx`，反解回文本核对关键内容命中。
+### 1.74 MCP 的 `get_glossary` 原来是个漏网的读点；以及我那次"部署成功"其实什么都没构建
+
+用户问「mcp 能获取术语表吗」。能——但**拿到的和平台自己那边不是同一个东西**：`get_glossary` 还是最初那句裸
+`findMany`，正是术语库那轮把 REST / worker / AI 三处都换成 `resolveGlossary` 时漏掉的第四个读点。
+它对调用方有四种骗法：组织级与项目级同名词**返回两条**（且不说该听谁的）、把"在这里关掉"的项目行当成词条返回、
+把已废弃的词条当成现行的返回、而且没有 `scope` 字段所以调用方根本分不清。另外 `locale` 参数**声明了但从没被用过**。
+
+现在走同一条解析规则，`locale` 也真的起作用了。实测（部署栈上）：
+
+```
+全部:  [["cart","project","DRAFT",{"ja-JP":"カート","zh-CN":"购物车"}], …]
+ja-JP: [["cart","カート",[]], …]        ← 该语言的译法 + 禁用说法
+zh-CN: [["cart","购物车"], …]
+```
+
+**而查这个问题的过程中，发现自己上一条"部署成功"是假的。** 我在验证时发现线上行为还是旧的，顺着查下去：
+
+1. `docker buildx build … | tail -2` —— **管线的退出码是 `tail` 的**，构建失败也照样往下走，然后 `up --no-build`
+   发现容器已经在跑旧镜像、什么也不做。日志最后一行永远是那条 build-details 链接，成功失败长得一样。
+2. 构建为什么失败：`max depth exceeded`——今天反复往 `localehub-api:latest` 上叠层，又到 Docker 的层数上限了
+   （之前那次是靠 flatten 到 `localehub-api:base` 解决的，今天又满了）。这里的教训是**我知道这个坑、也写进过记忆，
+   但仍然靠"记得"来规避**。
+3. flatten 之后 compose 报 `no command specified`：`docker import` **丢掉镜像配置**，CMD 没了——而 api 与 worker
+   就靠镜像的 CMD 启动（mcp-remote 在 compose 里覆盖了）。
+4. 还有一个半途而废的 recreate 留下的容器占着名字（`<hex>_localehub-worker-1`），下次 recreate 卡在名字冲突上——
+   那一刻 api/worker/mcp-remote 全是 Exited。
+
+**所以把这条部署路径写成了脚本**：`scripts/deploy-local.sh`（配 `docker/local-layer.Dockerfile`，两者都进仓库）。
+它做四件今天靠我记性做的事：不把构建放进管道（失败就停）、层数接近上限时自动 flatten、flatten 后恢复 ENV/ENTRYPOINT/CMD、
+清掉占名字的僵尸容器；最后**核对镜像里真有这次改的东西**再部署，并打印每个容器的启动时间与镜像 ID——
+"到底有没有重启"从此是个可查的事实，而不是我的感觉。用法：`scripts/deploy-local.sh '改动的某个字符串:/镜像里的文件路径'`。
+
+**验证**：脚本自身跑了一遍（构建 → 核对标记 → 部署 → 三个容器 Started + healthy）；线上 `get_glossary` 三个用例如上；
+新增集成测试「get_glossary 按平台自己的读法回答」（四种骗法各一条断言）；507 单元 / 189 集成 / lint / typecheck 全绿。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

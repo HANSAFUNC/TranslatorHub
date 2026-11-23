@@ -623,6 +623,66 @@ describe('proposing terms over MCP', () => {
     expect(invoice!.translations['ja-JP']).toBe('インボイス');
   }, 120_000);
 
+  it('answers get_glossary the way the platform itself reads the termbase', async () => {
+    // This tool used to be a raw `findMany` over both scopes — the one read path the resolver missed.
+    // It answered a caller with a term twice when the organisation and the project both had one,
+    // with a switched-off project row as if it were a term, and with no way to tell which reading it
+    // was being held to. The assertions below are the four ways that lied.
+    const prisma = new PrismaClient();
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SELECT set_config('app.bypass_rls', 'on', true)`);
+        // Organisation says 元帳; this project says 台帳 and rules out 帳簿.
+        await tx.glossaryTerm.create({
+          data: { organizationId, projectId: null, term: 'Ledger', translations: { 'ja-JP': '元帳' }, status: 'APPROVED' },
+        });
+        await tx.glossaryTerm.create({
+          data: {
+            organizationId,
+            projectId,
+            term: 'Ledger',
+            translations: { 'ja-JP': '台帳' },
+            status: 'APPROVED',
+            forbiddenTargets: { 'ja-JP': ['帳簿'] },
+          },
+        });
+        // An organisation term this project switched off, and one it simply has no opinion about.
+        await tx.glossaryTerm.create({
+          data: { organizationId, projectId: null, term: 'Receipt', translations: { 'ja-JP': '領収書' }, status: 'APPROVED' },
+        });
+        await tx.glossaryTerm.create({
+          data: { organizationId, projectId, term: 'Receipt', translations: {}, status: 'DRAFT', disabled: true },
+        });
+        await tx.glossaryTerm.create({
+          data: { organizationId, projectId: null, term: 'NoJapanese', translations: { 'zh-CN': '无日语' }, status: 'DRAFT' },
+        });
+      });
+    } finally {
+      await prisma.$disconnect();
+    }
+
+    const all = payload<{ terms: { term: string; scope: string; translations: Record<string, string>; overrides?: { term: string; translations: Record<string, string> } }[] }>(
+      await client!.callTool({ name: 'get_glossary', arguments: { project_id: projectId } }),
+    );
+    const ledger = all.terms.filter((term) => term.term === 'Ledger');
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]).toMatchObject({ scope: 'project', translations: { 'ja-JP': '台帳' } });
+    // ...and it says what it overrode, so a caller can see the disagreement rather than guess.
+    expect(ledger[0]!.overrides).toMatchObject({ translations: { 'ja-JP': '元帳' } });
+    expect(all.terms.map((term) => term.term)).not.toContain('Receipt');
+
+    const japanese = payload<{ locale: string; terms: { term: string; translation: string | null; forbidden: string[] }[] }>(
+      await client!.callTool({ name: 'get_glossary', arguments: { project_id: projectId, locale: 'ja-JP' } }),
+    );
+    expect(japanese.locale).toBe('ja-JP');
+    const localized = japanese.terms.find((term) => term.term === 'Ledger')!;
+    // The value and the ruled-out wording, resolved for the language being asked about.
+    expect(localized).toMatchObject({ translation: '台帳', forbidden: ['帳簿'] });
+    // A term with nothing in this language is not a term *for* this language: returning it would read
+    // as leave-it-as-it-is.
+    expect(japanese.terms.map((term) => term.term)).not.toContain('NoJapanese');
+  }, 120_000);
+
   it('stops complaining once the term is gone', async () => {
     const terms = await call<{ terms: { id: string; term: string }[] }>(`/projects/${projectId}/glossary`, { token: session.token });
     const termId = terms.body.data!.terms.find((term) => term.term === 'Course')!.id;

@@ -9,6 +9,8 @@ import {
   extractTermCandidates,
   recordAudit,
   resolveMockupInput,
+  resolveGlossary,
+  termTarget,
   emitProjectEvent,
   upsertScreenMockup,
   upsertTranslation,
@@ -522,14 +524,46 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
     },
   );
 
-  define('get_glossary', '读取术语库：术语、指定语言的译法、是否禁止改写', async (input: { project_id: string; locale?: string }) => {
-    assertRole(actor, input.project_id, Role.READONLY);
-    return tenant.withOrganization(actor.organizationId, (tx) =>
-      tx.glossaryTerm.findMany({
-        where: { organizationId: actor.organizationId, OR: [{ projectId: input.project_id }, { projectId: null }] },
-      }),
-    );
-  });
+  /**
+   * The termbase, as this project is actually held to it.
+   *
+   * Through the resolver rather than a raw `findMany` over both scopes — which is what this was, and
+   * it was the one read path the resolver missed. The raw query has four ways of lying to a caller:
+   * a term that exists organisation-wide *and* per project comes back **twice**, with nothing saying
+   * which reading the translator is held to; a project row whose only meaning is to switch that
+   * organisation term off here comes back as if it were a term; a `DEPRECATED` term comes back as if
+   * it were current; and nothing carries `scope`, so the caller cannot tell one from another.
+   *
+   * `locale` used to be accepted and ignored. It now narrows to the terms that apply to that language
+   * and resolves each one's value and forbidden wordings *for that language* — which is the question
+   * an agent writing a translation actually has.
+   */
+  define(
+    'get_glossary',
+    '读取术语库：这个项目实际被要求遵守的词条（项目级覆盖组织级、被关掉的不出现、废弃的带状态返回，每条带 scope 与它覆盖了谁）。给 locale 就只返回在该语言适用的，并带上该语言的译法与禁用说法',
+    async (input: { project_id: string; locale?: string }) => {
+      assertRole(actor, input.project_id, Role.READONLY);
+      return tenant.withOrganization(actor.organizationId, async (tx) => {
+        const terms = await resolveGlossary(tx, { organizationId: actor.organizationId, projectId: input.project_id });
+        if (!input.locale) return { terms };
+        const locale = input.locale;
+        return {
+          locale,
+          terms: terms
+            .map((term) => ({
+              ...term,
+              // `termTarget` answers with the source term itself for a do-not-translate term, so the
+              // caller never has to know about the flag to hold a translator to it.
+              translation: termTarget(term, locale),
+              forbidden: term.forbiddenTargets[locale] ?? [],
+            }))
+            // A term with no value in this language is not a term *for this language* — it would read
+            // as leave-it-as-it-is, which is a different instruction.
+            .filter((term) => term.translation !== null),
+        };
+      });
+    },
+  );
 
   /**
    * Bring an existing termbase in.
