@@ -112,8 +112,16 @@ const envSchema = z.object({
   CSRF_COOKIE_NAME: z.string().default('localehub_csrf'),
   CSRF_HEADER_NAME: z.string().default('x-csrf-token'),
   MCP_REMOTE_ENABLED: z.coerce.boolean().default(true),
-  /** URL an MCP client should use to reach the Remote MCP. Shown in the web UI and the CLI. */
-  MCP_PUBLIC_URL: z.string().default('http://localhost:3003/mcp'),
+  /**
+   * The address an MCP client should connect to. Optional, and read by `resolveRemoteMcpUrl` — which
+   * reads the *process environment*, not this parsed object.
+   *
+   * It used to default to `http://localhost:3003/mcp` here, and that default was never true: it named
+   * the address of whoever happened to read it. Unset now means unset — the MCP endpoint derives the
+   * address from the request that asked for it, and only a fixed deployment address (a LAN IP, a
+   * proxied hostname) is worth writing down.
+   */
+  MCP_PUBLIC_URL: z.string().optional(),
   SYNC_PLAN_TTL_SECONDS: z.coerce.number().default(1800),
   SYNC_MAX_ENTRIES_PER_BATCH: z.coerce.number().default(20000),
   // `AI_DEFAULT_POLICY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and `OLLAMA_BASE_URL` are gone with the

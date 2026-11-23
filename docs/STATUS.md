@@ -2494,6 +2494,41 @@ zh-CN: [["cart","购物车"], …]
 
 **顺带**：web 的层构建 Dockerfile 也进了仓库（`docker/local-layer-web.Dockerfile`），`deploy-local.sh` 支持 `--web`——
 今天 web 重建了六次，每次凭记忆重写那份 Dockerfile，还丢过一次 `WORKDIR`。
+### 1.76 把 Remote MCP 的地址钉成 LAN IP（用户明确要求）
+
+上一版是「按请求推导」：本机得 `localhost`，局域网里的人得这台机器的地址。用户的要求更直接——**平台侧那个 URL 改成 IP**。
+这不是把推导撤掉，而是选择三种给法里的第二种：
+
+| 给法 | 谁拿到什么 | 代价 |
+| --- | --- | --- |
+| `MCP_PUBLIC_URL` 留空（推导） | 本机 `localhost`，局域网的人得这台机器的地址 | 无，但每次都要"请求到了哪里"才对 |
+| **钉死（本次）** `http://192.168.200.172:3003/mcp` | **所有人都是这一个地址，与请求来自哪里无关** | 机器换 IP，所有客户端配置都要改 |
+| 在共用机器上设成 `localhost`（错的） | 每位同事拿到的是他自己电脑的地址 | 平台会在 `/mcp` 页面警告并给出可用地址 |
+
+**改了什么**：
+
+- `localehub.env` 设 `MCP_PUBLIC_URL=http://192.168.200.172:3003/mcp`（这个文件被 git 忽略，属于本机部署配置，不进仓库）；
+- `packages/config` 里 `MCP_PUBLIC_URL` 的 **schema 默认值删掉**（原来是 `http://localhost:3003/mcp`）。那个默认值从来没
+  对过——它写的是"读到它的人自己那台电脑"的地址；现在未设就是未设。`resolveRemoteMcpUrl` 读的是**进程环境**，不是这个
+  解析后的对象，两处的语义现在一致了；顺带 `packages/config/dist/*.d.ts` 里那两条 `MCP_PUBLIC_URL` 也从 `ZodDefault` 变成可选。
+- `env.example` 与 `docs/MCP.md` 把三种给法写清楚（哪种对人、哪种对机器、哪种对谁都错），并注明本仓库的本地部署用的是钉死那一种。
+- `compose.production.yaml` 的 `https://localhost/mcp` 默认值**没动**：生产 overlay 本来就要求显式给值，且那里 `localhost`
+  是 nginx 前的占位，配合页面上的警告会立刻暴露。
+
+**实测（重启 api 后，容器内 `MCP_PUBLIC_URL` 已确认是新值）**：
+
+| 调用方 | 平台给出的地址 |
+| --- | --- |
+| `Host: localhost:3000` | `http://192.168.200.172:3003/mcp` |
+| `Host: 192.168.200.172:3000` | `http://192.168.200.172:3003/mcp` |
+| `Host: 127.0.0.1:3000` | `http://192.168.200.172:3003/mcp` |
+| `Host: 10.9.9.9:3000`（随便一个别的地址） | `http://192.168.200.172:3003/mcp`（钉死之后没人拿到 localhost） |
+| 经 web 代理 `/api/v1` | 同上，且生成的 `.mcp.json` 片段里 `"url": "http://192.168.200.172:3003/mcp"` |
+
+514 单元 / 189 集成 / lint / typecheck 全绿。
+
+**一个必须记住的代价**：地址钉死了，这台机器的 IP 一变（换网、DHCP 重新分配），所有同事的 `.mcp.json` 都会指向旧地址。
+换 IP 时要改 `localehub.env` 这一行并 `scripts/up.sh up -d --no-build api`。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |
