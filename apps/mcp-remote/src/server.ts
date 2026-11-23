@@ -134,6 +134,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
     'mark_applied',
     'upload_screen_mockup',
     'upsert_glossary_terms',
+    'import_glossary_terms',
   ]);
 
   /**
@@ -529,6 +530,121 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       }),
     );
   });
+
+  /**
+   * Bring an existing termbase in.
+   *
+   * The counterpart to `extract_glossary_candidates` for the other half of the world: teams that
+   * already have a glossary — in Excel, in a TBX export, in a `.strings` file the CAT tool wrote —
+   * rather than one to be mined out of their translations.
+   *
+   * It takes **terms, not a file**, for the same reason `import_translations` does: the platform
+   * cannot see the caller's disk, so the caller parses its own spreadsheet and hands over what it
+   * read. That is not a limitation to work around; it is the boundary the whole product is built on.
+   *
+   * Two decisions the caller has to make out loud:
+   *
+   *  * **Upsert by term.** A corrected spreadsheet imported twice must not leave two of everything.
+   *  * **`status`.** Defaults to DRAFT, because a termbase arrival is a proposal until somebody says
+   *    otherwise. `APPROVED` puts every violation of these terms in front of a release, so it takes
+   *    a PROJECT_MANAGER: the person importing usually does know these words are settled, and that
+   *    is exactly why they have to say so rather than have the platform assume it.
+   *
+   * A term somebody already approved is not rewritten by a draft import — it comes back in
+   * `untouched`, the same rule `upsert_glossary_terms` follows.
+   */
+  define(
+    'import_glossary_terms',
+    '把一份现成的词表导入项目（按 term 覆盖，重复导入不会重复）。只收已经解析好的词条：文件在你自己那边，平台读不到。默认落成草稿，指定 APPROVED 需要 PROJECT_MANAGER 角色',
+    async (input: {
+      project_id: string;
+      status: 'DRAFT' | 'APPROVED';
+      terms: {
+        term: string;
+        translations?: Record<string, string>;
+        case_sensitive?: boolean;
+        do_not_translate?: boolean;
+        forbidden_targets?: Record<string, string[]>;
+        note?: string;
+      }[];
+    }) => {
+      // Approving through the side door is still approving.
+      assertRole(actor, input.project_id, input.status === 'APPROVED' ? Role.PROJECT_MANAGER : Role.TRANSLATOR);
+
+      const result = await tenant.withOrganizationBulk(actor.organizationId, async (tx) => {
+        const created: string[] = [];
+        const updated: string[] = [];
+        const untouched: { term: string; status: string; reason: string }[] = [];
+        for (const entry of input.terms) {
+          const existing = await tx.glossaryTerm.findFirst({
+            where: {
+              organizationId: actor.organizationId,
+              projectId: input.project_id,
+              term: { equals: entry.term, mode: 'insensitive' },
+            },
+          });
+          if (existing && existing.status !== 'DRAFT' && input.status !== 'APPROVED') {
+            untouched.push({ term: existing.term, status: existing.status, reason: '已定稿或已废弃的词条只能由人改动' });
+            continue;
+          }
+          const data: Record<string, unknown> = {
+            status: input.status,
+            caseSensitive: entry.case_sensitive ?? false,
+            doNotTranslate: entry.do_not_translate ?? false,
+            forbiddenTargets: (entry.forbidden_targets ?? null) as never,
+            description: entry.note ?? null,
+            // Importing a term is defining it, so a project row that had switched it off applies
+            // again: a spreadsheet whose values land on a switched-off row would otherwise import
+            // silently into nothing.
+            disabled: false,
+          };
+          if (entry.translations !== undefined) data.translations = entry.translations;
+          if (existing) {
+            await tx.glossaryTerm.update({ where: { id: existing.id }, data: data as never });
+            updated.push(existing.term);
+          } else {
+            await tx.glossaryTerm.create({
+              data: {
+                organizationId: actor.organizationId,
+                projectId: input.project_id,
+                term: entry.term,
+                createdById: actor.userId,
+                ...data,
+              } as never,
+            });
+            created.push(entry.term);
+          }
+        }
+        return { created, updated, untouched };
+      });
+
+      const written = [...result.created, ...result.updated];
+      const recheck = written.length
+        ? await enqueueQaRecheck({
+            organizationId: actor.organizationId,
+            projectId: input.project_id,
+            requestedBy: actor.userId,
+            reason: 'glossary.imported',
+            terms: written,
+          })
+        : { queued: true };
+
+      await audit({
+        action: 'glossary.imported',
+        resourceType: 'glossary_term',
+        projectId: input.project_id,
+        metadata: {
+          via: 'import_glossary_terms',
+          status: input.status,
+          created: result.created.length,
+          updated: result.updated.length,
+          untouched: result.untouched.length,
+        },
+      });
+
+      return { ...result, status: input.status, recheck };
+    },
+  );
 
   /**
    * What this project keeps saying, and what it already calls it.

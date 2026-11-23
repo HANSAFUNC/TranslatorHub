@@ -39,7 +39,7 @@ export const REMOTE_MCP_INSTRUCTIONS = [
   '有 shell 权限时更省事：localehub mockup --page <页面文件> --confirm 读同一个页面的源码并直接上传。',
   '注意没有 dry run：同名屏幕再传一次是整体替换（旧图与旧标记不再保留），别拿它「先试一下」。细节见 localehub://screen-sketch-guide。',
   '',
-  '术语（可选，但那是「同一个词只有一种译法」的唯一办法）：get_glossary 读，extract_glossary_candidates 看项目已有的说法，upsert_glossary_terms 提。',
+  '术语（可选，但那是「同一个词只有一种译法」的唯一办法）：get_glossary 读，extract_glossary_candidates 看项目已有的说法，upsert_glossary_terms 提，import_glossary_terms 导整份词表（默认草稿）。',
   '提上去的一律是草稿——定稿由人在后台做，也只有定稿的术语会让 validate_release 不通过；已定稿的词条你改不动，会在 untouched 里告诉你。',
   '你在仓库里反复看到同一种固定说法（产品名、导航词、按钮文案）时，那正是该提的；译法不确定就只传 term，不要猜。',
   '',

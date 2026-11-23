@@ -79,7 +79,7 @@ Web 端「MCP 管理 → 接入教程」是同一份流程，且会用**你自�
 export LOCALEHUB_TOKEN="lh_mcp_…"   # 存进环境变量，不要提交到 Git
 ```
 
-**第 2 步：拿到你的 `project_id`。** 21 个工具里有 19 个把它当第一个参数，而它是个 UUID——
+**第 2 步：拿到你的 `project_id`。** 22 个工具里有 20 个把它当第一个参数，而它是个 UUID——
 不能靠猜。
 
 两种拿法：
@@ -156,19 +156,20 @@ claude mcp add --transport http localehub-remote http://localhost:3003/mcp \
 
 工具：`list_projects`、`get_project`、`list_project_locales`、`search_translation_keys`、
 `get_translation_entry`、`get_glossary`、`upsert_glossary_terms`、`extract_glossary_candidates`、
-`search_translation_memory`、
+`import_glossary_terms`、`search_translation_memory`、
 `translate_entries`、`review_translation_entries`、`get_qa_issues`、`update_translation_draft`、
 `submit_review`、`get_project_sync_status`、`get_pending_platform_changes`、`validate_release`、
 `create_project`、`import_translations`、`mark_applied`、`upload_screen_mockup`。
 
 工具标注（MCP `annotations`）：`create_project`、`import_translations`、`translate_entries`、
 `review_translation_entries`、`update_translation_draft`、`submit_review`、`mark_applied`、
-`upload_screen_mockup`、`upsert_glossary_terms` 声明 `readOnlyHint: false`，其余 11 个为只读。
+`upload_screen_mockup`、`upsert_glossary_terms`、`import_glossary_terms` 声明 `readOnlyHint: false`，
+其余 11 个为只读。
 客户端据此可以判断哪些调用会改动平台数据。
 
 只有两个写工具能预演：`import_translations`（`confirm: true` 才落库）与 `mark_applied`
 （`dry_run: true` 只看结果）。其余写工具——`create_project`、`translate_entries`、
-`review_translation_entries`、`update_translation_draft`、`upsert_glossary_terms`、
+`review_translation_entries`、`update_translation_draft`、`upsert_glossary_terms`、`import_glossary_terms`、
 `upload_screen_mockup`——一调即写，
 没有 dry-run 开关；`upload_screen_mockup` 还会整体替换同名屏幕，`destructiveHint` 为 true。
 
@@ -280,6 +281,7 @@ apply report，所以 Agent 的落地在同步历史里和人跑 CLI 的落地�
 | `upload_screen_mockup`       | `sync.push`（与 `import_translations` 同类：把本地读到的内容送上来） |
 | `upsert_glossary_terms`      | `glossary.write`（与 `glossary.read` 分开：读是知道词怎么译，写是决定别人以后怎么译） |
 | `extract_glossary_candidates` | `glossary.read`（只读；但它是全平台最贵的一次读——整个项目的 key，再对每条译文数一遍） |
+| `import_glossary_terms`      | `glossary.write`（与 `upsert_glossary_terms` 同一条授权；区别只在批量与 `status`） |
 
 其余工具与 REST 对应路由一致：只需要角色。`translation.apply` 不在默认 scope 集合里，所以默认签发的
 Token 推得上去、落不下来——这正是规格要的分离。
@@ -569,6 +571,7 @@ Agent 这一侧：
 
 - `get_glossary` 读（`glossary.read`）。
 - `extract_glossary_candidates` 读**项目自己的词汇**（`glossary.read`）：从已有译文里数出反复出现的说法，连同每个语言已有的译法、支撑条数与例子。只读，什么都不写——**提之前先问一遍项目已经定了什么**，一个和 152 条既有译文相矛盾的提议比不提更糟。
+- `import_glossary_terms` 把**一份现成的词表**导进来（`glossary.write`）：按 term 覆盖，重复导入不会留下两条。它收的是**已经解析好的词条，不是文件**——和 `import_translations` 同一个道理：平台看不见调用方的磁盘，Excel/TBX 由调用方自己解析。`status` 默认 `DRAFT`；写 `APPROVED` 需要 `PROJECT_MANAGER`，因为那等于宣布这些词违反即挡发布。已定稿的词条不会被草稿导入改写，会出现在 `untouched` 里。
 - `upsert_glossary_terms` 提（`glossary.write`，与读分开授权）。**只能落成草稿**：定稿是人的动作，
   因为它会把一条建议变成发布前校验的一道门槛。已经定稿或废弃的词条 Agent 改不动，会出现在返回值的
   `untouched` 里，而不是被静默忽略。
@@ -655,7 +658,7 @@ Server 每个请求建一次（无状态），所以 Skill 是**实时**的：�
 不需要重启任何客户端。
 
 取数走数据库、受 RLS 约束，与 `GET /skills` 的可见性规则一致。查询失败时只记 stderr 并返回空清单
-——Skill 是附加能力，不能因为读不到它而让 21 个工具一起报错。
+——Skill 是附加能力，不能因为读不到它而让 22 个工具一起报错。
 
 ## 5. Token 与 Scope
 

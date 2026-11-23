@@ -2183,6 +2183,27 @@ Prisma 自己打的 `prisma:error`。于是症状只有日志噪音，而**数�
 `课程 116条 → zh-TW 課程 116/116`、`您的 91条 → zh-TW 您的 91/91 · en-US your 66/91`；
 新增集成测试「MCP 抽出来的词表与 REST 一致」；短语抽取器 10 条单测；498 单元 / 184 集成 / 浏览器 17 项 /
 工具页 11 项 / lint / typecheck 全绿。
+### 1.66 从文档读回数据库：译文一直支持，术语库补上了 `import_glossary_terms`
+
+用户问「支持从文档读回数据库吗」。答案分两半：**译文支持**（CLI `scan` 用适配器读 `.strings`/`.xcstrings`/Android XML/`.po`/`.xliff`/JSON/YAML/CSV/XLSX 再 push；MCP `import_translations` 收已解析的条目；反方向 `GET /export` + release bundle）；
+**术语库不支持**——只有 `POST /glossary/import`，要的是排好的 JSON，Excel/TBX 得自己先转，MCP 连这个都没有。这正是设计文档 §4 ③ 里写着的那条。
+
+用户选了**只走 MCP 一个入口**，并要**默认草稿、导入者可勾选直接定稿**。于是：
+
+**`import_glossary_terms`（第 22 个工具，scope `glossary.write`）**：收**已解析的词条，不是文件**——和 `import_translations` 同一个道理，平台看不见调用方的磁盘，Excel/TBX 由调用方自己解析，这不是要绕开的限制，是整个产品立在上面的那条界线。按 term 覆盖、重复导入不重复；`status` 默认 `DRAFT`，写 `APPROVED` 需要 `PROJECT_MANAGER`（**从侧门定稿也是定稿**）；已定稿的词条不被草稿导入改写，出现在 `untouched` 里。
+
+**顺手修了 REST import 的两个真问题**（同一个入口的另一半，不改就是两套行为）：
+
+- **事务预算是 5 秒**：`POST /glossary/import` 允许一次 2,000 条，而它用的是默认的 5 秒事务——调用方决定行数，预算却不是。`withOrganizationBulk`（60 秒，可用 `BULK_TRANSACTION_TIMEOUT_MS` 调）早就为这种调用存在，译文导入走的就是它，术语导入漏了。
+- **导入写进一条被关掉的词条里，是静默无效的**：项目里可以有一条 `disabled: true` 的行（在本地关掉组织级词条），导入时 `data` 里没有 `disabled`，于是译法写进去了、词条仍然关着——导入成功但什么也没发生。现在导入会把这个标志清掉：**导入一个术语就是在定义它**。
+
+**验证**：真实栈上调用——`created: ["Probe Alpha","Probe Beta"]`、再导入同一条 → `updated: ["Probe Alpha"]`（没有留下两条）、`status: APPROVED` 的导入也通；
+新增 5 条集成测试（草稿导入、重复导入不重复、草稿改不动已定稿、译者能提不能定、关掉的词条被导入重新打开）；498 单元 / 188 集成 / 22 个工具页 / lint / typecheck 全绿。
+
+两处我自己的测试错误，都值得记，因为**它们都会让测试通过而其实什么都没测**：
+
+1. 第一版「译者不能定稿」是用**管理员的 session** 签发译者 token 的——`POST /mcp-tokens` 把 token 记在调用者名下，于是那个"译者"是个换了标签的管理员，断言 `isError` 拿到 `undefined` 才发现。
+2. 顺着这条查下去还发现一个产品事实：**`POST /mcp-tokens` 要求 PROJECT_MANAGER，所以译者根本拿不到 token**。测试里那条 token 因此是直接种进库的（用真实的 `hashToken`），它代表的其实是**一个管理员被降权之后**的情形——也是低权限者唯一能碰到工具的方式，而角色是每次调用校验的，所以这恰恰是值得钉住的用例。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

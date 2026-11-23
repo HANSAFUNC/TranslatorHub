@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { PrismaClient } from '@localehub/database';
+import { generateToken } from '@localehub/domain';
 import { ensureApi, ensureRemoteMcp, type ApiHandle } from './api-harness';
 
 /**
@@ -30,12 +31,16 @@ const MCP_PORT = 3036;
 const runId = Date.now().toString(36);
 
 let api: ApiHandle | null = null;
+/** A token whose owner is a translator: proposing is theirs, approving is not. */
+let translatorToken = '';
 let mcp: ApiHandle | null = null;
 let client: Client | null = null;
 /** The MCP token this suite uses, kept so a test can call the REST API with it directly. */
 let mcpToken = '';
 let worker: { stop(): Promise<void> } | null = null;
 const session = { email: '', password: '', token: '' };
+let translatorUserId = '';
+let organizationId = '';
 
 interface Envelope<T> {
   success: boolean;
@@ -180,6 +185,15 @@ beforeAll(async () => {
         data: { name: `Glossary Org ${runId}`, slug: `glossary-${runId}` },
       });
       await tx.membership.create({ data: { organizationId: organization.id, userId: user.id, role: 'ORG_OWNER' } });
+      // A second person, whose only role is TRANSLATOR. Testing "an agent may propose but not
+      // approve" needs somebody who is not allowed to approve, and the owner is allowed to do
+      // everything.
+      const translator = await tx.user.create({
+        data: { email: `glossary-translator-${runId}@localehub.dev`, name: 'Glossary Translator', passwordHash, isPlatformAdmin: false },
+      });
+      await tx.membership.create({ data: { organizationId: organization.id, userId: translator.id, role: 'TRANSLATOR' } });
+      translatorUserId = translator.id;
+      organizationId = organization.id;
     });
   } finally {
     await prisma.$disconnect();
@@ -205,6 +219,38 @@ beforeAll(async () => {
   expect(issued.status, JSON.stringify(issued.body.error)).toBe(201);
 
   mcpToken = issued.body.data!.token;
+
+  /**
+   * The translator's token is seeded rather than issued, and that is a fact about the product rather
+   * than a shortcut: `POST /mcp-tokens` requires PROJECT_MANAGER, so a translator cannot obtain one
+   * at all. What this token really represents is a manager's token whose owner was later demoted —
+   * the one way an under-privileged actor reaches the tools — and the role is checked per call, not
+   * at issue time, so that is exactly the case worth pinning.
+   */
+  const seeded = generateToken('mcp');
+  translatorToken = seeded.token;
+  const prismaForToken = new PrismaClient();
+  try {
+    await prismaForToken.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SELECT set_config('app.bypass_rls', 'on', true)`);
+      await tx.mcpClient.create({
+        data: {
+          organizationId,
+          userId: translatorUserId,
+          kind: 'MCP',
+          name: 'glossary-translator',
+          tokenHash: seeded.tokenHash,
+          tokenPrefix: seeded.tokenPrefix,
+          scopes: ['project.read', 'glossary.read', 'glossary.write'],
+          projectIds: [],
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        },
+      });
+    });
+  } finally {
+    await prismaForToken.$disconnect();
+  }
+
   mcp = await ensureRemoteMcp(MCP_PORT, { root: ROOT });
   client = new Client({ name: 'glossary-suite', version: '0.0.0' });
   await client.connect(transport(issued.body.data!.token));
@@ -227,6 +273,16 @@ describe('proposing terms over MCP', () => {
       arguments: { name: `Termbase ${runId}`, source_locale: 'en-US', locales: ['ja-JP'], platforms: ['web'] },
     });
     projectId = payload<{ project: { id: string } }>(created).project.id;
+
+    const prisma = new PrismaClient();
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SELECT set_config('app.bypass_rls', 'on', true)`);
+        await tx.projectMember.create({ data: { organizationId, projectId, userId: translatorUserId, role: 'TRANSLATOR' } });
+      });
+    } finally {
+      await prisma.$disconnect();
+    }
 
     const imported = await client!.callTool({
       name: 'import_translations',
@@ -452,6 +508,120 @@ describe('proposing terms over MCP', () => {
     );
     expect(glossary.body.data!.terms[0]).toMatchObject({ term: 'Course', status: 'APPROVED', translations: { 'ja-JP': 'コース' } });
   }, 60_000);
+
+  it('takes a whole termbase in, once, and does not leave two of anything', async () => {
+    const first = await client!.callTool({
+      name: 'import_glossary_terms',
+      arguments: {
+        project_id: projectId,
+        terms: [
+          { term: 'Checkout', translations: { 'ja-JP': 'お会計' }, note: '结算' },
+          { term: 'Cart', translations: { 'ja-JP': 'カート' } },
+        ],
+      },
+    });
+    const created = payload<{ created: string[]; updated: string[]; status: string }>(first);
+    expect(created.created.sort()).toEqual(['Cart', 'Checkout']);
+    // Nothing said, so nothing is settled: a termbase arrival is a proposal until somebody says so.
+    expect(created.status).toBe('DRAFT');
+
+    const second = await client!.callTool({
+      name: 'import_glossary_terms',
+      arguments: { project_id: projectId, terms: [{ term: 'checkout', translations: { 'ja-JP': 'お勘定' } }] },
+    });
+    const again = payload<{ created: string[]; updated: string[] }>(second);
+    // The corrected spreadsheet case, which is the one that actually happens: a second import must
+    // update the row, not add a second `checkout` beside `Checkout`.
+    expect(again.created).toEqual([]);
+    expect(again.updated).toEqual(['Checkout']);
+
+    const glossary = await call<{ terms: { term: string; translations: Record<string, string> }[] }>(
+      `/projects/${projectId}/glossary`,
+      { token: session.token },
+    );
+    const matches = glossary.body.data!.terms.filter((term) => term.term.toLowerCase() === 'checkout');
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.translations['ja-JP']).toBe('お勘定');
+  }, 120_000);
+
+  it('will not let a draft import rewrite a term somebody approved', async () => {
+    const terms = await call<{ terms: { id: string; term: string }[] }>(`/projects/${projectId}/glossary`, { token: session.token });
+    const cart = terms.body.data!.terms.find((term) => term.term === 'Cart')!;
+    await call(`/projects/${projectId}/glossary/${cart.id}`, { method: 'PATCH', token: session.token, body: { status: 'APPROVED' } });
+
+    const imported = await client!.callTool({
+      name: 'import_glossary_terms',
+      arguments: { project_id: projectId, terms: [{ term: 'Cart', translations: { 'ja-JP': '買い物かご' } }] },
+    });
+    const result = payload<{ updated: string[]; untouched: { term: string; status: string }[] }>(imported);
+
+    expect(result.updated).toEqual([]);
+    expect(result.untouched).toMatchObject([{ term: 'Cart', status: 'APPROVED' }]);
+    const after = await call<{ terms: { term: string; translations: Record<string, string> }[] }>(`/projects/${projectId}/glossary`, {
+      token: session.token,
+    });
+    expect(after.body.data!.terms.find((term) => term.term === 'Cart')!.translations['ja-JP']).toBe('カート');
+  }, 120_000);
+
+  it('lets a translator propose a whole termbase, but not settle one', async () => {
+    const translator = new Client({ name: 'glossary-translator', version: '0.0.0' });
+    await translator.connect(transport(translatorToken));
+    try {
+      const refused = await translator.callTool({
+        name: 'import_glossary_terms',
+        arguments: { project_id: projectId, status: 'APPROVED', terms: [{ term: 'Coupon', translations: { 'ja-JP': 'クーポン' } }] },
+      });
+      expect(refused.isError).toBe(true);
+      // Approving through the side door is still approving.
+      expect(JSON.stringify(refused.content)).toContain('ROLE_INSUFFICIENT');
+
+      const allowed = await translator.callTool({
+        name: 'import_glossary_terms',
+        arguments: { project_id: projectId, terms: [{ term: 'Coupon', translations: { 'ja-JP': 'クーポン' } }] },
+      });
+      expect(allowed.isError, JSON.stringify(allowed.content)).toBeFalsy();
+      expect(payload<{ created: string[]; status: string }>(allowed)).toMatchObject({ created: ['Coupon'], status: 'DRAFT' });
+    } finally {
+      await translator.close();
+    }
+  }, 120_000);
+
+  it('switches a term back on when the termbase says it applies', async () => {
+    // A project row can switch an organisation term off. Importing that term is a decision that it
+    // applies here, and without clearing the flag the imported values would land on a row nobody
+    // reads — a silent no-op that looks like a successful import.
+    const prisma = new PrismaClient();
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SELECT set_config('app.bypass_rls', 'on', true)`);
+        await tx.glossaryTerm.create({
+          data: { organizationId, projectId: null, term: 'Invoice', translations: { 'ja-JP': '請求書' }, status: 'APPROVED' },
+        });
+        // A project row whose only job is to switch the organisation's term off here.
+        await tx.glossaryTerm.create({
+          data: { organizationId, projectId, term: 'Invoice', translations: {}, status: 'DRAFT', disabled: true },
+        });
+      });
+    } finally {
+      await prisma.$disconnect();
+    }
+
+    const before = await call<{ terms: { term: string }[] }>(`/projects/${projectId}/glossary`, { token: session.token });
+    expect(before.body.data!.terms.map((term) => term.term)).not.toContain('Invoice');
+
+    await client!.callTool({
+      name: 'import_glossary_terms',
+      arguments: { project_id: projectId, terms: [{ term: 'Invoice', translations: { 'ja-JP': 'インボイス' } }] },
+    });
+
+    const after = await call<{ terms: { term: string; translations: Record<string, string>; scope: string }[] }>(
+      `/projects/${projectId}/glossary`,
+      { token: session.token },
+    );
+    const invoice = after.body.data!.terms.find((term) => term.term === 'Invoice');
+    expect(invoice).toMatchObject({ scope: 'project' });
+    expect(invoice!.translations['ja-JP']).toBe('インボイス');
+  }, 120_000);
 
   it('stops complaining once the term is gone', async () => {
     const terms = await call<{ terms: { id: string; term: string }[] }>(`/projects/${projectId}/glossary`, { token: session.token });

@@ -55,6 +55,7 @@ export const REMOTE_MCP_TOOLS = [
   'get_glossary',
   'upsert_glossary_terms',
   'extract_glossary_candidates',
+  'import_glossary_terms',
   'search_translation_memory',
   'translate_entries',
   'review_translation_entries',
@@ -96,6 +97,7 @@ export const REMOTE_MCP_TOOL_SCOPES: Partial<Record<RemoteMcpTool, McpScope[]>> 
   // — but gated on `glossary.read` rather than nothing at all: it is the most expensive read in the
   // product (every key in the project, then a count across every translation).
   extract_glossary_candidates: [McpScope.GLOSSARY_READ],
+  import_glossary_terms: [McpScope.GLOSSARY_WRITE],
 };
 
 export const remoteToolSchemas = {
@@ -188,6 +190,33 @@ export const remoteToolSchemas = {
   }),
   get_translation_entry: z.object({ project_id: z.string(), key: z.string(), locale: localeTagSchema }),
   get_glossary: z.object({ project_id: z.string(), locale: localeTagSchema.optional() }),
+  import_glossary_terms: z.object({
+    project_id: z.string().describe('项目 id'),
+    terms: z
+      .array(
+        z.object({
+          term: z.string().min(1).max(200).describe('原文词'),
+          translations: z.record(localeTagSchema, z.string()).optional().describe('语言 → 译法'),
+          case_sensitive: z.boolean().optional().describe('这个词是否区分大小写，默认否'),
+          do_not_translate: z.boolean().optional().describe('任何语言都保持原文（产品名、缩写）'),
+          forbidden_targets: z
+            .record(localeTagSchema, z.array(z.string().max(200)))
+            .optional()
+            .describe('语言 → 不要译成的说法'),
+          note: z.string().max(500).optional().describe('给译者的说明：为什么这么译'),
+        }),
+      )
+      .min(1)
+      .max(2000)
+      .describe('整份词表。按 term 覆盖，同一个词第二次导入不会留下两条'),
+    status: z
+      .enum(['DRAFT', 'APPROVED'])
+      .default('DRAFT')
+      .describe(
+        '落成什么状态。默认 DRAFT——只警告、不进发布前校验。APPROVED 会让违反它的译文挡住发布，' +
+          '因此需要 PROJECT_MANAGER 角色：导入现成词表的人通常确实知道这些词已经定过，但那是他要声明的事，不是默认。',
+      ),
+  }),
   extract_glossary_candidates: z.object({
     project_id: z.string().describe('项目 id'),
     min_keys: z

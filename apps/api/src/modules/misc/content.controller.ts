@@ -237,7 +237,10 @@ export class ContentController {
     @Body(zodBody(glossaryImportSchema)) body: z.infer<typeof glossaryImportSchema>,
   ) {
     assertRole(actor, projectId, Role.PROJECT_MANAGER);
-    const result = await this.prisma.tenant.withOrganization(actor.organizationId, async (tx) => {
+    // The number of rows is the caller's, so the transaction budget has to be too: the default five
+    // seconds is fine for a request that touches a handful of rows and is exactly what a 2,000-term
+    // import blows through on a busy database.
+    const result = await this.prisma.tenant.withOrganizationBulk(actor.organizationId, async (tx) => {
       let created = 0;
       let updated = 0;
       for (const term of body.terms) {
@@ -251,6 +254,10 @@ export class ContentController {
           status: term.status ?? body.status,
           doNotTranslate: term.doNotTranslate ?? false,
           forbiddenTargets: (term.forbiddenTargets ?? null) as never,
+          // Importing a term is defining it, so a project row that had switched the term off applies
+          // again: a spreadsheet whose values land on a switched-off row imports into nothing, and
+          // says nothing about it.
+          disabled: false,
         };
         if (existing) {
           await tx.glossaryTerm.update({ where: { id: existing.id }, data });

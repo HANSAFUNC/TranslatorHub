@@ -98,7 +98,7 @@ CREATE UNIQUE INDEX glossary_project_term_key
 | 面 | 要有的东西 |
 | --- | --- |
 | REST | `GET` 带 `scope` 与覆盖信息；`PATCH /glossary/:id`、`DELETE`、`POST /glossary/import`（按 term upsert）、`POST /glossary/extract`（抽候选） |
-| MCP | 读已有（`get_glossary`）；`upsert_glossary_terms`（写，需 `glossary.write`，只能写 DRAFT）与 `extract_glossary_candidates`（读，需 `glossary.read`）——两者都在了，且与 REST 走同一个函数 |
+| MCP | `get_glossary`（读）、`extract_glossary_candidates`（读，需 `glossary.read`）、`upsert_glossary_terms`（写单条/少量，只能 DRAFT）、`import_glossary_terms`（导入整份词表，`status` 默认 DRAFT，APPROVED 需 PROJECT_MANAGER） |
 | Web | 项目页 `/projects/[id]/glossary`：词条表（原文、逐语言译法、状态、谁在何时改的）+ 候选队列 + 导入 |
 | 权限 | 已经有 `glossary.read`；补 `glossary.write`。审核者能改状态，译者只能提候选 |
 
@@ -132,6 +132,7 @@ CREATE UNIQUE INDEX glossary_project_term_key
 | 2. 优先级与去重 | ✅ | `packages/domain/src/glossary.ts` 的 `resolveGlossary` / `termTarget`；API、worker、AI 三个读点都走它，同名词不再报两次 |
 | 3. 能被策展（REST） | ✅ | `PATCH` / `DELETE` / `POST .../glossary/import`（按 term upsert，带审计），`GET` 返回 `scope`、`overrides` 与计数 |
 | 3. 能被策展（MCP） | ✅ | `upsert_glossary_terms`（需 `glossary.write`，与读分开授权）。只能落 **DRAFT**：定稿是人的动作。已定稿/已废弃的词条改不动，返回 `untouched` 而不是静默忽略 |
+| 批量导入（MCP） | ✅ | `import_glossary_terms`：收**已解析的词条**而不是文件（平台看不见调用方的磁盘，Excel/TBX 由调用方解析）。按 term 覆盖、重复导入不重复；`status` 默认 DRAFT，APPROVED 需 PROJECT_MANAGER；已定稿的词条不被草稿导入改写 |
 | 7. 抽候选（MCP） | ✅ | `extract_glossary_candidates`（需 `glossary.read`，只读）。**这条一开始漏了**——§6 里写了，实现时只做了写工具，状态表也没列它（等于把它藏起来了）。现在 REST 与 MCP 走同一个 `extractTermCandidates` |
 | 4. 严重度分级 | ✅ | `GLOSSARY_TERM_MISSING` 按状态定严重度（`APPROVED` → ERROR），新增 `GLOSSARY_TERM_FORBIDDEN`；`DEPRECATED` 不参与 |
 | 4b. 发布前校验问术语库 | ✅ | `validateForRelease` 现在自己调 `glossaryFindings`（与 QA 用同一个函数）。**这条一开始漏了**：设计里写「不用改，升成 ERROR 就自动进闸门」，而那个前提是错的——发布校验从不读 QA 问题，也不读术语库 |
