@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createProvider, PiProvider } from '../ai';
+import { createProvider, piSdkSpecifier, PiProvider } from '../ai';
 
 /**
  * The pi provider, without a model behind it.
@@ -159,5 +159,27 @@ describe('a policy that is not a provider', () => {
       delete process.env.AI_DEFAULT_POLICY;
       vi.resetModules();
     }
+  });
+});
+
+describe('where the SDK is loaded from', () => {
+  it('uses the bare specifier by default', () => {
+    // Nothing declares the dependency, so a workspace install only has it if somebody added it by
+    // hand; the container image mounts it into node_modules. Both routes go through the specifier.
+    expect(piSdkSpecifier({})).toBe('@earendil-works/pi-coding-agent');
+  });
+
+  it('loads from the pi installation this machine already has, when told where it is', () => {
+    // The package is ~150 MB and ships a whole terminal agent. A machine that already runs `pi` has
+    // it, and pointing at that copy beats installing a second one — which is what this is for.
+    expect(piSdkSpecifier({ PI_SDK_PATH: '/opt/pi/pi-coding-agent' })).toBe('file:///opt/pi/pi-coding-agent/dist/index.js');
+  });
+
+  it('takes a file path as given', () => {
+    expect(piSdkSpecifier({ PI_SDK_PATH: '/opt/pi/dist/index.mjs' })).toBe('file:///opt/pi/dist/index.mjs');
+  });
+
+  it('ignores a blank value', () => {
+    expect(piSdkSpecifier({ PI_SDK_PATH: '   ' })).toBe('@earendil-works/pi-coding-agent');
   });
 });

@@ -2238,6 +2238,40 @@ README 教的是 `docker compose --env-file localehub.env up -d`，而我这一�
 **验证**：局域网地址模拟登录通过、攻击者来源仍 403；部署栈上 `POST /ai/translate` 返回 `provider: "pi"`（不是启发式）；
 503 单元（新增 5 条：代理转发的 host 被信任、跨站仍被拒、`hybrid` 警告一次且指名、缺 key 时说明缺哪个、显式 heuristic 不吭声）
 / 188 集成 / 浏览器检查 / MCP 检查 / lint 全绿。
+### 1.68 pi 是怎么装上的：一层全局安装 + 一条挂在 node_modules 里的路径（以及它是怎么"碰巧能用"的）
+
+用户问「pi 他是怎么安装的」。查完发现答案里有三件事，其中一件**不是有意设计的**：
+
+1. **pi 本体是全局安装**：`npm i -g @earendil-works/pi-coding-agent`——**一个包同时提供 `pi` 命令行和 SDK**
+   （本机 v1.5.2，`pi` 在 PATH 上，走 nvm 的 global node_modules）。凭据和模型目录在 `~/.pi/agent`。
+2. **平台按裸模块名加载它**：`packages/domain/src/ai.ts` 用真正的动态 `import('@earendil-works/pi-coding-agent')`
+   （这包是 ESM，CommonJS 编译会把 `await import` 改写成 `require`，所以 specifier 藏在字符串里）。
+3. **但它不是 workspace 的依赖**，而且现在**故意不是**：这个包 **153 MB**（里面是一整个终端 agent），
+   写进 `package.json` 会让每次 `pnpm install`（含 CI 与镜像构建）都为它买单。
+
+于是两条路各自成立、也各自脆弱：
+
+| 在哪跑 | 现在靠什么找到 SDK |
+| --- | --- |
+| 容器（部署栈） | `compose.override.yaml` 把宿主机的全局 `@earendil-works` **只读挂**进 `/app/node_modules/@earendil-works`。这条是可靠的 |
+| 宿主机（本地跑 API / 集成测试会起本地 API） | **靠一个残留的符号链接**：`packages/domain/node_modules/@earendil-works/pi-coding-agent` → nvm 全局目录，是我当初那次被网络掐断的 `pnpm add` 留下的，文件时间 11:07 |
+
+也就是说：**换一台机器 clone 下来，宿主机这条路是不通的**——没有任何声明、没有那个链接，只有容器里的挂载能救。
+运行时报错文案会说是哪个 provider 加载不到，但让人去 `pnpm add` 一个 153 MB 的包并不是好答案。
+
+**修法**：新增 `PI_SDK_PATH`——指向这台机器**已经装好的那份 pi**（给目录就用它的 `dist/index.js`，
+给文件就按文件加载）。不设时行为完全不变（裸模块名）。同时：
+
+- 报错文案改成先让人设 `PI_SDK_PATH`（并给出 `$(npm root -g)/@earendil-works/pi-coding-agent` 这个写法）；
+- `env.example` 与 `docs/MCP.md` 的 pi 一节改写成上面那张三条路的表，并写清「为什么它不是依赖」；
+- 4 条单测钉住 specifier 的四种输入（不设 / 空串 / 目录 / 文件）。
+
+**验证**：用 `PI_SDK_PATH` 指向本机那份 pi，路径形式能加载到真的 `createAgentSession`；
+容器栈上 `POST /ai/translate` 对一个 ja-JP 条目真的跑了模型——**3.9 秒**返回 `カートは空です`（provider `pi`），
+启发式不可能花 3.9 秒也不可能给出这个句子。507 单元 / lint 全绿。
+
+**没有删那个残留链接**：本地跑 API 和集成测试现在仍靠它，删掉等于让本地静默退回启发式。
+它现在是多余的（`PI_SDK_PATH` 覆盖了这个场景），但没有害处——记在这里，免得下次有人看到它以为是设计。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

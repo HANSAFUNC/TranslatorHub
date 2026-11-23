@@ -546,10 +546,21 @@ PI_MODEL=ctyun/glm-5.3-flash
 # 或者用 anthropic：AI_DEFAULT_POLICY=anthropic + ANTHROPIC_API_KEY
 ```
 
-**`pi` 这条路的两个要点**：SDK 是**可选依赖**（`pnpm add @earendil-works/pi-coding-agent`，只在这个 provider
-真被用到的地方装）；调用时**模型没有任何工具**（`noTools: 'all'`）、不许展开斜杠命令/技能、工作目录是临时目录、
-带超时——被翻译的字符串是数据，它没有理由能指挥一个 agent 去读文件或跑命令。容器里要挂 pi 的凭据目录，
-见本机 gitignore 掉的 `compose.override.yaml`。
+**`pi` 的代码从哪来，三条路，按省事排序**（`pi` 本身是全局安装：`npm i -g @earendil-works/pi-coding-agent`，
+一个包同时提供 `pi` 命令行和 SDK）：
+
+| 场景 | 怎么找到 SDK |
+| --- | --- |
+| 这台机器已经装了 `pi` | 设 `PI_SDK_PATH=$(npm root -g)/@earendil-works/pi-coding-agent`，直接用那一份 |
+| 容器里跑 | `compose.override.yaml` 把宿主机的全局 `@earendil-works` 只读挂到 `/app/node_modules/@earendil-works`；凭据目录 `~/.pi/agent` 挂到 `/pi-agent`（**读写**，因为 pi 的凭据存储要写 lock 文件） |
+| 想在 workspace 里自带一份 | `pnpm add @earendil-works/pi-coding-agent` |
+
+**这个包故意不是 workspace 的依赖**：约 **150 MB**（里面是一整个终端 agent），而绝大多数跑平台的机器本来就有 `pi`；
+写进 `package.json` 会让每次 `pnpm install`（含 CI 与镜像构建）都为它买单。`PI_SDK_PATH` 不设、workspace 里也没有时，
+调用会明确报出该设哪个变量——不会静默换成启发式。
+
+调用时**模型没有任何工具**（`noTools: 'all'`）、不许展开斜杠命令/技能、工作目录是临时目录、带超时——
+被翻译的字符串是数据，它没有理由能指挥一个 agent 去读文件或跑命令。
 
 `OPENAI_API_KEY` 在配置里但**没有任何 provider 读它**，设了不起作用。
 

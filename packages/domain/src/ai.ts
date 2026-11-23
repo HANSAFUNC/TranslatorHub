@@ -1,4 +1,5 @@
 
+import { pathToFileURL } from 'node:url';
 import { assertRole, type ActorContext } from '@localehub/permissions';
 import { ErrorCode, LocaleHubError, Role, extractPlaceholders } from '@localehub/contracts';
 import { emitProjectEvent } from './events';
@@ -175,9 +176,29 @@ interface PiSdk {
  */
 const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
 
+/**
+ * Where to load the SDK from.
+ *
+ * `PI_SDK_PATH` first, because the honest answer for most machines is "the `pi` already installed
+ * globally here" rather than a second copy: the package is ~150 MB (it ships the whole terminal
+ * agent), it is deliberately **not** a dependency of this workspace, and nothing in a fresh checkout
+ * would install it. Pointing at the installation that already exists is both cheaper and the only
+ * route that works without one.
+ *
+ * A directory means the package directory: `dist/index.js` is what its `exports.import` names, and
+ * spelling that out here is the price of loading from a path without re-implementing Node's
+ * resolution. A file path is used as given.
+ */
+export function piSdkSpecifier(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = env.PI_SDK_PATH?.trim();
+  if (!explicit) return '@earendil-works/pi-coding-agent';
+  const entry = explicit.endsWith('.js') || explicit.endsWith('.mjs') ? explicit : join(explicit, 'dist', 'index.js');
+  return pathToFileURL(entry).href;
+}
+
 /** Loads the SDK. Absence is explained where it surfaces, in `PiProvider.complete`. */
 async function loadPiSdk(): Promise<PiSdk> {
-  return (await dynamicImport('@earendil-works/pi-coding-agent')) as PiSdk;
+  return (await dynamicImport(piSdkSpecifier())) as PiSdk;
 }
 
 /**
@@ -222,9 +243,10 @@ export class PiProvider implements AiProvider {
     const sdk = await (this.options.load ?? loadPiSdk)().catch((cause: unknown) => {
       throw new LocaleHubError(
         ErrorCode.INTERNAL_ERROR,
-        'The "pi" AI provider is selected but @earendil-works/pi-coding-agent could not be loaded. Install it in the ' +
-          'workspace (`pnpm add @earendil-works/pi-coding-agent`) or on the machine that runs the API, or choose a ' +
-          'different provider with AI_DEFAULT_POLICY.',
+        'The "pi" AI provider is selected but the @earendil-works/pi-coding-agent SDK could not be loaded. Point ' +
+          'PI_SDK_PATH at the pi installation already on this machine (its package directory, e.g. ' +
+          '`$(npm root -g)/@earendil-works/pi-coding-agent`), or install it here, or choose a different provider ' +
+          'with AI_DEFAULT_POLICY.',
         500,
         { provider: 'pi', cause: cause instanceof Error ? cause.message : String(cause) },
       );
