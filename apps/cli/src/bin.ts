@@ -349,8 +349,11 @@ async function main(): Promise<void> {
         const apiUrl = (loaded.config.localehub.apiUrl || '').replace(/\/api\/v1\/?$/, '');
         try {
           const response = await fetch(`${apiUrl}/api/v1/mcp/tools`, { signal: AbortSignal.timeout(5_000) });
-          const payload = (await response.json()) as { data?: { remoteUrl?: string } };
+          const payload = (await response.json()) as { data?: { remoteUrl?: string; remoteUrlWarning?: string } };
           url = payload.data?.remoteUrl ?? null;
+          // Printed, not swallowed: the whole problem is an address that looks fine on the machine
+          // that printed it and fails on every other one.
+          if (payload.data?.remoteUrlWarning) process.stderr.write(`warning: ${payload.data.remoteUrlWarning}\n`);
         } catch {
           url = null;
         }

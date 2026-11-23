@@ -31,6 +31,11 @@ export interface McpTools {
   prompts: string[];
   /** Externally reachable endpoint, as configured on the server. */
   remoteUrl: string;
+  /**
+   * Set when that address cannot serve anyone but the platform's own machine — the reader is most
+   * likely about to hand it to a colleague.
+   */
+  remoteUrlWarning?: string;
   /** How a client reads and invokes skills; the API owns these strings, not the browser. */
   skillDelivery: { indexUri: string; resourceTemplate: string; promptPrefix: string };
   /** Ready-to-paste configs, generated server-side by the same code the CLI uses. */

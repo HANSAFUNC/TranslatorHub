@@ -2457,6 +2457,43 @@ zh-CN: [["cart","购物车"], …]
 
 **验证**：脚本自身跑了一遍（构建 → 核对标记 → 部署 → 三个容器 Started + healthy）；线上 `get_glossary` 三个用例如上；
 新增集成测试「get_glossary 按平台自己的读法回答」（四种骗法各一条断言）；507 单元 / 189 集成 / lint / typecheck 全绿。
+### 1.75 「别人使用不了」：平台把 localhost 发给了所有人
+
+同事报告：`claude mcp list` 里 `localehub-remote: http://localhost:3003/mcp ✘ ECONNREFUSED`，他那边 3003 没有任何监听，
+也找不到 localehub 的服务端。用户的判断是「别人使用不了」。
+
+**根因不在同事那边，在平台这边**：地址算的是「平台自己看到的地址」——`MCP_PUBLIC_URL` 没配就回退到
+`http://localhost:3003/mcp`（`compose.yaml` 里那个 `${MCP_PUBLIC_URL:-http://localhost:3003/mcp}` 默认值也在替应用编值）。
+平台本身跑得好好的，但**任何人复制那段配置，`localhost` 指的都是他自己那台电脑**，于是他看到的是"服务没起来"。
+
+**三层修法**（与上次 CSRF 同一个思路：信"请求实际被访问到的地址"）：
+
+1. **没配置时按请求推导**。`resolveRemoteMcpUrl(headers, env)`：先看 `x-forwarded-host`（走后端代理时原始 `Host` 是
+   `api:3001`），取主机名 + MCP 自己的端口，得到 `http://<调用方来的那个地址>:3003/mcp`。局域网里的同事拿到的就是这台机器的地址，
+   本机调用方仍然拿到 `localhost`——同一个部署对两种人都对，而且**不需要任何人去填一个会随机器搬迁而失效的 IP**。
+2. **`compose.yaml` 的默认值改成空串**，让应用去推导——那个默认值的唯一作用就是替应用编一个它自己算得更准的值。
+3. **配成 localhost 又来了非本机的调用方时，明确警告**：`/mcp` 页面上显示一条「别人连不上这个地址」并**直接写出应该用的那个地址**
+   （不是让人自己去想），`localehub mcp-config` 把同一句打到 stderr。今天这个报错之所以难查，正是因为它只在别人的机器上可见。
+
+实测（部署栈上）：
+
+| 调用方 | 平台给出的地址 |
+| --- | --- |
+| 本机（`Host: localhost`） | `http://localhost:3003/mcp`（无警告） |
+| 同事的视角（`Host: 192.168.200.172:3000`） | **`http://192.168.200.172:3003/mcp`** |
+| 显式配成 localhost + 远端调用方 | 地址照给，但附上警告，警告里写明该设成 `http://192.168.200.172:3003/mcp` |
+
+端口这一侧也确认过：`mcp-remote` 绑在 `0.0.0.0:3003`、macOS 防火墙是关闭的、用局域网地址访问 `/health` 返回 200。
+
+**给同事的结论**：`.mcp.json` 里的 URL 换成 `http://192.168.200.172:3003/mcp`（或从 `/mcp` 页面重新复制），并且
+**要重启 Claude Code**——MCP server 只在本会话启动时加载，当前会话的工具列表里不会有 `mcp__localehub-remote__*`。
+另外他报的另外两条（pencil 的 AppTranslocation 路径失效、接口文档缺 `command` 字段）都在他自己的用户级配置里，不在这个仓库。
+
+**验证**：新增 7 条单测（配置优先 / 推导 / 读代理头 / 本机保持 localhost / 配错时警告且写出可用地址 / 本机不警告 / 端口可配）；
+514 单元 / 189 集成 / MCP 工具页检查 / lint / typecheck 全绿。
+
+**顺带**：web 的层构建 Dockerfile 也进了仓库（`docker/local-layer-web.Dockerfile`），`deploy-local.sh` 支持 `--web`——
+今天 web 重建了六次，每次凭记忆重写那份 Dockerfile，还丢过一次 `WORKDIR`。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

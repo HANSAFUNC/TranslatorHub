@@ -17,16 +17,29 @@
 # an argument — e.g. `scripts/deploy-local.sh 'resolveGlossary:/app/apps/mcp-remote/dist/server.js'` —
 # and a build that compiled nothing new fails here instead of on the next user request.
 #
-# Usage: scripts/deploy-local.sh [<needle>:<path-inside-image>] [services…]
+# Usage: scripts/deploy-local.sh [--web] [<needle>:<path-inside-image>] [services…]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+WEB=0
+if [ "${1:-}" = "--web" ]; then WEB=1; shift; fi
 MARKER="${1:-}"
 if [ -n "$MARKER" ]; then shift; fi
 SERVICES=("$@")
-if [ ${#SERVICES[@]} -eq 0 ]; then SERVICES=(api worker mcp-remote); fi
 
-IMAGE=localehub-api
+if [ "$WEB" = 1 ]; then
+  # The web image is its own thing: a Next build, and `API_BASE_URL_INTERNAL` is baked in at build
+  # time (see docker/local-layer-web.Dockerfile).
+  IMAGE=localehub-web
+  DOCKERFILE=docker/local-layer-web.Dockerfile
+  LABEL=localehub-web
+  SERVICES=("${SERVICES[@]:-web}")
+else
+  IMAGE=localehub-api
+  DOCKERFILE=docker/local-layer.Dockerfile
+  LABEL=localehub-api
+  if [ ${#SERVICES[@]} -eq 0 ]; then SERVICES=(api worker mcp-remote); fi
+fi
 DEPTH_LIMIT=100   # Docker's own limit is 125; flatten well before it so the build has room
 
 layers() { docker image inspect "$IMAGE:latest" --format '{{len .RootFS.Layers}}' 2>/dev/null || echo 0; }
@@ -42,7 +55,7 @@ if [ "$(layers)" -ge "$DEPTH_LIMIT" ]; then
 fi
 
 echo "== building"
-docker buildx build --network host -f docker/local-layer.Dockerfile -t "$IMAGE:next" .
+docker buildx build --network host -f "$DOCKERFILE" -t "$IMAGE:next" .
 
 if [ -n "$MARKER" ]; then
   NEEDLE="${MARKER%%:*}"; IN_IMAGE="${MARKER#*:}"
@@ -51,7 +64,11 @@ if [ -n "$MARKER" ]; then
 fi
 
 echo "== tagging and deploying"
-for service in api worker mcp-remote; do docker tag "$IMAGE:next" "localehub-$service"; done
+if [ "$WEB" = 1 ]; then
+  docker tag "$IMAGE:next" "$LABEL"
+else
+  for service in api worker mcp-remote; do docker tag "$IMAGE:next" "localehub-$service"; done
+fi
 # Containers left half-created by an earlier failed recreate hold the names and block this one.
 for stale in $(docker ps -a --filter 'name=_localehub-' --format '{{.Names}}'); do
   echo "   removing stale container $stale"
@@ -68,3 +85,7 @@ done
 
 until curl -sf http://localhost:3001/api/v1/health >/dev/null; do sleep 1; done
 echo "== api healthy"
+if [ "$WEB" = 1 ]; then
+  until curl -sf -o /dev/null http://localhost:3000/; do sleep 1; done
+  echo "== web serving"
+fi

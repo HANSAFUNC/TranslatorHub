@@ -115,11 +115,13 @@ function ToolTable({ tools, loading }: { tools?: ToolDescriptor[]; loading: bool
 function McpOnboarding({
   snippets,
   remoteUrl,
+  remoteUrlWarning,
   toolCount,
   projectScoped,
 }: {
   snippets?: McpClientSnippets;
   remoteUrl: string;
+  remoteUrlWarning?: string;
   /** `undefined` until the registry has loaded; the step then says it without numbers. */
   toolCount?: number;
   projectScoped?: number;
@@ -315,6 +317,16 @@ function McpOnboarding({
             当前连接地址：<code className="font-mono">{remoteUrl || '—'}</code>
             {me?.organizations.length && me.organizations.length > 1 ? '（Token 决定你能看到哪个组织的数据）' : ''}
           </p>
+          {/* A loopback address on a shared deployment is correct for exactly one client. Saying so
+              here is the difference between "the address is wrong" being obvious and being a
+              colleague's `claude mcp list` reporting ECONNREFUSED about a working server. */}
+          {remoteUrlWarning ? (
+            <Alert variant="warning">
+              <ShieldAlert />
+              <AlertTitle>别人连不上这个地址</AlertTitle>
+              <AlertDescription>{remoteUrlWarning}</AlertDescription>
+            </Alert>
+          ) : null}
         </CardContent>
       </Card>
     </div>
@@ -394,6 +406,7 @@ export default function McpPage() {
           <McpOnboarding
             snippets={data?.snippets}
             remoteUrl={data?.remoteUrl ?? ''}
+            remoteUrlWarning={data?.remoteUrlWarning}
             toolCount={data?.remote.length}
             projectScoped={
               data?.remote.filter((tool) => tool.inputSchema?.properties && 'project_id' in tool.inputSchema.properties).length

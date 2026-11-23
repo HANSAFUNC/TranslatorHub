@@ -57,7 +57,11 @@ services:
       # What the Web UI and `localehub mcp-config` tell clients to connect to. The MCP client
       # runs on a developer's machine, so it must be an address reachable from there — not the
       # in-network `mcp-remote:3003`.
-      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:3003/mcp}
+      # Left empty on purpose: the app derives the address from the request that asks for it, which
+      # is right for a colleague on the LAN and right for `localhost`, without anybody configuring an
+      # IP that changes when the machine moves. Set it only when the public address is something the
+      # app cannot see (TLS terminated elsewhere, a hostname with no port).
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-}
       # This stack is plain HTTP on localhost and nothing terminates TLS for it. NODE_ENV is
       # `production` here (that is what makes the images behave like the deployed ones), so
       # without this opt-in every authenticated request would be refused with
