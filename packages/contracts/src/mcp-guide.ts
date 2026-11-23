@@ -39,7 +39,7 @@ export const REMOTE_MCP_INSTRUCTIONS = [
   '有 shell 权限时更省事：localehub mockup --page <页面文件> --confirm 读同一个页面的源码并直接上传。',
   '注意没有 dry run：同名屏幕再传一次是整体替换（旧图与旧标记不再保留），别拿它「先试一下」。细节见 localehub://screen-sketch-guide。',
   '',
-  '术语（可选，但那是「同一个词只有一种译法」的唯一办法）：get_glossary 读，upsert_glossary_terms 提。',
+  '术语（可选，但那是「同一个词只有一种译法」的唯一办法）：get_glossary 读，extract_glossary_candidates 看项目已有的说法，upsert_glossary_terms 提。',
   '提上去的一律是草稿——定稿由人在后台做，也只有定稿的术语会让 validate_release 不通过；已定稿的词条你改不动，会在 untouched 里告诉你。',
   '你在仓库里反复看到同一种固定说法（产品名、导航词、按钮文案）时，那正是该提的；译法不确定就只传 term，不要猜。',
   '',
@@ -137,7 +137,8 @@ export const REMOTE_MCP_IMPORT_GUIDE = `# 把本地语言文件上传到平台
    文件是安全的**——看这个数就知道上次是不是已经生效了。
 4. 分批 \`confirm: true\` 导入，从源语言文件开始。
 5. 全部导入后 \`get_project\` 看 counts，再用 \`get_qa_issues\` 跑一遍。
-6. 若同一个说法在整个仓库里反复出现，用 \`upsert_glossary_terms\` 提成术语草稿：提上去的是候选，不改变任何已有译文，
+6. 先问项目自己：\`extract_glossary_candidates\` 从已有译文里数出反复出现的说法与它已有的译法（带条数、例子）。
+   一个和 152 条既有译文相矛盾的提议比不提更糟，所以这一步先做，再决定提什么。提成草稿用 \`upsert_glossary_terms\`：提上去的是候选，不改变任何已有译文，
    由人定稿后 validate_release 才会因它不通过。**译法不确定就只传 \`term\`**——平台会把「有这个原始词、没有译法」当作待补，而不是当作答案。
 7. 平台 → 仓库方向：\`get_pending_platform_changes\` → 写文件 → \`mark_applied\`（需要 \`translation.apply\` scope）。
 

@@ -6,6 +6,7 @@ import {
   SyncService,
   assertPlaceholdersPreserved,
   createProject,
+  extractTermCandidates,
   recordAudit,
   resolveMockupInput,
   emitProjectEvent,
@@ -528,6 +529,34 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       }),
     );
   });
+
+  /**
+   * What this project keeps saying, and what it already calls it.
+   *
+   * The counterpart to `upsert_glossary_terms`, and the reason it exists: a caller about to propose
+   * terms should first ask the project what it already decided. A project with 2,795 translated keys
+   * has answered most of a termbase already — `学习` is `學習` in 152 of them — and a proposal that
+   * contradicts 152 existing translations is worse than no proposal.
+   *
+   * Read-only, and it says so: nothing here writes a term. What it returns is counts and examples —
+   * `コース 3/4` alongside the sentence that produced it — because counting is not aligning, and the
+   * reader is the one who decides what a term means.
+   */
+  define(
+    'extract_glossary_candidates',
+    '从项目已有的译文里数出候选术语，并给出它已有的译法（带条数与例子）。只读：什么都不写；要落成术语用 upsert_glossary_terms',
+    async (input: { project_id: string; min_keys: number; limit: number }) => {
+      assertRole(actor, input.project_id, Role.READONLY);
+      return tenant.withOrganization(actor.organizationId, (tx) =>
+        extractTermCandidates(tx, {
+          organizationId: actor.organizationId,
+          projectId: input.project_id,
+          minKeys: input.min_keys,
+          limit: input.limit,
+        }),
+      );
+    },
+  );
 
   /**
    * Propose terms.

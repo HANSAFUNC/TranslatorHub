@@ -54,6 +54,7 @@ export const REMOTE_MCP_TOOLS = [
   'get_translation_entry',
   'get_glossary',
   'upsert_glossary_terms',
+  'extract_glossary_candidates',
   'search_translation_memory',
   'translate_entries',
   'review_translation_entries',
@@ -91,6 +92,10 @@ export const REMOTE_MCP_TOOL_SCOPES: Partial<Record<RemoteMcpTool, McpScope[]>> 
   // A separate scope from `glossary.read` on purpose: reading the termbase tells you what the words
   // are, writing it tells everybody else what they will be.
   upsert_glossary_terms: [McpScope.GLOSSARY_WRITE],
+  // Read-only — it writes nothing, and what it would write is proposed through `upsert_glossary_terms`
+  // — but gated on `glossary.read` rather than nothing at all: it is the most expensive read in the
+  // product (every key in the project, then a count across every translation).
+  extract_glossary_candidates: [McpScope.GLOSSARY_READ],
 };
 
 export const remoteToolSchemas = {
@@ -183,6 +188,17 @@ export const remoteToolSchemas = {
   }),
   get_translation_entry: z.object({ project_id: z.string(), key: z.string(), locale: localeTagSchema }),
   get_glossary: z.object({ project_id: z.string(), locale: localeTagSchema.optional() }),
+  extract_glossary_candidates: z.object({
+    project_id: z.string().describe('项目 id'),
+    min_keys: z
+      .number()
+      .int()
+      .min(2)
+      .max(50)
+      .default(3)
+      .describe('一个说法至少出现在几条 key 里才算候选。默认 3；调到 2 会多出很多只出现两次的巧合'),
+    limit: z.number().int().min(1).max(200).default(60).describe('最多返回多少条候选'),
+  }),
   upsert_glossary_terms: z.object({
     project_id: z.string().describe('项目 id'),
     terms: z

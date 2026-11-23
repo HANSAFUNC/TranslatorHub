@@ -2159,6 +2159,30 @@ Prisma 自己打的 `prisma:error`。于是症状只有日志噪音，而**数�
 
 **验证**：新增集成测试「用过的 token 会记下被用过」（改之前必然失败：断言 `lastUsedAt` 非空）；488 单元 /
 183 集成 / 浏览器 17 项 / lint / typecheck 全绿。
+### 1.65 MCP 补上 `extract_glossary_candidates`：设计里写了、实现时漏了的那一个
+
+用户问「术语库支持 MCP 提取吗」。答案是分两半的：**读出来支持**（`get_glossary`），**抽候选没有**——
+而 `docs/TERMBASE.md` §6 的接口面里明明写着 MCP 要有 `extract_glossary_candidates`。上一轮我只做了写工具
+`upsert_glossary_terms`，这条没做，而且 §9 的状态表里**也没列它**——漏掉的东西没被记成 ❌，等于把它藏起来了。
+比漏做更糟的是漏记。
+
+**顺手把抽取搬进了 domain**（`packages/domain/src/term-extraction.ts`）。理由不是洁癖：MCP 不能抄一份
+（这是全平台最贵的一次读——最多 5,000 个 key，每个 key 上抽短语，再对每条译文数一遍），而且「两个入口给出
+不同答案」这件事在术语库上是最不能接受的。现在 REST 的 `POST /glossary/extract` 与 MCP 工具调的是同一个
+`extractTermCandidates`，路由只剩一行。
+
+工具本身：`extract_glossary_candidates`（第 21 个），scope `glossary.read`，**只读**——什么都不写，
+要落成术语用 `upsert_glossary_terms`。它存在的主要理由是**提之前先问**：一个和 152 条既有译文相矛盾的提议
+比不提更糟。描述里也写清了它数的是共现而不是对齐。
+
+**顺带补上了短语抽取器的第一组单元测试**。它此前只在浏览器检查里被端到端跑过，所以「英文项目一个候选都抽不出」
+那个 bug（窗口按三个词的步长跳，跨边界的两个窗口永远试不到）能活下来：中文项目能抽出二十个，看起来一切正常。
+现在钉住了「每个窗口都试」和「标点与空白不能当术语」两条。
+
+**验证**（都在容器栈上）：部署后的 MCP server `tools/list` 21 个、含新工具；真实项目 高研院iOS 上调用——
+`课程 116条 → zh-TW 課程 116/116`、`您的 91条 → zh-TW 您的 91/91 · en-US your 66/91`；
+新增集成测试「MCP 抽出来的词表与 REST 一致」；短语抽取器 10 条单测；498 单元 / 184 集成 / 浏览器 17 项 /
+工具页 11 项 / lint / typecheck 全绿。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

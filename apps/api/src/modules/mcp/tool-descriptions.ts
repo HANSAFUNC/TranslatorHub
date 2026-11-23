@@ -8,6 +8,7 @@ export const REMOTE_TOOL_DESCRIPTIONS: Record<string, string> = {
   get_translation_entry: '读取单条翻译条目',
   get_glossary: '读取术语库',
   upsert_glossary_terms: '提出术语（只能落成草稿，定稿由人决定）',
+  extract_glossary_candidates: '从已有译文里数出候选术语与它已有的译法',
   search_translation_memory: '检索翻译记忆',
   translate_entries: '调用 AI 生成草稿译文（永不自动通过审核）',
   review_translation_entries: '提交审核决定（需要审核权限）',

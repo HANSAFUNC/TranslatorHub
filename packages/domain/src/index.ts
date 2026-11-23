@@ -5,6 +5,7 @@ export * from './sync';
 export * from './qa';
 export * from './glossary';
 export * from './term-mining';
+export * from './term-extraction';
 export * from './ai';
 export * from './webhooks';
 export * from './bundles';

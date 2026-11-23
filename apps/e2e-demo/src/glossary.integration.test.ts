@@ -331,6 +331,29 @@ describe('proposing terms over MCP', () => {
     expect(extracted.body.data!.locales).toEqual(['ja-JP']);
   }, 120_000);
 
+  it('extracts the same vocabulary over MCP', async () => {
+    // The same question the back office's button asks, answered by the same function — an agent that
+    // is about to propose terms should first find out what the project already decided.
+    const extracted = await client!.callTool({
+      name: 'extract_glossary_candidates',
+      arguments: { project_id: projectId, min_keys: 2, limit: 20 },
+    });
+    expect(extracted.isError, JSON.stringify(extracted.content)).toBeFalsy();
+
+    const data = payload<{
+      candidates: { term: string; keyCount: number; suggestions: { locale: string; value: string; support: number; total: number }[] }[];
+      scannedKeys: number;
+      locales: string[];
+    }>(extracted);
+
+    const course = data.candidates.find((entry) => entry.term.toLowerCase() === 'course');
+    expect(course, JSON.stringify(data.candidates.map((entry) => entry.term))).toBeTruthy();
+    expect(course!.suggestions).toMatchObject([{ locale: 'ja-JP', value: 'コース', support: 3, total: 4 }]);
+    // The denominator travels with the answer, or `3/4` is indistinguishable from `3/3`.
+    expect(data.scannedKeys).toBeGreaterThan(0);
+    expect(data.locales).toEqual(['ja-JP']);
+  }, 120_000);
+
   it('lands a proposed term as a draft, and re-reads the project against it', async () => {
     const proposed = await client!.callTool({
       name: 'upsert_glossary_terms',
