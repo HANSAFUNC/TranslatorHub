@@ -169,7 +169,7 @@ Scope 强制、源文变更致 STALE、apply report 推进基线。
 ## 部署
 
 ```bash
-docker compose --env-file localehub.env up -d --build          # 开发/演示
+scripts/up.sh up -d --build                                     # 开发/演示（= docker compose --env-file localehub.env ...）
 docker compose --env-file localehub.env -f compose.yaml -f compose.production.yaml up -d   # 生产（需 ./secrets/*）
 docker compose --env-file localehub.env run --rm api pnpm prisma migrate deploy
 ```

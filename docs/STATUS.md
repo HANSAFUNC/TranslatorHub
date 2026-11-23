@@ -2204,6 +2204,40 @@ Prisma 自己打的 `prisma:error`。于是症状只有日志噪音，而**数�
 
 1. 第一版「译者不能定稿」是用**管理员的 session** 签发译者 token 的——`POST /mcp-tokens` 把 token 记在调用者名下，于是那个"译者"是个换了标签的管理员，断言 `isError` 拿到 `undefined` 才发现。
 2. 顺着这条查下去还发现一个产品事实：**`POST /mcp-tokens` 要求 PROJECT_MANAGER，所以译者根本拿不到 token**。测试里那条 token 因此是直接种进库的（用真实的 `hashToken`），它代表的其实是**一个管理员被降权之后**的情形——也是低权限者唯一能碰到工具的方式，而角色是每次调用校验的，所以这恰恰是值得钉住的用例。
+### 1.67 又见 CSRF：这次是我自己把配置弄丢的——`docker compose` 少了一个 `--env-file`
+
+用户报「又出现这个 CSRF_VERIFICATION_FAILED: Origin http://192.168.200.172:3000」。上一轮修过（把 LAN 地址加进 `CORS_ORIGINS`），
+所以先问的是「修的东西为什么没留住」。
+
+**根因，两个，第一个是我的错。** `localehub.env` 里有 `CORS_ORIGINS=http://localhost:3000,http://192.168.200.172:3000`，
+而 `compose.yaml` 写的是 `CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}`——**插值只读 shell 环境或 `--env-file` 指定的文件**。
+README 教的是 `docker compose --env-file localehub.env up -d`，而我这一轮所有重启都是裸的 `docker compose up -d --no-build api worker mcp-remote`：
+**每一次都在把 `localehub.env` 里的全部配置换成默认值**（CORS 来源、AI provider、存储设置……），而且什么都不说，直到有人从别的机器打开页面。
+
+**第二个是设计上的脆弱**：就算配置对了，自建部署的地址是会变的（换机器、换网段、加个主机名），
+而白名单只能猜。所以顺手做了更根本的一层：`trustedOrigins` 现在还信任**这次请求实际被访问到的那个 host**
+（先看 `x-forwarded-host`，再退回 `Host`）。这不是给攻击者开的口子——`Origin` 和 `Host` 是浏览器分别设置的，
+`evil.example` 上的页面发到这台主机的请求，`Origin` 就是 `https://evil.example`，两者必须相等才放过；
+页面没法声称一个它没发过去的 `Host`，也没法在预检被拒的情况下设 `x-forwarded-host`。实测：
+
+| 请求 | 结果 |
+| --- | --- |
+| `Host` 与 `Origin` 都是 `192.168.200.172:3000`（别人从局域网登录） | 通过（原来是 403） |
+| 同一个 Host，`Origin: https://evil.example` | 403，仍然拒绝 |
+| `Host: localhost:3000` 而 `Origin` 是 LAN 地址 | 403（不匹配就得拒） |
+
+**修完才敢说的另一件事：`AI_DEFAULT_POLICY` 一直是 `hybrid`，而 `hybrid` 不是 provider。**
+读 `createProvider` 会发现它只认 `pi | anthropic | ollama`，别的值——包括 schema 默认和 `env.example` 里的 `hybrid`——静默落到
+`HeuristicProvider`：离线、只做术语替换、其余原样返回原文。也就是说**按文档配出来的部署，AI 翻译其实没在翻译，而且从不吭声**。
+一天之内撞到两次同一类问题（「看着配好了，其实没有」），所以这次把它做成会响的：无法构造出请求的 provider 时，
+**启动后第一次用到时警告一次**，说清是哪一个值、缺了哪个前置条件、以及落到的是启发式。`env.example` 也改成列出四个真实取值并把 `hybrid` 标成错的。
+
+**`scripts/up.sh`**：唯一入口，永远带上 `--env-file localehub.env`；`README`、`docs/DEPLOYMENT.md`、`scripts/init-db.sh` 里
+所有教人跑 `docker compose` 的地方都改成它。本机 `localehub.env` 的 `AI_DEFAULT_POLICY` 也从 `hybrid` 改成 `pi`（该文件被 gitignore，不进仓库）。
+
+**验证**：局域网地址模拟登录通过、攻击者来源仍 403；部署栈上 `POST /ai/translate` 返回 `provider: "pi"`（不是启发式）；
+503 单元（新增 5 条：代理转发的 host 被信任、跨站仍被拒、`hybrid` 警告一次且指名、缺 key 时说明缺哪个、显式 heuristic 不吭声）
+/ 188 集成 / 浏览器检查 / MCP 检查 / lint 全绿。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

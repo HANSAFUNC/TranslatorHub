@@ -81,14 +81,31 @@ function requestOrigin(request: AuthenticatedRequest): string | null {
 }
 
 /**
- * The configured CORS allowlist plus this API's own origin, so a same-origin deployment keeps
- * working even when `CORS_ORIGINS` was only set for the web app during development.
+ * The configured CORS allowlist, plus **the host this request was actually addressed to**.
+ *
+ * That last part is not a convenience, it is what makes a self-hosted deployment work at all. A
+ * browser reaches the web app at whatever address the machine happens to have — `localhost`, a LAN
+ * IP, a hostname — and the page's own origin is then that same address. The API cannot know which
+ * one in advance, so an allowlist can only ever be a guess, and it is a guess that goes stale the
+ * moment the address changes.
+ *
+ * It costs no safety, because it is not an allowlist entry that helps an attacker: the browser sets
+ * `Origin` and `Host` independently, and a page on `evil.example` is refused for the same reason it
+ * always was — its `Origin` is `https://evil.example` while the request it can make goes to this
+ * host, and the two must match. A page cannot claim a `Host` it did not send the request to, and it
+ * cannot set `x-forwarded-host` without a preflight this API never grants.
+ *
+ * `x-forwarded-host` first: when the web app proxies `/api/v1` to the API, the raw `Host` is the
+ * container name (`api:3001`) and the browser-facing one survives only in that header. Reading the
+ * raw `Host` there — which is what this did — made every proxied same-origin request from anywhere
+ * but `localhost` look cross-site.
  */
 function trustedOrigins(request: AuthenticatedRequest): Set<string> {
   // Same source as the CORS middleware, so the two can never disagree about which origin is
   // allowed to call this API.
   const origins = new Set<string>(corsOrigins());
-  const host = request.headers.host;
+  const forwardedHost = request.headers['x-forwarded-host'];
+  const host = (typeof forwardedHost === 'string' ? forwardedHost.split(',')[0]!.trim() : '') || request.headers.host;
   if (host) {
     const forwarded = request.headers['x-forwarded-proto'];
     const proto = typeof forwarded === 'string' ? forwarded.split(',')[0]!.trim() : request.protocol;

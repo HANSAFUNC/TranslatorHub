@@ -309,6 +309,25 @@ function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+/**
+ * Said once, not per request.
+ *
+ * The fallback is not an error — a demo with no provider has to keep working — but it is not a
+ * translation either, and staying quiet about it is how a deployment runs for weeks believing it
+ * has AI drafting. `AI_DEFAULT_POLICY=hybrid`, the value the template shipped with, is the exact case
+ * this exists for: it is not a provider, it falls through every branch below, and the heuristic
+ * "translates" by substituting glossary terms and otherwise handing back the source text.
+ */
+let warnedAboutFallback = false;
+
+function warnAboutFallback(reason: string): void {
+  if (warnedAboutFallback) return;
+  warnedAboutFallback = true;
+  console.warn(
+    `[ai] AI drafting is not using a model: ${reason}. The offline heuristic provider is in use — it substitutes glossary terms and otherwise returns the source text.`,
+  );
+}
+
 export function createProvider(kind?: string): AiProvider {
   const requested = kind ?? process.env.AI_DEFAULT_POLICY ?? 'heuristic';
   if (requested === 'anthropic' && process.env.ANTHROPIC_API_KEY) return new AnthropicProvider(process.env.ANTHROPIC_API_KEY);
@@ -323,6 +342,14 @@ export function createProvider(kind?: string): AiProvider {
       ...(process.env.PI_TIMEOUT_MS ? { timeoutMs: Number(process.env.PI_TIMEOUT_MS) } : {}),
     });
   }
+  if (requested === 'heuristic') return new HeuristicProvider();
+
+  // A provider was asked for by name and could not be built, or the name is not one. Both are worth
+  // saying out loud once: the first is a missing prerequisite, the second is a value that looks
+  // configured and is not.
+  if (requested === 'anthropic') warnAboutFallback('AI_DEFAULT_POLICY=anthropic but ANTHROPIC_API_KEY is not set');
+  else if (requested === 'ollama') warnAboutFallback('AI_DEFAULT_POLICY=ollama but OLLAMA_BASE_URL is not set');
+  else warnAboutFallback(`AI_DEFAULT_POLICY="${requested}" is not a provider this platform knows (pi | anthropic | ollama)`);
   return new HeuristicProvider();
 }
 

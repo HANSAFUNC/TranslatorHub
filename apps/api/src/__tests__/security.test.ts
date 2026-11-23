@@ -273,6 +273,48 @@ describe('CsrfGuard', () => {
     expect(() => guard.canActivate(context(req, response()))).toThrowError(/x-csrf-token/);
   });
 
+  it('trusts the host the browser asked for, through the web app proxy', () => {
+    // The deployment's own address, whatever it is: the browser sent `Origin: <lan-ip>:3000` to the
+    // web app, the web app proxied it to the API, and the only trace of the address the browser used
+    // is `x-forwarded-host` — the raw `Host` is `api:3001` inside the compose network. Reading the
+    // raw one made every such request look cross-site, which is how a LAN deployment ends up with
+    // "Origin ... is not allowed to call this API" on the login screen.
+    const guard = new CsrfGuard();
+    const req = request({
+      method: 'POST',
+      headers: {
+        origin: 'http://192.168.200.172:3000',
+        host: 'api:3001',
+        'x-forwarded-host': '192.168.200.172:3000',
+        'x-forwarded-proto': 'http',
+        'x-csrf-token': 'token-value',
+      },
+      cookies: { localehub_csrf: 'token-value' },
+      actor: userActor({ credentialSource: 'cookie' }),
+    });
+
+    expect(guard.canActivate(context(req, response()))).toBe(true);
+  });
+
+  it('still refuses a page on another site, whatever host it is sent to', () => {
+    // The property the change above must not cost: matching is between the request's `Origin` and
+    // the host it was addressed to, and an attacker's page has an origin it cannot change.
+    const guard = new CsrfGuard();
+    const req = request({
+      method: 'POST',
+      headers: {
+        origin: 'https://evil.example',
+        host: 'api:3001',
+        'x-forwarded-host': '192.168.200.172:3000',
+        'x-csrf-token': 'token-value',
+      },
+      cookies: { localehub_csrf: 'token-value' },
+      actor: userActor({ credentialSource: 'cookie' }),
+    });
+
+    expect(() => guard.canActivate(context(req, response()))).toThrowError(/not allowed to call this API/);
+  });
+
   it('rejects a write whose Origin is not part of this deployment', () => {
     const guard = new CsrfGuard();
     const req = request({

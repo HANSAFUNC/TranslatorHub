@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createProvider, PiProvider } from '../ai';
 
@@ -97,6 +97,67 @@ describe('the pi provider', () => {
       expect(createProvider().id).toBe('heuristic');
     } finally {
       if (before !== undefined) process.env.AI_DEFAULT_POLICY = before;
+    }
+  });
+});
+
+describe('a policy that is not a provider', () => {
+  it('falls back to the heuristic loudly, once, and names the value', async () => {
+    // `hybrid` — the value the environment template shipped with — is not a provider. It fell through
+    // every branch into the offline heuristic without saying anything, so a deployment could believe
+    // it had AI drafting while "translation" was a glossary substitution over the source text.
+    vi.resetModules();
+    process.env.AI_DEFAULT_POLICY = 'hybrid';
+    const warnings: string[] = [];
+    const spy = vi.spyOn(console, 'warn').mockImplementation((message: unknown) => {
+      warnings.push(String(message));
+    });
+    try {
+      const { createProvider: fresh } = await import('../ai');
+      expect(fresh().id).toBe('heuristic');
+      // Once, not per call: this runs on every draft request.
+      expect(fresh().id).toBe('heuristic');
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('hybrid');
+      expect(warnings[0]).toContain('heuristic');
+    } finally {
+      spy.mockRestore();
+      delete process.env.AI_DEFAULT_POLICY;
+      vi.resetModules();
+    }
+  });
+
+  it('says which prerequisite is missing when the name is real', async () => {
+    vi.resetModules();
+    process.env.AI_DEFAULT_POLICY = 'anthropic';
+    delete process.env.ANTHROPIC_API_KEY;
+    const warnings: string[] = [];
+    const spy = vi.spyOn(console, 'warn').mockImplementation((message: unknown) => {
+      warnings.push(String(message));
+    });
+    try {
+      const { createProvider: fresh } = await import('../ai');
+      expect(fresh().id).toBe('heuristic');
+      expect(warnings[0]).toContain('ANTHROPIC_API_KEY');
+    } finally {
+      spy.mockRestore();
+      delete process.env.AI_DEFAULT_POLICY;
+      vi.resetModules();
+    }
+  });
+
+  it('says nothing when the heuristic is what was asked for', async () => {
+    vi.resetModules();
+    process.env.AI_DEFAULT_POLICY = 'heuristic';
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { createProvider: fresh } = await import('../ai');
+      expect(fresh().id).toBe('heuristic');
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+      delete process.env.AI_DEFAULT_POLICY;
+      vi.resetModules();
     }
   });
 });

@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-docker compose up -d postgres redis
+scripts/up.sh up -d postgres redis
 until docker compose exec -T postgres pg_isready -U postgres -d localehub >/dev/null 2>&1; do
   printf 'waiting for postgres...\n'
   sleep 2

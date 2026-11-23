@@ -17,7 +17,9 @@ pnpm dev:api & pnpm dev:web
 ### 2.0 也可以用整套容器在本地跑一遍
 
 ```bash
-docker compose up -d --build        # postgres / redis / api / worker / mcp-remote / web
+scripts/up.sh up -d --build          # postgres / redis / api / worker / mcp-remote / web
+#                                        （等价于 docker compose --env-file localehub.env up -d --build；
+#                                          直接跑 `docker compose up` 会静默丢掉 localehub.env 里的全部配置）
 open http://localhost:3000
 ```
 
