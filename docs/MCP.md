@@ -546,18 +546,17 @@ PI_MODEL=ctyun/glm-5.3-flash
 # 或者用 anthropic：AI_DEFAULT_POLICY=anthropic + ANTHROPIC_API_KEY
 ```
 
-**`pi` 的代码从哪来，三条路，按省事排序**（`pi` 本身是全局安装：`npm i -g @earendil-works/pi-coding-agent`，
-一个包同时提供 `pi` 命令行和 SDK）：
+**SDK 是 `@localehub/domain` 声明的依赖**（`optionalDependencies`，一个包同时提供 `pi` 命令行和 SDK），
+`pnpm install` 就会装上——发布包约 **25 MB**，不是什么负担。`optional` 而不是普通依赖的理由只有一个：
+Registry 取不到时不要连带整个 workspace 装不上，而这条路本来就有明确的运行时错误和 `PI_SDK_PATH` 兜底。
+
+覆盖它的两种情形：
 
 | 场景 | 怎么找到 SDK |
 | --- | --- |
-| 这台机器已经装了 `pi` | 设 `PI_SDK_PATH=$(npm root -g)/@earendil-works/pi-coding-agent`，直接用那一份 |
-| 容器里跑 | `compose.override.yaml` 把宿主机的全局 `@earendil-works` 只读挂到 `/app/node_modules/@earendil-works`；凭据目录 `~/.pi/agent` 挂到 `/pi-agent`（**读写**，因为 pi 的凭据存储要写 lock 文件） |
-| 想在 workspace 里自带一份 | `pnpm add @earendil-works/pi-coding-agent` |
-
-**这个包故意不是 workspace 的依赖**：约 **150 MB**（里面是一整个终端 agent），而绝大多数跑平台的机器本来就有 `pi`；
-写进 `package.json` 会让每次 `pnpm install`（含 CI 与镜像构建）都为它买单。`PI_SDK_PATH` 不设、workspace 里也没有时，
-调用会明确报出该设哪个变量——不会静默换成启发式。
+| 默认 | workspace 里装好的那份（`packages/domain/node_modules/@earendil-works/pi-coding-agent`） |
+| 想用这台机器**已装**的那份 `pi` | 设 `PI_SDK_PATH=$(npm root -g)/@earendil-works/pi-coding-agent`（省一次 25 MB，也便于跟着全局那个版本走） |
+| 容器里跑 | 开发用的 `compose.override.yaml` 把宿主机的全局 `@earendil-works` 只读挂进 `/app/node_modules/@earendil-works`——层构建不会跑 `pnpm install`，所以本机的镜像里没有它自己的那份。正式构建的镜像有。凭据目录 `~/.pi/agent` 挂到 `/pi-agent`（**读写**，因为 pi 的凭据存储要写 lock 文件） |
 
 调用时**模型没有任何工具**（`noTools: 'all'`）、不许展开斜杠命令/技能、工作目录是临时目录、带超时——
 被翻译的字符串是数据，它没有理由能指挥一个 agent 去读文件或跑命令。

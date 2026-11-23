@@ -21,5 +21,8 @@
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "typescript": "^5.7.2"
+  },
+  "optionalDependencies": {
+    "@earendil-works/pi-coding-agent": "^1.6.0"
   }
 }

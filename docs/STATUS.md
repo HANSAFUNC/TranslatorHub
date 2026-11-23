@@ -2272,6 +2272,31 @@ README 教的是 `docker compose --env-file localehub.env up -d`，而我这一�
 
 **没有删那个残留链接**：本地跑 API 和集成测试现在仍靠它，删掉等于让本地静默退回启发式。
 它现在是多余的（`PI_SDK_PATH` 覆盖了这个场景），但没有害处——记在这里，免得下次有人看到它以为是设计。
+### 1.69 更正：pi 的 SDK 现在**是**依赖了——1.68 里那个「153 MB，所以不该声明」是错的
+
+用户看完 1.68 直接问「不是应该加到依赖吗」。对。我去量了自己引用的那个数字，发现**量错了东西**：
+
+| 我当时说的 | 实际 |
+| --- | --- |
+| 「这个包 153 MB」 | 153 MB 是**整个全局安装目录**，其中 127 MB 是它自己的依赖树（那些依赖由包管理器本该装） |
+| | 发布包 `dist.unpackedSize` = **24.8 MB**。这是个普通依赖的大小 |
+
+**结论也因此是错的**：代码 `import` 了一个没有任何 `package.json` 声明的包，只靠「宿主机上一个残留的符号链接 + 容器里一个挂载」凑合用；
+而我用「太大了」去为一个隐藏前置条件辩护——那个数字还是错的。这正是这几天反复在修的那类问题（"看着配好了，其实没有"）。
+
+现在 `@localehub/domain` 的 `optionalDependencies` 里写着 `@earendil-works/pi-coding-agent`，`pnpm install` 就会装，
+`pnpm-lock.yaml` 里钉着版本。**为什么是 optional 而不是普通依赖**：只有一种情形不同——Registry 取不到时，
+普通依赖会让整个 workspace 装不上，而这条路本来就有明确的运行时错误（说清设哪个变量）和 `PI_SDK_PATH` 兜底。
+这个取舍写在 docs/MCP.md 的 pi 一节里，不是一个只有我知道的决定。
+
+**换版本这件事本身要验**：全局装的是 1.5.2，声明后 workspace 装到的是 **1.6.0**，而此前所有「pi 能用」的验证都是对着 1.5.2 做的。
+所以按 `ai.ts` 实际用到的那几个接口（`createAgentSession` / `ModelRuntime.create` / `SessionManager.inMemory` / `prompt` /
+`getLastAssistantText`）在 workspace 里跑了一遍真的：模型解析成功，返回 `カートは空です`。**声明之后，宿主机那条路第一次是"装上就有"，
+不再是碰巧。**
+
+**验证**：`pnpm install --frozen-lockfile --offline` 通过（CI 一致性）、`pnpm-lock.yaml` 里有它（3 处）、
+16 个包 typecheck 通过、507 单元、lint 全绿。顺带说明：`PI_SDK_PATH` 保留，但角色变了——从「没有它就不通」变成
+「想用这台机器已装的那份（省一次 24.8 MB、或跟着全局版本走）时的覆盖开关」。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |
