@@ -2393,6 +2393,36 @@ README 教的是 `docker compose --env-file localehub.env up -d`，而我这一�
 
 **验证**：`diff v1 v2` 共改动 427 行（说明书 1185 → 1148 行，START_HERE 138 → 128 行）；
 两份文档里 "Local MCP" 只剩说明书 §0.0 有意保留的历史说明；docx 反解文本核对通过。
+### 1.73 交付说明书的机械核对：写进去的每一项都对回代码
+
+用户说「不用（纳入 git），你就修改好就行」。所以这一轮不是再改一遍，而是**把文档里写的每一项拿去和代码对**——
+上一轮我改的是措辞，措辞对不对只有对回实现才知道。写了个脚本做机械比对（工具名、CLI 命令、侧边栏、包目录、
+API 路径、数据库表、数据契约字段），结果与发现：
+
+| 核对项 | 结果 |
+| --- | --- |
+| §6.4 的 22 个工具 vs `REMOTE_MCP_TOOLS` | 全中，没有多写的（检查器先把 `status` 当成工具名，那是 `import_glossary_terms` 的参数） |
+| §6.2 的 15 条 CLI 命令 vs `bin.ts` 的 HELP | 全中；HELP 里有而文档没列的：无 |
+| §11.1 侧边栏 vs `app-shell.tsx` | 全中 |
+| §13.2 的十个包 vs `packages/` | 全中 |
+| §5.1 `NormalizedEntry` 的 14 个字段 vs `contracts/translation.ts` | 全中 |
+| §9.1 的十张表 vs `schema.prisma` | 十张全存在（它们本来就只是"增量设计"涉及的表，不是全部 38 张） |
+| §8 的 12 条 API 路径 vs `sync.controller.ts` | 全部存在 |
+
+**由此改掉三处**（措辞没错、事实有偏）：
+
+1. **§8 的路径参数写的是 `:id`，实际是 `:projectId`** —— 3 处统一。
+2. **建成后多出来的 5 条路由文档里没有**：`/projects/:projectId/sync/status`、`/projects/:projectId/sync/sessions`、
+   `/sync/recent-sessions`、`/projects/:projectId/events`、`/sync/conflicts/:id`。写客户端的人会用到，补成一张表。
+3. **§9.3 的 baseline 表结构与实际实现有出入**：文档写的是建议形状（snake_case），实际是 Prisma 的 camelCase，
+   而且**多了三列**——`localFileId` / `localFilePath`（这条基线落在哪个本地文件，回写定位用）和 `baseValue`
+   （基线当时的值；三方合并要拿它当共同祖先，只存哈希做不到）。唯一键与文档一致，已在 schema 里。补了一段说明，
+   并把"唯一来源"指到 `schema.prisma`。
+
+**没有核到的**（不声称核对过）：§7 的算法叙述（与 `docs/SYNC.md` 的一致性没逐句比）、§10.2/10.3 的 Adapter 接口细节、
+§12 的 Skill 设计、§15 的可观测性。这几节上一版就是这样写的，改动风险低，但"低"不等于"验过"。
+
+**docx 随之重新生成**（md 改了就得不一致）：`marked` → HTML → `textutil -convert docx`，反解回文本核对关键内容命中。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |
