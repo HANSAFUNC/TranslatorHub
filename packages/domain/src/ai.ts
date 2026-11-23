@@ -46,9 +46,11 @@ export function formatGlossary(glossary: { term: string; translation: string; ca
 }
 
 /**
- * Provider registry. The heuristic provider is offline and deterministic, which keeps the
- * demo and the test-suite independent of network access. Anthropic / OpenAI / Ollama
- * providers are wired but only activate when their API key is configured.
+ * What a provider has to be able to do.
+ *
+ * There is one implementation (`PiProvider`), and no registry to choose from: the others were removed
+ * along with the fallback that quietly stood in for them. The interface stays because it is the seam
+ * the tests use to run a provider without a model behind it.
  */
 interface PiSdk {
   createAgentSession(options: Record<string, unknown>): Promise<{
@@ -144,10 +146,9 @@ export class PiProvider implements AiProvider {
     const sdk = await (this.options.load ?? loadPiSdk)().catch((cause: unknown) => {
       throw new LocaleHubError(
         ErrorCode.INTERNAL_ERROR,
-        'The "pi" AI provider is selected but the @earendil-works/pi-coding-agent SDK could not be loaded. Point ' +
+        'The @earendil-works/pi-coding-agent SDK could not be loaded, so AI drafting is unavailable. Point ' +
           'PI_SDK_PATH at the pi installation already on this machine (its package directory, e.g. ' +
-          '`$(npm root -g)/@earendil-works/pi-coding-agent`), or install it here, or choose a different provider ' +
-          'with AI_DEFAULT_POLICY.',
+          '`$(npm root -g)/@earendil-works/pi-coding-agent`), or install it here (`pnpm install`).',
         500,
         { provider: 'pi', cause: cause instanceof Error ? cause.message : String(cause) },
       );

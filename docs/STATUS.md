@@ -2328,6 +2328,34 @@ README 教的是 `docker compose --env-file localehub.env up -d`，而我这一�
 里的那行已删除。
 
 **验证**：505 单元 / 188 集成 / 浏览器检查 / lint / typecheck 全绿；`docs/openapi.json` 重新生成（83 paths，少了一条）。
+### 1.71 「变量好像都没更新」——对，我只删了代码里的，没删文件里的
+
+用户看完 1.70 说「变量好像都没更新」。查了一遍，他是对的，而且残留分三处：
+
+| 残留 | 我当时做了什么 | 实际 |
+| --- | --- | --- |
+| `localehub.env` 的 `ANTHROPIC_API_KEY=` / `OPENAI_API_KEY=` / `OLLAMA_BASE_URL=` | 只删了 `AI_DEFAULT_POLICY` | 三个都还在文件里 |
+| `localehub.env` 的 `# --- AI ---` 小节标题 | —— | 内容被删空，留了一个空壳标题 |
+| `compose.override.yaml` 的注释「heuristic one (`AI_DEFAULT_POLICY` unset), which is what the demo and the tests use」 | —— | 描述的 provider 已经不存在 |
+| `packages/domain/src/ai.ts` 的 `AiProvider` 接口注释 | —— | 还在说「Provider registry…heuristic…Anthropic / OpenAI / Ollama」 |
+| `ai.ts` 的**运行时错误文案** | —— | 还在教人「choose a different provider with **AI_DEFAULT_POLICY**」——叫人去设一个已经不存在的变量 |
+
+最后一条最糟：那不是注释，是**出错时给人看的指引**。
+
+还有个自带矛盾值得记：那三个变量**从来没有进过容器**（`compose.yaml` 没有把它们映射进去），所以我 1.70 里加的
+「旧变量还在就警告一行」在本机**永远不会响**——我在一个不含这些变量的进程里检查它们。手动验证（`AI_DEFAULT_POLICY=anthropic`
+跑一次 `loadEnv`）确认警告本身是好的，但这也说明：一个只在"别人升级时"才触发的机制，靠手动验证是不够的，
+所以补了 `packages/config` 的第一组单测（两条：设了就逐个点名、干净环境不吭声）。
+
+**修完的样子**：`localehub.env` 的 AI 小节填上了真实的 pi 设置（`PI_PROVIDER` / `PI_MODEL`，与容器里跑的一致）而不是留空壳；
+`ai.ts` 的接口注释与错误文案改成现在的实情（错误文案现在说清楚：SDK 没加载到 → 设 `PI_SDK_PATH` 或 `pnpm install`）；
+`compose.override.yaml` 的注释改成「不用这个 overlay 时用的就是 pi，唯一的 provider」。
+
+**验证**：507 单元（新增 2）/ 188 集成（上一轮）/ lint / typecheck 全绿；`grep` 三个部署文件已无残留；
+部署栈重启后 `PI_PROVIDER=gpt-61-sol`、`PI_MODEL=ctyun/glm-5.3-flash`、`PI_AGENT_DIR=/pi-agent`，无残留变量、无警告。
+
+**顺带发现一处不在仓库里的东西**：`LocaleHub_Agent_开发交付包/`（未纳入 git）里的交付说明书仍写着
+`AI_DEFAULT_POLICY=hybrid`。那是**已经交出去的文档快照**，我没有擅自改——要不要出一版新的，由你定。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |
