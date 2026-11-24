@@ -2795,6 +2795,36 @@ marker 是否对上 key、CSS 里有没有 overflow:hidden+固定高度），**�
 
 **没做的**：iOS 侧只留了接缝（`xcrun simctl` 能出图，但取元素层级要 `idb`，这台机器没装）；`--include-system-ui`
 默认关，状态栏/导航栏的文案不属于产品；列表类长屏要滚动的部分仍要分帧截。
+### 1.82 它叫「UI 页面」；顺带把 web 页上一句假话改掉，以及一次差点让平台停摆的磁盘事故
+
+用户：「不应该叫界面草图，要叫 UI 页面」。改的是**产品里看得见的那个名字**，不动标识符——
+MCP 工具名 `upload_screen_mockup`、资源 `localehub://screen-sketch-guide`、路由 `/mockups` 都是调用方
+写进配置的接口，改名会静默打断已有客户端，而用户抱怨的是"叫什么名字"，不是"接口长什么样"。
+
+| 范围 | 结果 |
+| --- | --- |
+| 产品界面与下发文本 | web 编辑器（按钮、详情页、标题）、`instructions`、教程、五个提示词、工具描述、CLI 输出 |
+| 文档 | `docs/MCP.md`、`docs/API.md`、`docs/QUICKSTART.md`、`docs/DATABASE.md`、`docs/openapi.json`（重新生成） |
+| 不改 | `docs/STATUS.md` 的历史流水（改名不该改写历史）；两处**引用旧文案**的历史说明；所有代码标识符 |
+| 规模 | 19 个文件、约 70 处；改完 `grep 界面草图` 只剩上述历史处 |
+
+**顺手抓到的**：改到 web 的 MCP 页时，发现它还挂着第二轮审稿删掉的那句假话——
+「平台会拒绝 Agent 的批准请求——这是设计，不是缺陷」。真相是**默认签发的 Token 里没有 `translation.review`**，
+是这个 scope 本来就没给。当时只在教程与工具描述里改了，web 页漏网；现在按实情改写。
+
+**磁盘事故（要记下来，因为它的症状完全不像磁盘问题）**：改完重新部署后，三个浏览器检查全部报
+`the database system is not yet accepting connections`。`docker ps` 里 Postgres 显示 **healthy**、`/health`
+也返回 200，但日志里在循环 `PANIC: could not write to file "pg_logical/replorigin_checkpoint.tmp": No space left
+on device` → 重启 → 再 PANIC。原因：**每次构建都会把上一版镜像变成未打标签的悬空镜像，而没有任何东西回收它们**——
+一版 1.7 GB，今天几十次部署把 Docker VM 的 58 GB 撑到 **100%**。清掉悬空镜像回收 **23.29 GB**，
+Postgres 自己完成恢复（"ready to accept connections"），三个检查随即全绿。
+
+`scripts/deploy-local.sh` 现在每次部署后清一次悬空镜像并打印结果——这台机器上同时跑着别人的容器，
+所以只清**悬空**（untagged）的那些，不碰任何在用的镜像、卷或别的项目的镜像。
+
+**验证**：`pnpm test` 577 通过、`pnpm typecheck` 16 个 workspace 全过、lint 0 warning；
+`check-mcp-sketch-guide`、`check-marker-look`、`check-replica`、`check-inline-edit`、`check-device-capture` 全部通过；
+api/worker/mcp-remote 与 web 各重新部署一次（带 marker）。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

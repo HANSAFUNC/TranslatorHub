@@ -123,15 +123,15 @@ public 路由不受影响，负载均衡仍可探测。
 批准 `STALE` 译文返回 `STALE_TRANSLATION`。
 
 **删除项目**（`DELETE /projects/:projectId`）需要 `confirmName` 与项目名完全一致：缺参数返回 422 并
-说明要传什么，名字不符同样 422。这个项目下的 Key、译文、界面草图与同步记录会级联删除，**没有撤销**；
+说明要传什么，名字不符同样 422。这个项目下的 Key、译文、UI 页面与同步记录会级联删除，**没有撤销**；
 仓库里的语言文件不受影响。`GET /projects` 与 `GET /projects/:projectId` 的 `role` 字段是调用者的**有效
 角色**（组织角色与项目角色中更高的那个，与服务端守卫同一套排序，见 `@localehub/contracts/roles` 的
 `ROLE_WEIGHT`），**项目列表**与**项目设置页**据此决定是否显示删除入口——不会出现「按钮点了被拒」或
 「有权限却看不到按钮」。
 
-### 4.1 界面草图
+### 4.1 UI 页面
 
-界面草图是「这个 Key 的文字在界面上出现在哪」：一张 SVG/PNG/JPEG，加每个 Key 的一个矩形标记。
+UI 页面是「这个 Key 的文字在界面上出现在哪」：一张 SVG/PNG/JPEG，加每个 Key 的一个矩形标记。
 翻译编辑器用它在译文旁边显示界面，点标记跳到条目、点条目点亮标记。
 
 | Method | Path                                          | 权限                     | 说明                                                       |
@@ -164,7 +164,7 @@ public 路由不受影响，负载均衡仍可探测。
   `ui.root` 的 `namespace` 会被整棵树继承；节点上的 `text` 是默认 key，可用 `key` 覆盖；
   节点可带 `style`（颜色/圆角/字号字重/间距/阴影/对齐）。两层上限：嵌套 24 层、每个屏幕 600 个元素。
 
-`ui` 也是「从页面源码生成草图」的落点：`localehub mockup --page <file>` 读本地页面的 JSX/HTML，
+`ui` 也是「从页面源码生成 UI 页面」的落点：`localehub mockup --page <file>` 读本地页面的 JSX/HTML，
 生成这份描述并（加 `--confirm` 时）上传；`--page` 指到一整页 `.html` 时改走 `document`（并把本地素材内联进去），
 `--document` 可以强制。两个入口共用 `resolveMockupInput`，所以「两个都传」或「都没传」在两边得到同一句话。
 
@@ -173,7 +173,7 @@ public 路由不受影响，负载均衡仍可探测。
 `<script>` / 事件属性 / `<foreignObject>` 会被拒绝并说明原因。图片以 `image/svg+xml` 返回时
 带 `Content-Security-Policy: … sandbox` 与 `X-Content-Type-Options: nosniff`。
 
-指向平台尚未导入的 Key 的标记会照常保存并在响应里列为 `markers.unmatched` —— 草图通常画在导入
+指向平台尚未导入的 Key 的标记会照常保存并在响应里列为 `markers.unmatched` —— UI 页面通常画在导入
 之前，编辑器把它显示为「平台没有这个 Key」，而不是假装那处不存在。
 
 上传时还可以带 **`expect_no_images: true`**：这一屏确实没有任何图片/图标时，报告不再报 `NO_PICTURES`。

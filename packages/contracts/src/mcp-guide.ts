@@ -32,7 +32,7 @@ export const REMOTE_MCP_INSTRUCTIONS = [
   '· 一次调用放多少由**体积**决定，不由条数：批量写入有 60 秒预算（实测一个 10,400 条的项目按每批 800 全部通过），',
   '  真正的限制是请求体（仓库扫描上传 8 MB，MCP 传输 4 MB）。超时会整批回滚、不会写半份，减小批次重跑即可。',
   '',
-  '顺手（可选，但很值）：upload_screen_mockup 把译文放回界面里——编辑器的「界面草图」并排显示图与译文，点标记跳到译文。',
+  '顺手（可选，但很值）：upload_screen_mockup 把译文放回界面里——编辑器的「UI 页面」并排显示图与译文，点标记跳到译文。',
   '不管源码是什么技术栈（iOS / Android / Web / Flutter / RN），都先把它转成 HTML 传进来。两条路：',
   '**整页**（document，首选）平台不重画——它把那份 HTML 原样交给浏览器渲染，所以界面长什么样，图上就是什么样；',
   '**片段/描述**（html/ui）平台才解析元素树、自己排版画图。两条路都不用你画图、不用你量坐标；标签栏、开关、滑块、卡片都有对应写法，见教程。',
@@ -171,10 +171,10 @@ MCP 的导入每次都是一次**部分上传**：它只说「这几个文件是
 一次调用的开销只和**这一批的条数**有关，和项目已经有多大无关。（早先不是这样：计划里会为项目已有的每一条
 都生成一个条目，于是往一个有几千条的项目里导入 1 个 key 也会超时。已修。）
 
-## 6. 界面草图（可选，但很值）
+## 6. UI 页面（可选，但很值）
 
 译文缺的从来不是词，是**位置**：\`checkout.pay_now\` 到了译者手上没有按钮。\`upload_screen_mockup\` 把界面和译文
-并排显示在编辑器的「界面草图」里，点标记跳到译文、选译文点亮标记。
+并排显示在编辑器的「UI 页面」里，点标记跳到译文、选译文点亮标记。
 
 上游该走的路是**整页复刻**：把那一屏真实的 HTML 交上来（\`document\`，或 \`html\` 里直接放整页——带
 \`<!doctype html>\` 或 \`<html>\` 就算整页），平台不重画，编辑器在沙箱里照着渲染，看起来就是那个页面。
@@ -203,7 +203,7 @@ MCP 的导入每次都是一次**部分上传**：它只说「这几个文件是
  * project id, and an agent asked to "show the translators where this text lives" should not have to
  * read a `.strings` parsing tutorial to learn that it does not have to draw anything.
  */
-export const REMOTE_MCP_SKETCH_GUIDE = `# 把界面草图传上来：让每句译文有地方站
+export const REMOTE_MCP_SKETCH_GUIDE = `# 把UI 页面传上来：让每句译文有地方站
 
 ## 0. 一句话：整页传 \`document\`（复刻），片段传 \`html\`（重画）
 
@@ -241,7 +241,7 @@ class（含 Tailwind）/ inline style / \`<style>\` 规则还原。用在没有�
 {
   "project_id": "<uuid>",
   "name": "练习页",              // 屏幕的身份：同名再传 = 整体替换
-  "platform": "ios",            // 这张草图的端，默认 web
+  "platform": "ios",            // 这个 UI 页面的端，默认 web
   "locale": "zh-CN",            // 图里文字的语言，通常就是 sourceLocale
   "namespace": "Localizable",   // 可选；分表的项目必填，整棵树继承
   "html": "<div class='card'><h1>练习</h1><button data-key='exam.next'>下一步</button></div>"
@@ -424,7 +424,7 @@ class（含 Tailwind）/ inline style / \`<style>\` 规则还原。用在没有�
 | \`divider\` | 分隔线 | — |
 
 **页面上能看到多少字符串，树里就要有多少个**，一个不漏——漏掉的句子在编辑器里没有位置，译者看不出它属于哪儿。
-这就是「草图对应那个页面的所有 UI」的字面意思。列表里的每一行都要有节点：\`.map()\` 渲染出来的行是同一个模板，
+这就是「UI 页面就是这个页面的所有 UI」的字面意思。列表里的每一行都要有节点：\`.map()\` 渲染出来的行是同一个模板，
 按一行的文字建成一个节点就够，不要为 50 行数据画 50 个节点。
 
 **样式**：每个节点都可以带 \`style\`，取 \`color\` / \`background\` / \`border\` / \`borderWidth\` /
@@ -448,7 +448,7 @@ class（含 Tailwind）/ inline style / \`<style>\` 规则还原。用在没有�
 | Android | \`strings.xml\` 的 \`name="…"\` | 带 \`translatable="false"\` 的不要挂 |
 | RN / Web | i18n 表里的键（\`checkout.pay_now\`） | 层级表的层级不进 key，除非项目就是这么命名的 |
 - \`namespace\` 写在根节点上，整棵树继承；分表的项目（iOS 的 \`Localizable\` / \`InfoPlist\`）必须写。
-- 指向**尚未导入**的 key 不算错：返回值里以 \`markers.unmatched\` 报告，对应语言文件导入后标记自动对上，不用重传草图。
+- 指向**尚未导入**的 key 不算错：返回值里以 \`markers.unmatched\` 报告，对应语言文件导入后标记自动对上，不用重传 UI 页面。
   （report 里的 \`MISSING_KEYS\` 就是这同一批：**一个看返回字段、一个看报告条目**，不是两个问题。）
 - 表现上：返回值的 \`markers.matchedKeys\` 是**对上 key 的条数（按 key + namespace 去重）**——同一个 key 上挂两个标记只算 1。
 
@@ -493,8 +493,8 @@ key 按屏幕上的文字反查平台自己的译文（\`--keys\` 可以给一�
 
 ## 6. 与导入的先后
 
-两个方向都行：先传草图、key 还没导入（\`unmatched\` 会列出来）可以，导入后自动对上；先导入再传草图也可以，
-这时 \`matchedKeys\` 直接就是全部。草图不是导入的前置条件。
+两个方向都行：先传 UI 页面、key 还没导入（\`unmatched\` 会列出来）可以，导入后自动对上；先导入再传 UI 页面也可以，
+这时 \`matchedKeys\` 直接就是全部。UI 页面不是导入的前置条件。
 
 ## 7. 传完先看 \`report\`，再决定下一次怎么传
 
@@ -618,7 +618,7 @@ key 按屏幕上的文字反查平台自己的译文（\`--keys\` 可以给一�
 5. 从截图量的那些数，除过密度倍数了吗？（安卓是 dp，2× 截图宽 824、1080p 截图 2.625×）
 
 **一屏装不下时不要拉长画框。** 页面确实比一屏长（长列表、要滚动才看完）时，把下面的内容作为**另一帧**
-（\`frames\`）或**另一张草图**传：画框就是那一屏，拉长了平台会拒（\`FRAME_OVERFLOW\`），
+（\`frames\`）或**另一个 UI 页面**传：画框就是那一屏，拉长了平台会拒（\`FRAME_OVERFLOW\`），
 而"内容多高盒子就多高"说的是**每个盒子**别裁自己的文字，不是让画框长过一屏。（S2 与 S3 不冲突：S2 管盒子，S3 管画框。）
 
 五个都答「没有」才传。传完读 \`report\`：还有 finding 就照 \`advice\` 改，同名重传。
@@ -750,7 +750,7 @@ export function remoteSketchPrompt(args: { projectId?: string; page?: string } =
   const project = args.projectId ? `project_id=${args.projectId}` : '先调 list_projects 拿到 project_id';
   const page = args.page ?? '要画的那个页面';
   return [
-    `把 ${page} 的界面草图传到 LocaleHub（${project}），让译者在编辑器里对着界面看译文。`,
+    `把 ${page} 的UI 页面传到 LocaleHub（${project}），让译者在编辑器里对着界面看译文。`,
     '',
     '**交付标准 S1–S10 是硬性的，逐条对照；不满足就不要传。** 完整版在 localehub://screen-sketch-guide 的 §9。',
     '',
@@ -766,12 +766,12 @@ export function remoteSketchPrompt(args: { projectId?: string; page?: string } =
     '     否则**会被拒绝上传**（FRAME_OVERFLOW / CANVAS_MISMATCH）。数值从截图量的要先除以密度：安卓是 dp，412dp 的屏截图宽 824（2×）或 1080（2.625×），',
     '     按 1× 抄进去整页会放大一倍、第二屏之后的内容全在框外；',
     '   · 盒子高度按内容给足（**内容多高盒子就多高**）：不要 height:844px + overflow:hidden，排到盒子外面的内容在图上不存在（CLIPPED_BOX）；',
-    '     但**页面比一屏长时不要拉长画布**：把下面的内容作为另一帧（frames）或另一张草图传，画布就是那一屏；',
+    '     但**页面比一屏长时不要拉长画框**：把下面的内容作为另一帧（frames）或另一个 UI 页面传，画布就是那一屏；',
     '   · 每个元素 position:absolute + left/top/width/height，数值照抄工程，**不要用 flex/grid 让浏览器替你排**（FLOW_LAYOUT）；',
     '   · 每个盒子容得下它自己的文字，宁可写大一号，不许文字被截断或压到旁边的元素上；',
     '   · 每个要翻译的字符串挂 data-key，值是**工程里的真实 key**；数字、「3/5」「—」这类不翻译的不要挂；',
     '   · 图片和图标从工程资源目录取原件、内联成 data: URI，矢量照抄工程里的 path，**不要照着眼睛画一个像的**（DRAWN_SHAPES）。',
-    '4. 调 get_project 确认 sourceLocale 与 platforms；草图的 locale 用 sourceLocale，platform 用页面所属的端（ios / android / web），',
+    '4. 调 get_project 确认 sourceLocale 与 platforms；UI 页面的 locale 用 sourceLocale，platform 用页面所属的端（ios / android / web），',
     '   **别留默认的 web**——Flutter/RN 这种同一份源码能跑多端的，按 .localehub/config.yaml 里这个页面映射的端填（画布与标记解析都跟它走），',
     '   分表的项目还要给 namespace（iOS 的 Localizable / InfoPlist）。',
     '5. 调 upload_screen_mockup：整页传 document（首选）；只有一段代码时传 html 片段或 ui；',
@@ -782,7 +782,7 @@ export function remoteSketchPrompt(args: { projectId?: string; page?: string } =
     '   有没有内容被容器裁掉或者滚出画面？有没有文字被自己的盒子截断、或者压到别的元素上？',
     '   有没有该是图的地方是一个灰块或手画的形状？有没有元素跑到画框外面（框是 412×915 / 390×844 / 1280×800，不是你的窗口大小）？',
     '   从截图量的那些数，除过密度倍数了吗（安卓 dp vs 2×/2.625× 截图）？',
-    '7. 把返回值里的 markers.total / markers.matchedKeys / markers.unmatched 报给我：unmatched 说明这些 key 还没导入，先传草图没问题，导入后会自动对上。',
+    '7. 把返回值里的 markers.total / markers.matchedKeys / markers.unmatched 报给我：unmatched 说明这些 key 还没导入，先传 UI 页面没问题，导入后会自动对上。',
     '8. 读同一个返回值里的 report：它是平台看过这一页之后的结论（stats 里 pictures / shapes / positioned / flow / clipped 是页面上真实的数量，findings 每条带 advice）。',
     '   若调用直接以 isError 回来、消息以 FRAME_OVERFLOW（坐标出画框）或 CANVAS_MISMATCH（页面自带了别的画布）开头，',
     '   说明上传就被拒了，照消息里的尺寸与处数重画这一页，不用找 report。',

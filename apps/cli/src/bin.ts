@@ -298,7 +298,7 @@ async function main(): Promise<void> {
       }
       process.stdout.write(`  ${result.strings} 个字符串 → ${result.markers} 个标记\n`);
       for (const key of result.keys as string[]) process.stdout.write(`    ${key}\n`);
-      process.stdout.write(`  草图：${result.svgPath}\n`);
+      process.stdout.write(`  UI 页面：${result.svgPath}\n`);
       for (const warning of result.warnings as string[]) process.stdout.write(`  ⚠ ${warning}\n`);
       process.stdout.write(`${result.message}\n`);
       return;

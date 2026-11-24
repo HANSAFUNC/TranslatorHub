@@ -371,11 +371,11 @@ export const remoteToolSchemas = {
     platform: platformSchema
       .default('web')
       .describe(
-        '这张草图对应的端，默认 web。标记按 key + namespace 匹配，不按端；当项目的同名 key 存在于多个端时，优先取这个端的那一条，' +
+        '这个 UI 页面对应的端，默认 web。标记按 key + namespace 匹配，不按端；当项目的同名 key 存在于多个端时，优先取这个端的那一条，' +
           '取到别的端会在编辑器里标出来（「Key 在 web，不在 ios」）。',
       ),
     locale: localeTagSchema.describe(
-      '草图里文字用的语言，通常就是项目源语言。它只描述这张图，不参与 key 的身份。',
+      'UI 页面里文字用的语言，通常就是项目源语言。它只描述这张图，不参与 key 的身份。',
     ),
     /**
      * The other way to describe a screen: its elements, not its picture.
@@ -453,7 +453,7 @@ export const remoteToolSchemas = {
           '一帧一个状态，别把同一状态拆开——帧多到看不清时，挑真正影响译文的那几个。',
       ),
     ui: uiSpecSchema.optional().describe(
-      '界面描述：按元素描述页面，平台据此画出草图并自动计算每个标记的位置与大小——不需要你量坐标。' +
+      '界面描述：按元素描述页面，平台据此画出这个 UI 页面并自动计算每个标记的位置与大小——不需要你量坐标。' +
         'root 是一个树：screen 里放 text / button / input / card / row / image 等节点，节点上的 text 就是界面上显示的文字，' +
         '它同时是标记的默认 key（可用 key 覆盖）。**这是近似，不是复刻**：字体、渐变、阴影都是平台的，图标要靠内联 SVG，' +
         '所以只在拿不到整页 HTML、或手上本来就只有一段结构时才用它——有页面源码就传 document。五种输入（document / html / ui / frames / image_base64）只能传一种。',
@@ -462,7 +462,7 @@ export const remoteToolSchemas = {
       .string()
       .optional()
       .describe(
-        `草图本身，base64（可以带 data: 前缀）。支持 SVG / PNG / JPEG，解码后不超过 ${Math.round(MAX_MOCKUP_BYTES / 1024 / 1024)} MB。` +
+        `UI 页面本身，base64（可以带 data: 前缀）。支持 SVG / PNG / JPEG，解码后不超过 ${Math.round(MAX_MOCKUP_BYTES / 1024 / 1024)} MB。` +
           `整个请求（图片 + 标记的 text/note）共用 ${Math.round(MAX_MOCKUP_REQUEST_BYTES / 1024 / 1024)} MB 的传输上限，base64 会让图片占约 1.37 倍——超了整单会被拒。` +
           'SVG 最省事也最清晰，适合设计稿——但**不要用它照着印象画一张界面**：那样的线框图译者认不出是哪个页面，' +
           '平台会报 NO_PICTURES（手画的形状不算素材；DRAWN_SHAPES 只判整页复刻那条路）。真实界面优先传 document；' +
@@ -482,7 +482,7 @@ export const remoteToolSchemas = {
       .describe(
         '传 image_base64 时必填：每个标记指向界面上一个 key 的位置。坐标是**相对图片的比例 0~1**，不是像素：' +
           'x 是左边缘占宽的比例，y 是上边缘占高的比例，width/height 可选（省略就画一个点）。' +
-          'markers[].text 填图里显示的文字，编辑器可以据此提示「草图与平台原文不一致」。' +
+          'markers[].text 填图里显示的文字，编辑器可以据此提示「UI 页面与平台原文不一致」。' +
           '**传 ui 时不要传 markers**——平台会自己算，传了也不采用。',
       ),
     expect_no_images: z

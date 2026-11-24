@@ -89,3 +89,11 @@ if [ "$WEB" = 1 ]; then
   until curl -sf -o /dev/null http://localhost:3000/; do sleep 1; done
   echo "== web serving"
 fi
+
+# Every build retags the image and leaves the previous one untagged on disk, and nothing collects them:
+# at 1.7 GB a build, one afternoon of deploys reached the Docker VM's 58 GB. The symptom was not a build
+# failure — it was Postgres, which PANIC-loops on "could not write to file pg_logical/…: No space left on
+# device" during checkpoint and never reaches a consistent state, so every API call failed while
+# `docker ps` still showed the database "healthy".
+docker image prune -f >/dev/null
+echo "== dangling images pruned ($(docker system df --format '{{.Size}}' 2>/dev/null | head -1) in images)"

@@ -44,8 +44,8 @@
       "description": "质量"
     },
     {
-      "name": "界面草图",
-      "description": "界面草图"
+      "name": "UI 页面",
+      "description": "UI 页面"
     },
     {
       "name": "术语、记忆、AI、审计",
@@ -3930,7 +3930,7 @@
       "get": {
         "operationId": "Mockups_list",
         "tags": [
-          "界面草图"
+          "UI 页面"
         ],
         "summary": "GET /projects/{projectId}/mockups",
         "security": [
@@ -4028,7 +4028,7 @@
       "post": {
         "operationId": "Mockups_upload",
         "tags": [
-          "界面草图"
+          "UI 页面"
         ],
         "summary": "POST /projects/{projectId}/mockups",
         "security": [
@@ -4691,7 +4691,7 @@
       "delete": {
         "operationId": "Mockups_remove",
         "tags": [
-          "界面草图"
+          "UI 页面"
         ],
         "summary": "DELETE /projects/{projectId}/mockups/{mockupId}",
         "security": [
@@ -4756,7 +4756,7 @@
       "get": {
         "operationId": "Mockups_detail",
         "tags": [
-          "界面草图"
+          "UI 页面"
         ],
         "summary": "GET /projects/{projectId}/mockups/{mockupId}",
         "security": [
@@ -4831,7 +4831,7 @@
       "get": {
         "operationId": "Mockups_document",
         "tags": [
-          "界面草图"
+          "UI 页面"
         ],
         "summary": "GET /projects/{projectId}/mockups/{mockupId}/document",
         "security": [
@@ -4905,7 +4905,7 @@
       "get": {
         "operationId": "Mockups_image",
         "tags": [
-          "界面草图"
+          "UI 页面"
         ],
         "summary": "GET /projects/{projectId}/mockups/{mockupId}/image",
         "security": [

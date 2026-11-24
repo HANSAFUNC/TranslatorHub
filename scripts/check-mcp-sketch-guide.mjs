@@ -75,7 +75,7 @@ console.log('instructions, the sketch paragraph:');
 console.log(
   instructions
     .split('\n')
-    .filter((line) => /ui|草图|mockup/.test(line))
+    .filter((line) => /ui|UI 页面|mockup/.test(line))
     .map((line) => `  ${line}`)
     .join('\n'),
 );
@@ -215,7 +215,7 @@ function exampleFrom(guide_text) {
 const created = await call('/projects', {
   method: 'POST',
   token: session,
-  body: { name: `草图教程校验 ${Date.now().toString(36)}`, sourceLocale: 'zh-CN', locales: ['en-US'] },
+  body: { name: `UI 页面教程校验 ${Date.now().toString(36)}`, sourceLocale: 'zh-CN', locales: ['en-US'] },
 });
 if (created.status >= 300) throw new Error(`could not create the probe project: ${JSON.stringify(created.body)}`);
 const project = created.body.data;

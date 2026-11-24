@@ -486,7 +486,7 @@ export function ScreenMockupDialog({
           <div className="min-w-0">
             <DialogTitle className="flex items-center gap-2 text-base">
               <ImageIcon className="size-4" />
-              界面草图
+              UI 页面
             </DialogTitle>
             <DialogDescription className="truncate">
               {detail
@@ -495,11 +495,11 @@ export function ScreenMockupDialog({
                       ? ` · 整页复刻${isReplica && measured ? ` · ${measured.width}×${measured.height}` : ''}${
                           replicaFrames.length > 1 ? ` · ${replicaFrames.length} 个状态` : ''
                         }`
-                      : ` · 草图${detail.mockup.width ? ` ${detail.mockup.width}×${detail.mockup.height}` : ''}`
+                      : ` · UI 页面${detail.mockup.width ? ` ${detail.mockup.width}×${detail.mockup.height}` : ''}`
                   } · 更新于 ${timeAgo(detail.mockup.updatedAt)}`
                 : isReplica
                   ? '左侧是调用端上传的整页复刻（沙箱渲染，脚本不执行），右侧是对应译文；点标记或条目会互相跳转'
-                  : '左侧是调用端上传的界面草图，右侧是对应译文；点标记或条目会互相跳转'}
+                  : '左侧是调用端上传的UI 页面，右侧是对应译文；点标记或条目会互相跳转'}
             </DialogDescription>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -547,7 +547,7 @@ export function ScreenMockupDialog({
             the dialog says them out loud, with what to do about each. */}
         {detail?.mockup.report && !detail.mockup.report.clean ? (
           <div className="bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900 mx-4 mt-2 flex flex-col gap-1 rounded-md border px-3 py-2 text-xs">
-            <span className="font-medium">这张草图有 {detail.mockup.report.findings.length} 处可以改进</span>
+            <span className="font-medium">这个 UI 页面有 {detail.mockup.report.findings.length} 处可以改进</span>
             {detail.mockup.report.findings.map((finding) => (
               <div key={finding.code} className="flex flex-col gap-0.5">
                 <span>
@@ -564,10 +564,10 @@ export function ScreenMockupDialog({
           <div className="p-6">
             <EmptyState
               icon={<ImageIcon />}
-              title="这个项目还没有界面草图"
+              title="这个项目还没有UI 页面"
               description={
                 <>
-                  草图由能看见界面的一方上传：Agent 在仓库里画出界面（SVG 最省事），用 Remote MCP 的{' '}
+                  UI 页面由能看见界面的一方上传：Agent 在仓库里画出界面（SVG 最省事），用 Remote MCP 的{' '}
                   <span className="font-mono">upload_screen_mockup</span> 连同每个 Key 的位置一起传上来，
                   标出文案在界面上的位置。坐标是相对图片的比例（0~1），不是像素。
                 </>
@@ -676,7 +676,7 @@ export function ScreenMockupDialog({
                     className="absolute inset-0 h-full w-full rounded-md border-0 bg-white"
                   />
                 ) : imageUrl ? (
-                  <img src={imageUrl} alt={`${detail.mockup.name} 界面草图`} className="absolute inset-0 h-full w-full rounded-md" />
+                  <img src={imageUrl} alt={`${detail.mockup.name} UI 页面`} className="absolute inset-0 h-full w-full rounded-md" />
                 ) : (
                   <Skeleton className="absolute inset-0" />
                 )}
@@ -701,7 +701,7 @@ export function ScreenMockupDialog({
                       const badge = badgePlacements.get(key);
                       const title = `${marker.key}${marker.frame ? `
 状态：${marker.frame}` : ''}${marker.text ? `
-草图：${marker.text}` : ''}`;
+UI 页面：${marker.text}` : ''}`;
                       return (
                         <span key={key}>
                           {/* A bare outline: nothing is painted over the screen, so the control it
@@ -983,7 +983,7 @@ function MarkerRow({
           </div>
 
           {textDrift ? (
-            <div className="text-muted-foreground mt-1 text-xs">草图里写的是「{marker.text}」，与平台原文不一致</div>
+            <div className="text-muted-foreground mt-1 text-xs">UI 页面里写的是「{marker.text}」，与平台原文不一致</div>
           ) : null}
 
           {editing ? (
@@ -1084,7 +1084,7 @@ export function ScreenMockupButton({ count, onClick }: { count: number | null; o
   return (
     <Button variant="outline" onClick={onClick}>
       <Monitor />
-      界面草图
+      UI 页面
       {count ? <Badge variant="muted" className="ml-1 text-[10px]">{count}</Badge> : null}
     </Button>
   );

@@ -119,8 +119,8 @@ console.log('report:', setup.uploaded.report.stats, setup.uploaded.report.findin
 
 await send('Page.navigate', { url: `${WEB}/projects/${setup.project.id}/translations` });
 await waitFor(`location.pathname.includes('/translations') && document.readyState === 'complete'`, 'the navigation');
-await waitFor(`document.body.innerText.includes('界面草图')`, 'the editor', 45000);
-await evaluate(`(() => { [...document.querySelectorAll('button')].find((node) => node.textContent.includes('界面草图')).click(); return true; })()`);
+await waitFor(`document.body.innerText.includes('UI 页面')`, 'the editor', 45000);
+await evaluate(`(() => { [...document.querySelectorAll('button')].find((node) => node.textContent.includes('UI 页面')).click(); return true; })()`);
 await waitFor(`document.querySelector('[role=dialog] iframe') !== null`, 'the replica frame', 45000);
 await waitFor(`document.querySelector('[role=dialog] [data-marker]') !== null`, 'measured markers', 45000);
 await delay(1200);

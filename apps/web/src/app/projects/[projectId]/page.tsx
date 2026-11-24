@@ -431,7 +431,7 @@ export default function ProjectPage() {
             删除项目
           </CardTitle>
           <CardDescription>
-            连同这个项目的 Key、译文、界面草图和同步记录一起删除，<strong>无法撤销</strong>。仓库里的语言文件不受影响。
+            连同这个项目的 Key、译文、UI 页面和同步记录一起删除，<strong>无法撤销</strong>。仓库里的语言文件不受影响。
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center justify-between gap-3">
@@ -452,7 +452,7 @@ export default function ProjectPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>删除「{project?.name}」？</AlertDialogTitle>
             <AlertDialogDescription>
-              这个操作无法撤销：项目里的 Key、译文、界面草图和同步历史会一起消失。仓库里的语言文件不动。
+              这个操作无法撤销：项目里的 Key、译文、UI 页面和同步历史会一起消失。仓库里的语言文件不动。
               请输入项目名以确认。
             </AlertDialogDescription>
           </AlertDialogHeader>

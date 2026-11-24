@@ -22,6 +22,6 @@ export const REMOTE_TOOL_DESCRIPTIONS: Record<string, string> = {
   // The preferred input is the page itself, and saying otherwise here would contradict the tool's own
   // description and the guide. This line read 「传 ui 元素树，平台自己画图并算坐标」 for two rounds after
   // the replica path replaced it — nothing kept the two texts in step, so this one never moved.
-  upload_screen_mockup: '把界面草图与每个 key 的位置传给平台（首选整页 document，平台不重画、交给浏览器渲染）',
+  upload_screen_mockup: '把UI 页面与每个 key 的位置传给平台（首选整页 document，平台不重画、交给浏览器渲染）',
   mark_applied: '回报已审核译文已写进仓库，平台据此停止再次下发（需 translation.apply）',
 };

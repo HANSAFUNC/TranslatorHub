@@ -159,7 +159,7 @@ export function renderMockupSpec(spec: UiSpec): { image: DecodedMockupImage; mar
   if (!rendered.markers.length) {
     throw new LocaleHubError(
       ErrorCode.VALIDATION_ERROR,
-      'ui 描述里没有任何带文字的节点，画出来的草图没有可标记的 key。给 text / button / badge / input 节点填上文字。',
+      'ui 描述里没有任何带文字的节点，画出来的 UI 页面没有可标记的 key。给 text / button / badge / input 节点填上文字。',
       422,
     );
   }
@@ -175,7 +175,7 @@ export function renderMockupSpec(spec: UiSpec): { image: DecodedMockupImage; mar
   if (bytes.length > MAX_MOCKUP_BYTES) {
     throw new LocaleHubError(
       ErrorCode.VALIDATION_ERROR,
-      `根据 ui 描述生成的草图有 ${Math.round(bytes.length / 1024)} KB，超过 ${Math.round(MAX_MOCKUP_BYTES / 1024 / 1024)} MB 的图片上限。少画一些元素，或把屏幕拆开。`,
+      `根据 ui 描述生成的 UI 页面有 ${Math.round(bytes.length / 1024)} KB，超过 ${Math.round(MAX_MOCKUP_BYTES / 1024 / 1024)} MB 的图片上限。少画一些元素，或把屏幕拆开。`,
       413,
       { limitBytes: MAX_MOCKUP_BYTES, actualBytes: bytes.length },
     );
@@ -551,7 +551,7 @@ export function resolveMockupInput(input: {
   if (!hasImage) {
     throw new LocaleHubError(
       ErrorCode.VALIDATION_ERROR,
-      '缺少草图：传 ui（界面描述）、html（页面源码），或者 image_base64 + markers（自己画的图，坐标要自己量）。',
+      '缺少 UI 页面：传 ui（界面描述）、html（页面源码），或者 image_base64 + markers（自己画的图，坐标要自己量）。',
       422,
     );
   }

@@ -252,14 +252,17 @@ function McpOnboarding({
             `用 project_id=${first?.id ?? '<project_id>'} 搜索待审核的译文，逐条给出审核建议。`,
             `用 project_id=${first?.id ?? '<project_id>'} 读取 QA 问题，给出修复后的译文并写入草稿。`,
             `用 project_id=${first?.id ?? '<project_id>'} 列出平台已审核的变更，先给我看，不要写任何东西。`,
-            `用 project_id=${first?.id ?? '<project_id>'} 把 src/app/page.tsx 做成界面草图传上来（先读 localehub://screen-sketch-guide），让译者对着界面看译文。`,
+            `用 project_id=${first?.id ?? '<project_id>'} 把 src/app/page.tsx 做成UI 页面传上来（先读 localehub://screen-sketch-guide），让译者对着界面看译文。`,
           ].join('\n')}
         />
         <Alert variant="warning">
           <Terminal />
           <AlertTitle>Agent 只能提建议，不能替你批准</AlertTitle>
           <AlertDescription>
-            审核与发布需要人类的 REVIEWER / PROJECT_MANAGER 角色。平台会拒绝 Agent 的批准请求——这是设计，不是缺陷。
+            审核与发布要由人完成：默认签发的 Token 里没有{' '}
+            <code className="bg-muted rounded px-1 font-mono text-xs">translation.review</code>
+            ，所以 Agent 调审核工具会失败——不是平台拦它，是这个 scope 本来就没给。别为了让它能批就勾上，
+            要人批就到编辑器里批。
           </AlertDescription>
         </Alert>
       </Step>

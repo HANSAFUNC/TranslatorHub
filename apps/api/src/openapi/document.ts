@@ -84,7 +84,7 @@ const TAGS: Record<string, string> = {
   TranslationsController: '翻译与审核',
   SyncController: '同步',
   QaController: '质量',
-  MockupsController: '界面草图',
+  MockupsController: 'UI 页面',
   ContentController: '术语、记忆、AI、审计',
   PlatformController: 'Skill、发布、导入导出',
   TokensController: 'MCP Token',

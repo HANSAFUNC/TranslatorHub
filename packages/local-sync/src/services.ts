@@ -819,7 +819,7 @@ export class LocalSyncServices {
       skippedImages: pictures.skipped,
       warnings: [
         ...warnings,
-        ...pictures.skipped.map((entry) => `没有内联 ${entry.ref}：${entry.why}（草图里会是占位框）`),
+        ...pictures.skipped.map((entry) => `没有内联 ${entry.ref}：${entry.why}（UI 页面里会是占位框）`),
       ],
       report,
       uploaded: false as boolean,

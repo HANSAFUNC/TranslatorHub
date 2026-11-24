@@ -308,7 +308,7 @@ Token 推得上去、落不下来——这正是规格要的分离。
 | --- | --- | --- |
 | `instructions` | 两个方向别搞反、三条事后难改的规则、分批上限、dry-run 默认 | 客户端在调用任何工具前放进上下文 |
 | `localehub://import-guide` | 完整上传教程：调用形状、逐条规则、实测边界、推荐顺序、`.strings` 解析坑 | Agent 按需读取 |
-| `localehub://screen-sketch-guide` | 界面草图教程：五种输入怎么选、节点表、key/namespace 从哪来、画框与越界、上限、两件不可逆的事、CLI 从源码生成、**真机截图（`localehub mockup capture`）**，以及 §7「传完先看 `report`」的逐条对照表 | Agent 按需读取 |
+| `localehub://screen-sketch-guide` | UI 页面教程：五种输入怎么选、节点表、key/namespace 从哪来、画框与越界、上限、两件不可逆的事、CLI 从源码生成、**真机截图（`localehub mockup capture`）**，以及 §7「传完先看 `report`」的逐条对照表 | Agent 按需读取 |
 | `import-localization-files` 提示词 | 七步流程，供人在客户端里直接唤起 | 人（斜杠命令） |
 | `upload-screen-sketch` 提示词 | 九步流程（0–8）：整页复刻或页面转 HTML → 自检五个问题 → 上报标记 → 读 `report`，没还原到位就按 advice 改输入后重传 | 人（斜杠命令） |
 | `map-app-screens` 提示词 | 五步流程：先把 App 的每一屏与进入它的触发点列成表，再一屏一屏传 | 人（斜杠命令） |
@@ -363,13 +363,13 @@ Token 推得上去、落不下来——这正是规格要的分离。
 **痕迹留在三处**：返回值、`sync.push` 审计行（`localesAdded` / `localesMatched` / `platformsAdded`），以及
 CLI 的 `localehub scan` 输出（`expanded` 字段直接给中文说明）。「这个 zh-Hant 是哪来的」因此有答案。
 
-### 2.10 界面草图：Key 说不出的那一半
+### 2.10 UI 页面：Key 说不出的那一半
 
 `checkout.pay_now` 到了译者手上是三个词，没有按钮。key 的身份里（项目 + platform + namespace + key）
 没有任何位置信息，所以「这句话在界面上出现在哪、多大、旁边是什么」从来不在平台里——翻译编辑器只能
 并排显示原文和译文，剩下的靠译者想象。
 
-`upload_screen_mockup` 补的就是这一半：一张界面草图 + 每个 key 的文字在图上的位置。字段全长这样
+`upload_screen_mockup` 补的就是这一半：一张UI 页面 + 每个 key 的文字在图上的位置。字段全长这样
 （下面这份是**自己画图**那条路，也就是最后才用的一种；首选是交源码，见本节末尾）：
 
 ```jsonc
@@ -471,12 +471,12 @@ localehub mockup --page src/app/projects/page.tsx --name 项目列表 --confirm 
   viewBox），因为「小于 2 MB」不等于「画得出来」——200 KB 的纯色 PNG 可以是 30000×30000。
 - **只收 SVG / PNG / JPEG。** WebP 不是漏了：平台读不出它的尺寸，就不敢把「大小」这件事交给调用端
   的一面之词。
-- **SVG 里不能有 `<script>`、事件属性、`<foreignObject>` 或 `xml-stylesheet`。** 草图只需要图形和
+- **SVG 里不能有 `<script>`、事件属性、`<foreignObject>` 或 `xml-stylesheet`。** UI 页面只需要图形和
   文字。拒绝时列出要删的东西；此外图片以 `image/svg+xml` 返回时带 `sandbox` 的 CSP 与 `nosniff`，
   编辑器一律用 `<img>` 渲染——三层各自独立，任何一层单独失效都不会变成可执行的脚本。
-- **指向还没导入的 key 是正常的。** 草图常在读仓库的过程中就画好了，所以这类标记会**存下来**并在
+- **指向还没导入的 key 是正常的。** UI 页面常在读仓库的过程中就画好了，所以这类标记会**存下来**并在
   返回值 `markers.unmatched` 里报告，编辑器把它显示为「平台没有这个 Key」。之后
-  `import_translations` 把 key 导进来，标记自动对上译文，不需要重传草图——反过来（先要求 key 存在）
+  `import_translations` 把 key 导进来，标记自动对上译文，不需要重传 UI 页面——反过来（先要求 key 存在）
   等于要求先有译文才能画界面，把顺序完全弄反了。
 - **传完先看 `report`，它就是「引导工具」。** 返回值里带一份平台看过自己画出来的图之后的结论：
   `stats` 是图上真实的数量，`findings` 逐条给出问题与 `advice`。**这些失败不会报错**——上传成功，
@@ -494,7 +494,7 @@ localehub mockup --page src/app/projects/page.tsx --name 项目列表 --confirm 
   而不是假装没看见。
 
   为什么不做成按端严格匹配：一个界面只画一次，而同名 key 可以在多个端下各自存在、各自有译文（同一
-  产品的 iOS 版与 Web 版就是两套 key）。「这张图上有我的条目吗」按名字回答，「是哪一条」按草图声明的端
+  产品的 iOS 版与 Web 版就是两套 key）。「这张图上有我的条目吗」按名字回答，「是哪一条」按 UI 页面声明的端
   回答——两个答案都在返回值里（每个标记带上它解析到的端），解析到别的端会在编辑器里标出来，而不是
   悄悄算作匹配。
 
@@ -543,7 +543,7 @@ android 412×915、ios 390×844、web 1280×800（`UI_VIEWPORTS`）。传 `width
   （412dp 的屏，2× 截图宽 824px，1080p 截图则是 2.625×）。把截图像素当 dp 抄，整页放大一倍，
   第二屏之后的内容全部落到框外。实测：某工程 29 屏里有 19 屏越界（另一个 iOS 工程 32 屏 0 屏），
   最远的一屏声明了 412×4250 的画布，还有一屏登录页内容排到 1371px，渲染出来**是一片空白**。
-- 已经在库里的旧草图也会被重新核对（整页这条路上 `report` 每次读取都重算），所以"以前传上去的"同样会被标出来。
+- 已经在库里的旧 UI 页面也会被重新核对（整页这条路上 `report` 每次读取都重算），所以"以前传上去的"同样会被标出来。
 
 **`DRAWN_SHAPES` 是「还原度」那条线上最关键的一条。** 页面上有图形，但全是手写进标记里的 `<svg>` 形状，
 一张从工程里取的素材都没有——渲染出来就是线框图：灰条当文字、手画的形状当图标、头像是个色块。
@@ -554,7 +554,7 @@ android 412×915、ios 390×844、web 1280×800（`UI_VIEWPORTS`）。传 `width
 照抄数值、把图内联成 `data:` URI。`localehub mockup --page` 的**预览**（不加 `--confirm`）就会报这一条，
 所以上传方在传之前就知道自己交的是复刻还是示意图。
 
-编辑器那一侧：翻译编辑器标题栏的「界面草图」按钮打开一个 90% 视口的详情页，左边是按标记框住的界面，
+编辑器那一侧：翻译编辑器标题栏的「UI 页面」按钮打开一个 90% 视口的详情页，左边是按标记框住的界面，
 右边是该语言下的同一批条目，**两边双向联动**（点标记跳到条目、点条目点亮标记），编号是它们之间的暗号。
 标记是**红色细框**，只描边不填色——不会盖住它标的那行字；编号画在框**外面**的红圈里，并且尽量避开其它编号，所以一屏标记也不会糊成一片。译文还是空的那几条，编号改成琥珀色，扫一遍就知道哪几处还没翻。
 
@@ -563,9 +563,9 @@ android 412×915、ios 390×844、web 1280×800（`UI_VIEWPORTS`）。传 `width
 `localehub mockup check <file.html>` 跑的是**平台同一套规则**（同一个分析器），不写文件、不上传，有 warning 级
 finding 就退出码非零——可以在提交前或 CI 里卡住「本地过、平台不过」。传上去之后的 `report` 是同一份结果。
 
-### 草图上就能改译文，也能让 AI 起草
+### 在 UI 页面上就能改译文，也能让 AI 起草
 
-草图的每一行有两个动作：**编辑**（就地改，保存走编辑器自己那条 `POST /translations/:entryId/draft`）和
+UI 页面的每一行有两个动作：**编辑**（就地改，保存走编辑器自己那条 `POST /translations/:entryId/draft`）和
 **AI 翻译**（走 `POST /projects/:id/ai/translate`，与 MCP 的 `translate_entries` 是同一个服务、同一个 provider、
 同一套术语库，写进去的永远是 **DRAFT**——AI 不能自己通过审核）。两者都不离开这个页面。
 
@@ -640,7 +640,7 @@ Agent 这一侧：
 
 > 仓库里的落点固定是 `.localehub/`：`config.yaml` 与 `mockups/`（图 + 说明）**要提交**，`state.json` /
 > `backups/` / `cache/` / `patches/` 已 gitignore。`create_project` 的返回里直接告诉 Agent 提交 config；
-> 只用 MCP 的 Agent 同样应当把上传的草图写进 `mockups/` 再提交——共享系统上的改动要在仓库里看得见。
+> 只用 MCP 的 Agent 同样应当把上传的 UI 页面写进 `mockups/` 再提交——共享系统上的改动要在仓库里看得见。
 
 读写开发者仓库的 14 个动作都在 CLI 里，`localehub <command>`。它们与 MCP 无关，也不需要
 MCP：Agent 可以用 Bash 调用，CI 可以直接调用，人也可以在终端里调用。

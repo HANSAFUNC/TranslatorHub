@@ -308,7 +308,7 @@ export default function ProjectsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>删除「{target?.name}」？</AlertDialogTitle>
             <AlertDialogDescription>
-              这个操作无法撤销：项目里的 Key、译文、界面草图和同步历史会一起消失。仓库里的语言文件不动。
+              这个操作无法撤销：项目里的 Key、译文、UI 页面和同步历史会一起消失。仓库里的语言文件不动。
               请输入项目名以确认。
             </AlertDialogDescription>
           </AlertDialogHeader>

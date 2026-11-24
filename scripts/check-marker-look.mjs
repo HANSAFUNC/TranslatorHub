@@ -113,8 +113,8 @@ if (setup.error || !setup.ok) throw new Error('setup failed: ' + (setup.error ??
 
 await send('Page.navigate', { url: `${WEB}/projects/${setup.project.id}/translations` });
 await waitFor(`location.pathname.includes('/translations') && document.readyState === 'complete'`, 'the navigation');
-await waitFor(`document.body.innerText.includes('界面草图')`, 'the editor', 45000);
-await evaluate(`(() => { [...document.querySelectorAll('button')].find((node) => node.textContent.includes('界面草图')).click(); return true; })()`);
+await waitFor(`document.body.innerText.includes('UI 页面')`, 'the editor', 45000);
+await evaluate(`(() => { [...document.querySelectorAll('button')].find((node) => node.textContent.includes('UI 页面')).click(); return true; })()`);
 await waitFor(`document.querySelector('[role=dialog] [data-badge]') !== null`, 'the badges', 45000);
 await delay(1200);
 
@@ -199,8 +199,8 @@ await evaluate(`(async () => {
 })()`);
 await send('Page.navigate', { url: `${WEB}/projects/${setup.project.id}/translations` });
 await waitFor(`location.pathname.includes('/translations') && document.readyState === 'complete'`, 'the navigation');
-await waitFor(`document.body.innerText.includes('界面草图')`, 'the editor', 45000);
-await evaluate(`(() => { [...document.querySelectorAll('button')].find((node) => node.textContent.includes('界面草图')).click(); return true; })()`);
+await waitFor(`document.body.innerText.includes('UI 页面')`, 'the editor', 45000);
+await evaluate(`(() => { [...document.querySelectorAll('button')].find((node) => node.textContent.includes('UI 页面')).click(); return true; })()`);
 await waitFor(`document.querySelector('[role=dialog] [data-badge]') !== null`, 'the badges', 45000);
 await delay(1200);
 const drawnLook = await evaluate(LOOK_EXPRESSION);

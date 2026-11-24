@@ -1306,9 +1306,9 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
                 .slice(0, 5)
                 .map((row) => (row.namespace ? `${row.namespace}:${row.key}` : row.key))
                 .join('、')}${result.markers.unmatched.length > 5 ? ' 等' : ''}。`,
-              '用 import_translations 把对应的语言文件导入后，这些标记会自动对上译文，不需要重新上传草图。',
+              '用 import_translations 把对应的语言文件导入后，这些标记会自动对上译文，不需要重新上传 UI 页面。',
             ]
-          : ['草图已保存。在翻译编辑器里点「界面草图」可以并排查看，点标记或条目会互相跳转。']),
+          : ['UI 页面已保存。在翻译编辑器里点「UI 页面」可以并排查看，点标记或条目会互相跳转。']),
         ],
       };
     },
@@ -1454,7 +1454,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
     {
       title: 'Upload a screen sketch',
       description:
-        '把一个页面的界面草图传到 LocaleHub（整页 HTML → 预览 → 上传；平台不重画，编辑器照浏览器的方式渲染），让译者在编辑器里对着界面看译文',
+        '把一个页面的UI 页面传到 LocaleHub（整页 HTML → 预览 → 上传；平台不重画，编辑器照浏览器的方式渲染），让译者在编辑器里对着界面看译文',
       argsSchema: {
         projectId: z.string().optional().describe('目标项目 id；省略则先调 list_projects'),
         page: z.string().optional().describe('要画的那个页面，例如 apps/web/src/app/projects/page.tsx'),

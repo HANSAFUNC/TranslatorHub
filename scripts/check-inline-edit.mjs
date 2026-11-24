@@ -80,8 +80,8 @@ console.log('original value:', JSON.stringify(setup.found.value.slice(0, 40)));
 // ---- open the editor, then the sketch, and edit the row in place --------------
 await send('Page.navigate', { url: `${WEB}/projects/${setup.projectId}/translations` });
 await waitFor("location.pathname.includes('/translations') && document.readyState === 'complete'", 'the editor');
-await waitFor("document.body.innerText.includes('界面草图')", 'the editor toolbar');
-await evaluate(`(() => { [...document.querySelectorAll('button')].find((n) => n.textContent.includes('界面草图')).click(); return true; })()`);
+await waitFor("document.body.innerText.includes('UI 页面')", 'the editor toolbar');
+await evaluate(`(() => { [...document.querySelectorAll('button')].find((n) => n.textContent.includes('UI 页面')).click(); return true; })()`);
 await waitFor("document.querySelector('[role=dialog] [data-marker-edit]') !== null", 'an editable row', 60000);
 const urlBefore = await evaluate('location.href');
 
