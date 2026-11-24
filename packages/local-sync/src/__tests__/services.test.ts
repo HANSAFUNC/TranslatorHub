@@ -14,7 +14,7 @@ import { LocalSyncServices } from '../services';
  * file's address regardless. These tests pin it where it now lives: `config()`.
  */
 
-function workspaceWithConfig(): string {
+function workspaceWithConfig(platforms = '[web]'): string {
   const root = mkdtempSync(join(tmpdir(), 'localehub-local-'));
   mkdirSync(join(root, '.localehub'), { recursive: true });
   writeFileSync(
@@ -25,7 +25,7 @@ function workspaceWithConfig(): string {
       '  id: "00000000-0000-0000-0000-000000000001"',
       '  name: "Fixture"',
       '  sourceLocale: "en-US"',
-      '  platforms: [web]',
+      `  platforms: ${platforms}`,
       'localehub:',
       '  apiUrl: "http://config-file.invalid/api/v1"',
       '  tokenEnv: "LOCALEHUB_TOKEN"',
@@ -175,12 +175,65 @@ describe('localehub mockup check', () => {
       ].join('\n'),
     );
     const services = new LocalSyncServices({ cwd: root, env: { LOCALEHUB_TOKEN: 't' } });
-    const checked = await services.checkScreenMockup({ page: 'screen.html' });
+    // The page is drawn for an iPhone frame, so the check is told which platform it is for: the frame
+    // comes from the platform, and measuring a 390×844 page against a web canvas is the mismatch this
+    // check exists to find.
+    const checked = await services.checkScreenMockup({ page: 'screen.html', platform: 'ios' });
 
     expect(checked.passed).toBe(true);
     expect(checked.blocking).toEqual([]);
     // A check is a read: nothing lands in the workspace for someone to commit by accident.
     expect(() => readFileSync(join(root, '.localehub', 'mockups', 'screen.html'), 'utf8')).toThrow();
+  });
+
+  it('blocks a page laid out for another canvas, the way the platform refuses it', async () => {
+    // The local check used to be quiet about exactly the defect the platform refuses outright: it
+    // called the analyzer without a frame, so a page drawn at 2× (the Android dp/screenshot mix-up)
+    // passed here and came back a 422 from the upload — "本地过、平台不过" from a command whose help
+    // promises the same analyzer.
+    const root = workspaceWithPage(
+      [
+        '<!doctype html><html><head><style>',
+        '.screen{position:relative;width:412px;height:915px}',
+        '.row{position:absolute;left:428px;top:100px;width:412px;height:44px}',
+        '</style></head><body><div class="screen">',
+        '<span class="row" data-key="home.title">我的</span></div></body></html>',
+      ].join('\n'),
+    );
+    const services = new LocalSyncServices({ cwd: root, env: { LOCALEHUB_TOKEN: 't' } });
+    const checked = await services.checkScreenMockup({ page: 'screen.html', platform: 'android' });
+
+    expect(checked.passed).toBe(false);
+    expect(checked.blocking).toContain('FRAME_OVERFLOW');
+    // The message carries the numbers, so a caller can fix it here instead of learning it from a 422.
+    expect(String(checked.message)).toContain('412×915');
+  });
+
+  it('takes the frame from the project when the caller names no platform', async () => {
+    // The gap the frame check was meant to close, reopened one level down: `--platform` is optional,
+    // and when it is omitted both the platform and this check fall back to the project's first
+    // platform. Reading the raw flag instead of that resolved value measured an Android project
+    // against the *web* canvas — the page below is laid out for a 1280-wide web screen, so it came
+    // back clean here and then the upload refused it. Same command, same project, opposite verdicts.
+    const root = workspaceWithConfig('[android]');
+    writeFileSync(
+      join(root, 'screen.html'),
+      [
+        '<!doctype html><html><head><style>',
+        '.screen{position:relative;width:1280px;height:800px}',
+        '.row{position:absolute;left:1200px;top:100px;width:400px;height:44px}',
+        '</style></head><body><div class="screen">',
+        '<span class="row" data-key="home.title">我的</span></div></body></html>',
+      ].join('\n'),
+      'utf8',
+    );
+    const services = new LocalSyncServices({ cwd: root, env: { LOCALEHUB_TOKEN: 't' } });
+    const checked = await services.checkScreenMockup({ page: 'screen.html' });
+
+    // The project is Android, so the frame is 412×915 — and this page is drawn for neither.
+    expect(checked.passed).toBe(false);
+    expect(checked.blocking).toContain('FRAME_OVERFLOW');
+    expect(String(checked.message)).toContain('412×915');
   });
 });
 

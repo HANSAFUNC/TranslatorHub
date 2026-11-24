@@ -6,6 +6,7 @@ import {
   buildUiSpec,
   comparePlaceholders,
   contentHash,
+  defaultViewport,
   renderUiSketch,
   type ApplyReportRequest,
   type ConflictRecord,
@@ -656,6 +657,16 @@ export class LocalSyncServices {
           missing: false,
         })),
         legend,
+        // The frame the platform will render this page into, measured here too.
+        //
+        // Without it the local check was quiet about the one defect the platform refuses outright: a
+        // page laid out for another canvas passed `localehub mockup check` and then came back a 422 —
+        // "本地过、平台不过", from a command whose help promises the same analyzer.
+        //
+        // `platform`, not `input.platform`: the platform checks against the call's resolved platform
+        // (the project's first when the caller named none), so measuring against the raw flag here
+        // would reopen exactly that gap for every project that is not `web`.
+        frame: defaultViewport(platform),
       });
       return summarise('document', ['默认'], report);
     }
