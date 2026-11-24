@@ -461,6 +461,8 @@ localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表 -
 | \`DRAWN_SHAPES\` | 整页的图全是手画的形状，一张真素材都没有 → 看着像线框图 | 从工程里取真素材内联（见 §9）：iOS 的 \`Assets.xcassets\`、Android 的 \`res/drawable*\`、Flutter 的 \`assets/\`；矢量图标要照抄工程里的 \`path\`，不要自己画一个像的 |
 | \`FLOW_LAYOUT\` | 整页用 flex/grid 排的，没有一处绝对定位 → 浏览器替你重排了一遍 | 每个元素按工程给的坐标写成 \`position:absolute\` + \`left/top/width/height\`（见 §9 第一条） |
 | \`CLIPPED_BOX\` | 固定高度 + overflow:hidden，排到盒子外面的内容**图上不存在** | 内容多高盒子就多高，不要收口（§9 S2）；这一条丢掉的文案后面找不回来 |
+| \`FRAME_OVERFLOW\` | 有坐标落在画框外（android 412×915 / ios 390×844 / web 1280×800）→ 框外的内容编辑器和图里都没有 | 按画框重画（§9 S1/S3）。最常见的成因是单位：安卓的数值是 **dp**，同一屏的截图却是 **2× 或 2.625×**（412dp 的屏截图宽 824 或 1080px），把截图像素当 dp 抄就会整屏放大 ~2 倍 |
+| \`CANVAS_MISMATCH\` | 页面自己声明了另一块画布（如 \`.screen{width:412px;height:1371px}\`） | 那份样式的 width/height 改成平台的画框尺寸；平台按端固定画框，不会跟着页面的声明走 |
 
 只有这些：报告只说自己**看得见**的事，不会猜。自己传 \`image_base64\` + \`markers\` 时，平台手里只有那张图，
 没有图上元素的坐标，所以判断不了圈得准不准——片段与 \`ui\` 由平台排版时算，整页由浏览器渲染时实测，
@@ -506,9 +508,15 @@ localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表 -
 **画布**
 
 - **S1** 一屏一帧；画布尺寸 = 那一屏（ios 390×844、android 412×915、web 1280×800）。
+  **画框由平台按 \`platform\` 固定，上传方改不了**（传 \`width\`/\`height\` 也不会改它）。所以数值必须先换算到
+  画框的坐标系里再写：安卓的 \`layout_*\`/\`padding\` 是 **dp**，如果数值是从截图量的，先**除以截图倍数**
+  （412dp 的屏，2× 截图宽 824px、2.625× 截图宽 1080px）——按 1× 抄进去，整页会放大 2 倍，
+  第 2 屏之后的内容全部落到框外。（\`FRAME_OVERFLOW\`、\`CANVAS_MISMATCH\`）
 - **S2 画布不许裁掉内容。** 内容多高，盒子就多高；不要用 \`height:844px\` + \`overflow:hidden\` 收口。
   被裁掉的文案**在渲染之前就没了**，图和列表都找不回来。（\`CLIPPED_BOX\`）
-- **S3** 每一帧的内容都在画布之内，没有元素被排到画面之外。
+- **S3** 每一帧的内容都在画布之内，没有元素被排到画面之外。平台按坐标核对（绝对定位的
+  \`left/top/width/height\`），越界直接**拒绝上传**：框外的东西在编辑器和图里都不存在，收下来等于给你一张
+  缺角的图。（\`FRAME_OVERFLOW\`）
 
 **布局**
 
@@ -543,7 +551,7 @@ localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表 -
 | --- | --- | --- | --- |
 | iOS（SwiftUI） | \`.padding(16)\`、\`.frame(width:height:)\`、\`VStack(spacing:12)\`、\`HStack\`、\`Spacer()\` | \`Assets.xcassets/*.imageset\`（1x/2x/3x 的 PNG，或 PDF 矢量） | \`Assets.xcassets\` 里的 colorset、\`.font(.system(size:17, weight:.semibold))\` |
 | iOS（UIKit / storyboard） | storyboard/XIB 里每个 \`<constraint firstItem=… secondItem=… constant=…>\`、\`frame\`、\`UIStackView\` 的 \`spacing\`/\`layoutMargins\`；代码里的 \`NSLayoutConstraint\`/\`anchor\` | 同上 | \`UIColor(named:)\`、\`UIFont\` 的字号字重 |
-| Android | \`layout_width\`/\`layout_height\`、\`layout_constraint*\`、\`layout_margin*\`、\`padding*\`、\`textSize\`（sp）、\`app:layout_constraintGuide\` | \`res/drawable*\`（**vector drawable 的 \`<path android:pathData>\` 可以直接变成内联 \`<svg><path d>\`**）、\`res/mipmap*\` | \`res/values/colors.xml\`、\`res/values/dimens.xml\`、\`res/values/styles.xml\`（主题里的 \`colorPrimary\` 等） |
+| Android | \`layout_width\`/\`layout_height\`、\`layout_constraint*\`、\`layout_margin*\`、\`padding*\`、\`textSize\`（sp）、\`app:layout_constraintGuide\`（**这些是 dp/sp，不是截图像素；从截图上量的数要先除以密度**） | \`res/drawable*\`（**vector drawable 的 \`<path android:pathData>\` 可以直接变成内联 \`<svg><path d>\`**）、\`res/mipmap*\` | \`res/values/colors.xml\`、\`res/values/dimens.xml\`、\`res/values/styles.xml\`（主题里的 \`colorPrimary\` 等） |
 | Flutter | \`Container(padding:, margin:, width:, height:)\`、\`SizedBox\`、\`Row/Column\` 的 \`spacing\`、\`EdgeInsets\` 的数值 | \`assets/\`（pubspec.yaml 里声明的那些） | \`Theme.of(context)\` 的 \`colorScheme\`/\`textTheme\`、\`TextStyle(fontSize:)\` |
 | React Native | \`StyleSheet.create({…})\` 里的数值、\`flexDirection\`、\`gap\` | \`Image source={require('./x.png')}\` 指向的文件 | 样式表里的色值、\`fontSize\` |
 | Web（React/Vue/…） | 组件源码与 CSS 本身 | 构建产物里的同目录文件 | 同上；\`localehub mockup --page <构建好的页面>\` 会自动内联样式表、\`<img>\`、\`srcset\` 与 CSS \`url()\` |

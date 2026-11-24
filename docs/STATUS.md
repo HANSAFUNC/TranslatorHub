@@ -2625,6 +2625,55 @@ slug**，第二次创建返回 `CONFLICT`「A record with these values already e
 - **MCP 的 `import_translations` 仍把文件记成 `format: 'json'`**（`apps/mcp-remote/src/server.ts:344`）：ARB 确实是 JSON，所以这条记录不算错到底，但丢了「这是 Flutter 的 ARB」。改法是让 mcp-remote 依赖 `@localehub/format-adapters` 并用 `formatForExtension(path)`——但那要给 mcp-remote 加依赖、并像 bullmq 那样在 `docker/local-layer.Dockerfile` 补一行 symlink 拷贝（layer 构建不跑 pnpm install），代价不成比例；先记在这里。CLI 那条路（scan/push/apply）的格式来自 config，不受影响。
 - 途中记录：`local-sync/src/apply.ts:178` 有一处空转的 `...(item.identity.platform === 'web' ? {} : {})`（加不加都
   是空对象），是历史残留，不影响行为，留着没动。
+### 1.79 安卓还原度低：原因是画框没被核对；现在按端固定画框并拒绝越界上传
+
+用户问「为什么安卓的还原度这么低」，并要求「做 1（越界核对），并且界面应该固定手机尺寸、给他限制」。
+
+**先说诊断**（用他自己的两个工程量的，不是猜的）。这些草图是 `kind: document`：平台**不重画**，把上传的整页 HTML
+存下来、在沙箱里原样渲染——所以"还原度"= 那份 HTML 的质量，而平台此前**从没拿它和画框核对过**。数据：
+
+| 指标 | 高研院Andriod（29 屏） | 高研院iOS（32 屏） |
+| --- | --- | --- |
+| 坐标越出设备框 | **19/29** | **0/32** |
+| 文档声明的画布 ≠ 渲染画框 | 19/29 | 0/32 |
+| 平均字号档数/屏 | 2.1 | 3.4 |
+| `<img>` 个数 / 平均体积 | 85 / 57 kB | 137 / 93 kB |
+
+三个机制，都有实例：**① 单位**——安卓数值是 dp，截图是 2×/2.625×，按 1× 抄就整屏放大（`密码登录` 内容排到
+1371px，渲染出来**一片空白**；`隐私设置` 声明 412×4250）；**② 观感来自 theme**——Material 的颜色/字体/elevation
+在 `styles.xml` 与 `?attr/...` 里，`layout/*.xml` 拿不到，代理就自己填灰块（`订单详情` 21 个盒子基本是灰白块）；
+**③ 排印与素材更薄**（上表）。而平台**一条都没拦**：报告的检查是结构性的（有没有手画形状、素材是否内联、
+marker 是否对上 key、CSS 里有没有 overflow:hidden+固定高度），**没有画布越界检查、也没有与真图比对**——
+渲染成空白的那一屏，报告写的是 `clean: true / clipped: 0`。指南 §9 的 **S3 早就写着"内容必须在画布之内"，
+但代码里没有任何东西执行它**，这就是它能一直复现的原因。
+
+**做了什么**
+
+| 位置 | 内容 |
+| --- | --- |
+| `contracts/mockup-document.ts` | `documentFrameFit(document, frame)`：量绝对定位盒子的 right/bottom 边界、越界个数、最远倍数、以及页面自己声明的画布 |
+| `contracts/mockup-report.ts` | 两个新 finding：`FRAME_OVERFLOW`、`CANVAS_MISMATCH`（带处数、最远 px、倍数与"dp vs 截图倍数"的成因）；`stats` 加 `frameWidth/frameHeight/frameOverflow/frameRatio/measuredBoxes/unmeasuredBoxes` |
+| `domain/mockups.ts` | 上传即核对：越界或画布不符 **422 拒绝**（带 frame/overflow/ratio/measuredBoxes 细节）。画框本来就由 `defaultViewport(platform)` 定、调用方传 `width/height` 也改不了——现在这句话有牙了 |
+| `api/mockups.service.ts` | 整页草图的 `report` 每次读取都重算（原有设计），所以**已上传的旧图一并被标出**，不需要回填 |
+| `contracts/mcp-guide.ts` | 指南里补两条 finding 的对照行；S1 写明"画框由 platform 固定、上传方改不了"并写清 dp 换算；S3 写明越界会被拒；§9 的 Android 行标注"这些是 dp/sp，不是截图像素" |
+
+**验证**
+
+| 证据 | 结果 |
+| --- | --- |
+| 单元 | 549 通过（+10：`documentFrameFit` 的四种情形 + 两个新 code 的可达性场景 + 上传拒绝的 5 条） |
+| 集成 | 191 通过 |
+| 平台复核（部署后读接口，整页草图每次重算） | **高研院Andriod 26/29 屏被标出**（19 屏越界、7 屏画布声明 412×923 与 412×915 不符）；**高研院iOS 0/32**——没有误报 |
+| 最严重的几屏 | 隐私设置 27 处越界/4.64 倍、密码登录 24 处（渲染为空白）、每日学习 7 处/2.04 倍、绑定手机号 14 处/1.24 倍 |
+| lint / typecheck | 全绿 |
+
+**踩到的坑（记下来，因为它差点变成一个不报错的性能事故）**：第一版用 `([^{}<>]*)\{([^{}]*)\}` 扫整页找 CSS 块，
+在一份带内联图片的 424 kB 上传上退化到 **64 秒**（二次扫描），而整页的重新分析跑在 5 秒租约的租户事务里——
+线上直接 500（`Transaction already closed`）。改成按 `}` 切（`documentAssets` 一直就是这么读的）后回到 **1 ms**。
+
+**没做的**：真机/模拟器取真值（`uiautomator dump` + `screencap`，把真图当背景、bounds 当 marker 锚点）是还原度的
+根治办法，但它是新能力，等用户点头；`隐私设置` 那种 4.64 倍的屏，靠这次的拒绝只能拦住"再传一次"，
+已经传上去的那张仍要看真图才能修。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

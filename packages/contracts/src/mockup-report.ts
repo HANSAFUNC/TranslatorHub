@@ -18,7 +18,7 @@
  * intend — and neither invents a finding it cannot see in the artefact itself.
  */
 
-import { documentAssets, framesAreCopies, markupComponents } from './mockup-document';
+import { documentAssets, documentFrameFit, framesAreCopies, markupComponents } from './mockup-document';
 
 /**
  * What the caller asserts about the screen it is uploading.
@@ -80,6 +80,10 @@ export const FINDING_CODES = [
   'DRAWN_SHAPES',
   'FLOW_LAYOUT',
   'CLIPPED_BOX',
+  // The frame. A replica is rendered into one fixed phone size per platform, so a page laid out for a
+  // different canvas arrives clipped — or, past a whole screen's worth, arrives blank.
+  'FRAME_OVERFLOW',
+  'CANVAS_MISMATCH',
 ] as const;
 
 export type FindingCode = (typeof FINDING_CODES)[number];
@@ -125,6 +129,20 @@ export interface MockupReportStats {
   flow?: number;
   /** Boxes with a fixed height and `overflow: hidden`: whatever does not fit them is not in the picture. */
   clipped?: number;
+  /**
+   * The fixed frame the page is rendered into, and how far its own coordinates run past it.
+   *
+   * `frameOverflow` counts boxes whose right or bottom edge is outside; `frameRatio` is the worst edge
+   * as a multiple of the frame (1 = fits, 2.04 = laid out for a canvas twice as wide). Both are absent
+   * for a drawn sketch, whose canvas grows to its content by design.
+   */
+  frameWidth?: number;
+  frameHeight?: number;
+  frameOverflow?: number;
+  frameRatio?: number;
+  /** Boxes the checker could measure, and boxes whose position it could not (see `documentFrameFit`). */
+  measuredBoxes?: number;
+  unmeasuredBoxes?: number;
   /**
    * Frames that actually carry markers, alongside `frames` (the frames the platform was sent).
    *
@@ -344,9 +362,15 @@ export function analyzeDocument(input: {
   legend?: readonly { name: string }[];
   /** What the caller asserts about this page. See `MockupExpectations`. */
   expectations?: MockupExpectations;
+  /**
+   * The frame this page is rendered into. Absent means the caller had no frame to measure against, and
+   * then nothing is said about the fit — a finding invented without the frame would be a guess.
+   */
+  frame?: { width: number; height: number };
 }): MockupReport {
   const findings: MockupFinding[] = [];
   const assets = documentAssets({ frames: [...input.document.frames] });
+  const fit = input.frame ? documentFrameFit(input.document, input.frame) : null;
   const keys = new Set(input.markers.map((marker) => `${marker.namespace ?? ''}\u0000${marker.key}`)).size;
   const missingKeys = [...new Set(input.markers.filter((marker) => marker.missing).map((marker) => marker.key))];
   // Read from the markup, not from the legend. The legend is built out of the *markers*, so a component
@@ -379,6 +403,39 @@ export function analyzeDocument(input: {
         '（localehub mockup --page 会自动内联：<link rel=stylesheet>、<img src>、srcset 与 CSS url()），' +
         '或者换成能公开访问的 https 地址。平台自己不去取图——不会替调用端联网。',
     });
+  }
+
+  if (fit && input.frame) {
+    const frame = `${input.frame.width}×${input.frame.height}`;
+    const overrun = fit.pastRight + fit.pastBottom;
+    if (overrun > 0) {
+      // The edge that overflowed, not the furthest edge overall: a box sitting inside the frame at
+      // its bottom edge would otherwise be reported as the thing that ran over.
+      const worst = Math.round(Math.max(fit.pastRight > 0 ? fit.maxRight : 0, fit.pastBottom > 0 ? fit.maxBottom : 0));
+      const ratio = fit.ratio >= 1.5 ? `，最远到 ${worst}px（${fit.ratio} 倍）` : '';
+      findings.push({
+        code: 'FRAME_OVERFLOW',
+        severity: 'warning',
+        count: overrun,
+        title: `${overrun} 处坐标落在 ${frame} 的画框外${ratio}`,
+        advice:
+          `这一页要画在 ${frame} 的框里：画框由 \`platform\` 决定（复刻的是"一屏"），上传方改不了。` +
+          '落到框外的内容在编辑器和图里都不存在。最常见的来源是单位搞混：安卓的布局数值是 dp，' +
+          `而同一屏的截图通常是 2× 或 2.625×（${input.frame.width}dp 的屏，2× 截图宽 ` +
+          `${input.frame.width * 2}px，1080p 的截图则是 2.625×）——把截图像素当 dp 抄，整页就放大一倍。` +
+          `按 ${frame} 重画（见指南 §9 的 S1/S3），或把从截图量的数值先除以截图倍数。`,
+      });
+    }
+    if (fit.declared && (Math.abs(fit.declared.width - input.frame.width) > 1 || Math.abs(fit.declared.height - input.frame.height) > 1)) {
+      findings.push({
+        code: 'CANVAS_MISMATCH',
+        severity: 'warning',
+        title: `页面自己声明了 ${fit.declared.width}×${fit.declared.height} 的画布（${fit.declared.selector}），而它在 ${frame} 的框里渲染`,
+        advice:
+          `把这一页的画布改成 ${frame}——样式里声明画布的那条规则（示例里是 \`${fit.declared.selector}\`）的 ` +
+          '`width`/`height`，否则框外的部分谁也看不到：平台按 `platform` 固定画框，不会跟着页面声明的尺寸走。',
+      });
+    }
   }
 
   if (assets.pictures === 0 && assets.shapes === 0 && !input.expectations?.noImages) {
@@ -513,6 +570,16 @@ export function analyzeDocument(input: {
       positioned: assets.positioned,
       flow: assets.flow,
       clipped: assets.clipped,
+      ...(fit && input.frame
+        ? {
+            frameWidth: input.frame.width,
+            frameHeight: input.frame.height,
+            frameOverflow: fit.pastRight + fit.pastBottom,
+            frameRatio: fit.ratio,
+            measuredBoxes: fit.measured,
+            unmeasuredBoxes: fit.unmeasured,
+          }
+        : {}),
     },
     clean: findings.length === 0,
   };

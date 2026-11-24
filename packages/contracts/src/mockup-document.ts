@@ -360,3 +360,130 @@ export function framesAreCopies(document: MockupDocument): number {
   }
   return [...seen.values()].filter((count) => count > 1).reduce((sum, count) => sum + count, 0);
 }
+
+export interface DocumentFrameFit {
+  /** Coordinates boxes with all four numbers in px — everything a layout engine is not needed for. */
+  measured: number;
+  /**
+   * Coordinates boxes whose position is not fully stated (`right:`/`bottom:`, percentages, `auto`).
+   *
+   * Reported rather than guessed at: an element pinned to the right edge fits by construction, and
+   * calling it an overflow because the numbers are missing would be a finding about the checker.
+   */
+  unmeasured: number;
+  /** Furthest right / bottom edge among the measured boxes, in CSS px. */
+  maxRight: number;
+  maxBottom: number;
+  pastRight: number;
+  pastBottom: number;
+  /** The canvas the page declares for itself, when a rule names one. */
+  declared: { width: number; height: number; selector: string } | null;
+  /** The worst edge as a multiple of the frame. 1.0 means it fits exactly. */
+  ratio: number;
+}
+
+const BOX_DECLARATION = /position\s*:\s*(?:absolute|fixed)/i;
+const DECLARED_CANVAS = /(?:screen|frame|canvas|page|artboard)/i;
+
+/** px numbers out of one declaration block, keyed by property. */
+function declarationNumbers(block: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const match of block.matchAll(/(left|top|width|height)\s*:\s*(-?\d+(?:\.\d+)?)px/gi)) {
+    out[match[1]!.toLowerCase()] = Number(match[2]);
+  }
+  return out;
+}
+
+/**
+ * How far the page's own coordinate system runs past the frame it will be rendered into.
+ *
+ * The frame is the platform's: one fixed phone size per platform (`UI_VIEWPORTS`), because a replica
+ * exists to show a screen at the size the screen is — and the caller does not get to widen it, so a page
+ * laid out for a different canvas does not fail loudly. It renders, clipped, and the reader sees a
+ * half-empty screen or a blank one while everything here looks fine. Measured against the real uploads:
+ * 19 of 29 Android pages had boxes past the frame (none of the 32 iOS ones did), the worst declaring a
+ * 412×4250 canvas, and a login screen whose content ran to 1371px rendered as an empty grey page.
+ *
+ * Where the overrun comes from is nearly always the same confusion: Android layout values are dp, a
+ * screenshot of the same screen is 2× or 2.625× (412dp is 824 or 1080 px wide), and reading one as the
+ * other scales the whole page. So the report says the number and the ratio, and leaves the diagnosis to
+ * whoever knows which file they read.
+ *
+ * A declaration block is the unit of measurement — inline `style="…"` and CSS rule bodies alike — and a
+ * block counts as a box only when it places itself at a coordinate with all four numbers in px. That is
+ * the same regex-level view `documentAssets` takes, with the same ceiling: what actually spills needs a
+ * layout engine, and this is the number that says to go and look.
+ */
+export function documentFrameFit(
+  document: { frames: readonly { html: string }[] },
+  frame: { width: number; height: number },
+): DocumentFrameFit {
+  const fit: DocumentFrameFit = {
+    measured: 0,
+    unmeasured: 0,
+    maxRight: 0,
+    maxBottom: 0,
+    pastRight: 0,
+    pastBottom: 0,
+    declared: null,
+    ratio: 1,
+  };
+
+  for (const page of document.frames) {
+    const html = page.html;
+    // Every declaration block: the inline styles, and the bodies of the `<style>` rules.
+    //
+    // The stylesheet is split on `}` rather than matched with a regex over the whole page — the same
+    // reading `documentAssets` does, and for a measured reason: a pattern like `([^{}<>]*)\{([^{}]*)\}` is
+    // quadratic on a page with one large inlined asset, and this function then takes 64 seconds on a
+    // 424 kB upload, inside the tenant transaction that expires after 5.
+    const blocks: { selector: string; body: string }[] = [];
+    for (const sheet of html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)) {
+      for (const chunk of sheet[1]!.split('}')) {
+        const at = chunk.indexOf('{');
+        if (at >= 0) blocks.push({ selector: chunk.slice(0, at).trim(), body: chunk.slice(at + 1) });
+      }
+    }
+    for (const tag of html.matchAll(/<([a-z][\w-]*)\b[^>]*>/gi)) {
+      const style = /style\s*=\s*["']([^"']*)["']/i.exec(tag[0]!)?.[1];
+      if (style === undefined) continue;
+      // The element's first class stands in for a selector: an inline
+      // `class="screen" style="width:412px;height:1371px"` states the same canvas a `.screen{…}` rule does.
+      const className = /class\s*=\s*["']([^"']*)["']/i.exec(tag[0]!)?.[1]?.trim().split(/\s+/)[0];
+      blocks.push({ selector: className ? `.${className}` : '', body: style });
+    }
+
+    for (const block of blocks) {
+      if (!BOX_DECLARATION.test(block.body)) continue;
+      const numbers = declarationNumbers(block.body);
+      const placesItself = /\b(?:left|right)\s*:/i.test(block.body) && /\b(?:top|bottom)\s*:/i.test(block.body);
+      if (!placesItself) continue;
+      const complete =
+        numbers.left !== undefined && numbers.top !== undefined && numbers.width !== undefined && numbers.height !== undefined;
+      if (!complete) {
+        fit.unmeasured += 1;
+        continue;
+      }
+      fit.measured += 1;
+      const right = numbers.left! + numbers.width!;
+      const bottom = numbers.top! + numbers.height!;
+      fit.maxRight = Math.max(fit.maxRight, right);
+      fit.maxBottom = Math.max(fit.maxBottom, bottom);
+      if (right > frame.width + 0.5) fit.pastRight += 1;
+      if (bottom > frame.height + 0.5) fit.pastBottom += 1;
+    }
+
+    // A rule that names the screen and states both dimensions is the page telling us its own canvas.
+    for (const block of blocks) {
+      if (!block.selector || !DECLARED_CANVAS.test(block.selector)) continue;
+      const numbers = declarationNumbers(block.body);
+      if (numbers.width === undefined || numbers.height === undefined) continue;
+      const declared = { width: numbers.width, height: numbers.height, selector: block.selector };
+      // The widest declaration wins: a page that states several is stating its own size somewhere.
+      if (!fit.declared || declared.width * declared.height > fit.declared.width * fit.declared.height) fit.declared = declared;
+    }
+  }
+
+  fit.ratio = Math.round(Math.max(fit.maxRight / frame.width, fit.maxBottom / frame.height) * 100) / 100;
+  return fit;
+}

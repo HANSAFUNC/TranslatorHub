@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ErrorCode, LocaleHubError, Role, type PlatformName } from '@localehub/contracts';
+import { ErrorCode, LocaleHubError, Role, type PlatformName, defaultViewport } from '@localehub/contracts';
 import { assertRole, type ActorContext } from '@localehub/permissions';
 import { analyzeDocument, analyzeSketch, type MockupDocument, type MockupReport } from '@localehub/contracts';
 import { listScreenMockups, resolveMockupInput, resolveScreenMarkers, upsertScreenMockup } from '@localehub/domain';
@@ -199,7 +199,7 @@ export class MockupsService {
     const row = await this.prisma.tenant.withOrganization(actor.organizationId, (tx) =>
       tx.screenMockup.findFirst({
         where: { id: mockupId, projectId },
-        select: { image: true, document: true, expectations: true },
+        select: { image: true, document: true, expectations: true, width: true, height: true, platform: true },
       }),
     );
     if (!row) throw new LocaleHubError(ErrorCode.NOT_FOUND, `Mockup ${mockupId} not found`, 404);
@@ -219,6 +219,13 @@ export class MockupsService {
         document: row.document as unknown as MockupDocument,
         markers: reportMarkers,
         legend,
+        // The frame this page is rendered into. It is read from the row rather than assumed, so a page
+        // stored when the platform's viewport was a different size is judged against the frame it is
+        // actually shown in.
+        frame:
+          row.width && row.height
+            ? { width: row.width, height: row.height }
+            : defaultViewport(row.platform ?? undefined),
         ...(expectations ? { expectations } : {}),
       });
     }

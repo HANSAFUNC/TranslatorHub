@@ -1,6 +1,6 @@
 import { Prisma } from '@localehub/database';
 import type { Prisma as PrismaTypes } from '@localehub/database';
-import { ErrorCode, LocaleHubError, MAX_MARKERS_PER_MOCKUP, MAX_MOCKUP_BYTES, MAX_MOCKUP_DIMENSION, MockupExpectations, analyzeDocument, analyzeSketch, canonicalizeLocaleTag, defaultViewport, detectImageType, documentMarkers, extractUiSpec, imageDimensions, isFullDocument, isValidLocaleTag, normalizeDocument, normalizeMarker, renderUiSketch, type MockupDocument, type MockupImageType, type MockupMarkerInput, type MockupReport, type PlatformName, type ReviewStatus, type UiLegendItem, type UiSpec, type UiTheme, uiSpecIssues, unsafeSvgReasons } from '@localehub/contracts';
+import { ErrorCode, LocaleHubError, MAX_MARKERS_PER_MOCKUP, MAX_MOCKUP_BYTES, MAX_MOCKUP_DIMENSION, MockupExpectations, analyzeDocument, analyzeSketch, canonicalizeLocaleTag, defaultViewport, detectImageType, documentFrameFit, documentMarkers, extractUiSpec, imageDimensions, isFullDocument, isValidLocaleTag, normalizeDocument, normalizeMarker, renderUiSketch, type MockupDocument, type MockupImageType, type MockupMarkerInput, type MockupReport, type PlatformName, type ReviewStatus, type UiLegendItem, type UiSpec, type UiTheme, uiSpecIssues, unsafeSvgReasons } from '@localehub/contracts';
 import { createHash } from 'node:crypto';
 
 /**
@@ -329,7 +329,53 @@ function resolveDocumentInput(
     else legend.push({ index: legend.length + 1, name: marker.component, count: 1 });
   }
   const viewport = defaultViewport(input.platform ?? undefined);
+  assertPageFitsFrame(document, viewport);
   return { image: null, document, markers, legend, width: viewport.width, height: viewport.height };
+}
+
+/**
+ * The frame is the platform's — one fixed phone size per platform — so a page laid out for another
+ * canvas is refused here rather than stored and rendered clipped.
+ *
+ * Measured against the real uploads before this check existed: 19 of 29 Android pages had coordinates
+ * outside the frame (none of 32 iOS pages did), one of them declaring a 412×4250 canvas, and a login
+ * screen whose content ran to 1371px rendered as an empty grey page — while the report called it clean,
+ * because nothing here looked at the numbers against the frame they would be drawn into. A page that
+ * arrives clipped is worse than one that arrives late: it is the picture a translator then reads.
+ */
+function assertPageFitsFrame(document: MockupDocument, frame: { width: number; height: number }): void {
+  const fit = documentFrameFit(document, frame);
+  const overrun = fit.pastRight + fit.pastBottom;
+  const ratio = fit.ratio >= 1.5 ? `，最远到 ${Math.round(Math.max(fit.maxRight, fit.maxBottom))}px（约 ${fit.ratio} 倍）` : '';
+  if (overrun > 0) {
+    throw new LocaleHubError(
+      ErrorCode.VALIDATION_ERROR,
+      `这一页画在 ${frame.width}×${frame.height} 的框外：${overrun} 处坐标越界${ratio}。` +
+        `复刻的是"一屏"，画框由平台按端固定（android ${frame.width}×${frame.height}），上传方改不了，` +
+        '框外的内容在编辑器和图里都不存在。最常见的来源是单位搞混：安卓的布局数值是 dp，同一屏的截图却是 ' +
+        `2× 或 2.625×（${frame.width}dp 的屏，截图宽 ${frame.width * 2} 或 ${Math.round(frame.width * 2.625)}px）——` +
+        `按 1× 读就会整屏放大。按 ${frame.width}×${frame.height} 重画这一页，或把数值先除以截图倍数。`,
+      422,
+      {
+        frame,
+        overflow: { right: fit.pastRight, bottom: fit.pastBottom },
+        maxRight: fit.maxRight,
+        maxBottom: fit.maxBottom,
+        ratio: fit.ratio,
+        measuredBoxes: fit.measured,
+        unmeasuredBoxes: fit.unmeasured,
+      },
+    );
+  }
+  if (fit.declared && (Math.abs(fit.declared.width - frame.width) > 1 || Math.abs(fit.declared.height - frame.height) > 1)) {
+    throw new LocaleHubError(
+      ErrorCode.VALIDATION_ERROR,
+      `页面自己声明了 ${fit.declared.width}×${fit.declared.height} 的画布（${fit.declared.selector}），` +
+        `平台按 ${frame.width}×${frame.height} 渲染——请把那份样式里的 width/height 改成平台的尺寸。`,
+      422,
+      { frame, declared: fit.declared },
+    );
+  }
 }
 
 export function resolveMockupInput(input: {
@@ -667,6 +713,14 @@ export async function upsertScreenMockup(
         document: input.document!,
         markers: reportMarkers,
         legend: input.legend ?? [],
+        // The frame the page will be rendered into, so the report can say when the page was drawn for
+        // a different one. A document always arrives with the platform's viewport (see
+        // `resolveDocumentInput`); the fallback is the same source, for a caller that built the input
+        // by hand.
+        frame:
+          input.width && input.height
+            ? { width: input.width, height: input.height }
+            : defaultViewport(input.platform),
         ...(input.expectations ? { expectations: input.expectations } : {}),
       });
 

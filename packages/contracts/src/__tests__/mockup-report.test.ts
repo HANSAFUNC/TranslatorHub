@@ -122,7 +122,10 @@ describe('every finding is reachable and explained', () => {
    */
   const scenarios: Record<
     string,
-    Parameters<typeof analyzeSketch>[0] & { document?: Parameters<typeof analyzeDocument>[0]['document'] }
+    Parameters<typeof analyzeSketch>[0] & {
+      document?: Parameters<typeof analyzeDocument>[0]['document'];
+      frame?: Parameters<typeof analyzeDocument>[0]['frame'];
+    }
   > = {
     NO_PICTURES: { svg: page('<text fill="#306eee">我的</text>'), markers: [{ key: 'home.title', text: '我的', component: 'card' }], legend: [{ name: 'card' }] },
     PLACEHOLDER_PICTURES: { svg: page('<path fill="#a1a1aa" opacity="0.55"/><rect fill="#306eee"/>'), markers: [{ key: 'home.title', text: '我的', component: 'card' }], legend: [{ name: 'card' }] },
@@ -136,6 +139,34 @@ describe('every finding is reachable and explained', () => {
       svg: page('<image href="data:image/png;base64,AA"/><rect fill="#306eee"/>'),
       markers: [{ key: 'home.title', text: '我的', component: 'card', missing: true }],
       legend: [{ name: 'card' }],
+    },
+    FRAME_OVERFLOW: {
+      svg: '',
+      document: {
+        frames: [
+          {
+            title: '默认',
+            html: '<html><body><div style="position:absolute;left:0px;top:0px;width:412px;height:915px;background:#fff"></div><div style="position:absolute;left:426px;top:100px;width:100px;height:20px;background:#eee"></div></body></html>',
+          },
+        ],
+      },
+      markers: [{ key: 'home.title', text: '我的', component: 'card' }],
+      legend: [{ name: 'card' }],
+      frame: { width: 412, height: 915 },
+    },
+    CANVAS_MISMATCH: {
+      svg: '',
+      document: {
+        frames: [
+          {
+            title: '默认',
+            html: '<html><head><style>.screen{position:relative;width:412px;height:1371px;background:#fff}</style></head><body><div class="screen" data-key="home.title">我的</div></body></html>',
+          },
+        ],
+      },
+      markers: [{ key: 'home.title', text: '我的', component: 'card' }],
+      legend: [{ name: 'card' }],
+      frame: { width: 412, height: 915 },
     },
     NO_COMPONENTS: {
       svg: page('<image href="data:image/png;base64,AA"/><rect fill="#306eee"/>'),
@@ -234,6 +265,7 @@ describe('every finding is reachable and explained', () => {
           document: scenario.document,
           markers: scenario.markers,
           legend: scenario.legend,
+          ...(scenario.frame ? { frame: scenario.frame } : {}),
         })
       : analyzeSketch({ svg: scenario.svg, markers: scenario.markers, legend: scenario.legend });
   }
@@ -264,6 +296,79 @@ describe('every finding is reachable and explained', () => {
     const prompt = remoteSketchPrompt({ projectId: 'p', page: 'page.tsx' });
     expect(prompt).toContain('report');
     expect(prompt).toContain('NO_SOURCE_COLOURS');
+  });
+});
+
+/**
+ * The frame, and the page drawn for a different one.
+ *
+ * A replica is rendered into one fixed phone size per platform, and the caller cannot widen it — so a
+ * page laid out for another canvas does not fail loudly, it renders clipped. In the real uploads this
+ * was the difference between the two platforms: 19 of 29 Android pages had coordinates outside the frame
+ * (none of 32 iOS pages did), the worst declaring a 412×4250 canvas, and a login screen whose content
+ * ran to 1371px rendered as an empty grey page while its report said `clean: true`.
+ */
+describe('the frame a page is drawn for', () => {
+  const android = { width: 412, height: 915 };
+  const pageWith = (body: string, frame = android): Parameters<typeof analyzeDocument>[0] => ({
+    document: { frames: [{ title: '默认', html: `<html><body>${body}</body></html>` }] },
+    markers: [{ key: 'home.title', text: '我的', component: 'card' }],
+    legend: [{ name: 'card' }],
+    frame,
+  });
+  const box = (left: number, top: number, width: number, height: number) =>
+    `<div style="position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;background:#eee"></div>`;
+
+  it('says nothing about a page that fits the frame', () => {
+    const report = analyzeDocument(pageWith(box(0, 0, 412, 915) + box(16, 100, 380, 44)));
+    expect(report.findings.map((entry) => entry.code)).not.toContain('FRAME_OVERFLOW');
+    expect(report.stats.frameWidth).toBe(412);
+    expect(report.stats.frameHeight).toBe(915);
+    expect(report.stats.frameOverflow).toBe(0);
+    expect(report.stats.frameRatio).toBe(1);
+  });
+
+  it('counts the boxes outside it, and says how far out they are', () => {
+    // The shape of the real failure: content laid out at twice the frame's width.
+    const report = analyzeDocument(pageWith(box(0, 0, 412, 915) + box(428, 100, 412, 44) + box(413, 200, 412, 44)));
+    const finding = report.findings.find((entry) => entry.code === 'FRAME_OVERFLOW');
+    expect(finding?.count).toBe(2);
+    expect(finding?.title).toContain('412×915');
+    expect(finding?.title).toContain('2.04 倍');
+    // The advice names the likely cause rather than only the symptom: dp read as px.
+    expect(finding?.advice).toContain('dp');
+    expect(finding?.advice).toContain('824');
+    expect(report.stats.frameRatio).toBe(2.04);
+  });
+
+  it('says when the page declares a canvas of its own', () => {
+    const report = analyzeDocument(
+      pageWith('<div class="screen" style="position:relative;width:412px;height:1371px;background:#fff"></div>'),
+    );
+    const finding = report.findings.find((entry) => entry.code === 'CANVAS_MISMATCH');
+    expect(finding?.title).toContain('412×1371');
+    expect(finding?.title).toContain('.screen');
+  });
+
+  it('stays quiet about a page whose positions it cannot read', () => {
+    // A page arranged by flow has no coordinates to be outside of, and boxes pinned to the right edge
+    // fit by construction — an overflow invented from missing numbers would be a finding about the
+    // checker.
+    const report = analyzeDocument(
+      pageWith('<div style="display:flex">我的</div><div style="position:absolute;right:16px;top:10px;width:40px;height:40px"></div>'),
+    );
+    expect(report.findings.map((entry) => entry.code)).not.toContain('FRAME_OVERFLOW');
+    expect(report.stats.measuredBoxes).toBe(0);
+    expect(report.stats.unmeasuredBoxes).toBe(1);
+  });
+
+  it('says nothing at all when the caller had no frame to measure against', () => {
+    const report = analyzeDocument({
+      document: { frames: [{ title: '默认', html: `<html><body>${box(428, 0, 800, 400)}</body></html>` }] },
+      markers: [{ key: 'home.title', text: '我的' }],
+    });
+    expect(report.findings.map((entry) => entry.code)).not.toContain('FRAME_OVERFLOW');
+    expect(report.stats.frameWidth).toBeUndefined();
   });
 });
 

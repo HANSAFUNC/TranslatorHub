@@ -197,6 +197,68 @@ describe('resolveMockupInput', () => {
  * server parses it with the same scanner the CLI runs on a checkout, and nothing in it is rendered or
  * executed.
  */
+/**
+ * A replica is drawn inside a frame the platform fixes, and the page has to have been drawn for it.
+ *
+ * The rule existed in the guide (S1/S3) and nowhere in the code, so it was not enforced and not even
+ * reported: 19 of 29 Android pages in the field had coordinates outside the frame (0 of 32 iOS ones),
+ * one of them declaring a 412×4250 canvas, and a login screen whose content ran to 1371px rendered as an
+ * empty grey page while its report said `clean: true`. Refusing here is the whole point of the number:
+ * the frame cannot be widened by the caller, so a page drawn for another canvas has no correct reading.
+ */
+describe('the frame a replica is drawn in', () => {
+  const box = (left: number, top: number, width: number, height: number) =>
+    `<div style="position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;background:#eee"></div>`;
+  const page = (body: string) => `<html><body><div data-key="home.title">我的</span>${body}</body></html>`;
+
+  it('takes the canvas from the platform, not from the caller', () => {
+    // `width`/`height` are not a way to widen the frame: a replica is shown at the size the screen is.
+    const resolved = resolveMockupInput({
+      document: page(box(0, 0, 412, 915)),
+      platform: 'android',
+      width: 1080,
+      height: 2000,
+    });
+    expect(resolved.width).toBe(412);
+    expect(resolved.height).toBe(915);
+  });
+
+  it('refuses a page whose coordinates run past it, and says which numbers', () => {
+    // The field failure: 412dp read as px, so the page is laid out at twice the width.
+    expect(() =>
+      resolveMockupInput({ document: page(box(0, 0, 412, 915) + box(428, 100, 412, 44)), platform: 'android' }),
+    ).toThrow(/412×915.*越界/s);
+
+    const error = (() => {
+      try {
+        resolveMockupInput({ document: page(box(428, 100, 412, 44)), platform: 'android' });
+      } catch (thrown) {
+        return thrown as LocaleHubError;
+      }
+      return null;
+    })();
+    expect(error?.message).toContain('dp');
+    expect(error?.details).toMatchObject({ frame: { width: 412, height: 915 }, ratio: 2.04 });
+  });
+
+  it('refuses a page that declares a canvas of its own', () => {
+    const declaring = `<html><head><style>.screen{position:relative;width:412px;height:1371px;background:#fff}</style></head><body><div class="screen" data-key="home.title">我的</div></body></html>`;
+    expect(() => resolveMockupInput({ document: declaring, platform: 'android' })).toThrow(/412×1371/);
+  });
+
+  it('accepts a page drawn for the frame, and one it cannot measure', () => {
+    // A page of coordinates that fit, and a page arranged by flow (nothing to measure, nothing to say).
+    expect(resolveMockupInput({ document: page(box(0, 0, 412, 915) + box(16, 100, 380, 44)), platform: 'android' }).width).toBe(412);
+    expect(resolveMockupInput({ document: page('<div style="display:flex">我的</div>'), platform: 'android' }).width).toBe(412);
+  });
+
+  it('measures against the iOS frame for an iOS page', () => {
+    // 390 wide, not 412: the same numbers that fit an Android page overflow an iPhone one.
+    expect(() => resolveMockupInput({ document: page(box(0, 0, 400, 844)), platform: 'ios' })).toThrow(/390×844/);
+    expect(resolveMockupInput({ document: page(box(0, 0, 390, 844)), platform: 'ios' }).width).toBe(390);
+  });
+});
+
 describe('resolveMockupInput from html', () => {
   const page = `
     <style>.card { background: #f8fafc; border-radius: 12px; padding: 16px }</style>
