@@ -9,4 +9,6 @@ export * from './services';
 export * from './state';
 export * from './apply';
 export * from './scan';
+export * from './ui-dump';
+export * from './device';
 export { readPageFile } from './ui-extract';

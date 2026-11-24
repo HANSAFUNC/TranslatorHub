@@ -64,6 +64,24 @@ function transport(token: string): StreamableHTTPClientTransport {
   });
 }
 
+/**
+ * A real screenshot's header, at the size a phone takes them.
+ *
+ * Only the header matters here — the platform reads a PNG's size from it and never decodes the pixels,
+ * which is the entire point of the report the test below is about.
+ */
+const PNG_1080_1920 = (() => {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(25);
+  ihdr.writeUInt32BE(13, 0);
+  ihdr.write('IHDR', 4, 'ascii');
+  ihdr.writeUInt32BE(1080, 8);
+  ihdr.writeUInt32BE(1920, 12);
+  ihdr[16] = 8;
+  ihdr[17] = 6;
+  return Buffer.concat([signature, ihdr]);
+})();
+
 /** A wireframe, small enough to inline: what a caller that *draws* a screen produces. */
 const SKETCH = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 375 667">
   <rect x="0" y="0" width="375" height="667" fill="#ffffff"/>
@@ -255,6 +273,85 @@ describe('screen mockups', () => {
     expect(result.imagePath).toBe(`/projects/${projectId}/mockups/${result.mockupId}/image`);
     expect(result.imagePath.startsWith('/api/v1')).toBe(false);
   }, 60_000);
+
+  it('reads a captured screenshot as a picture, not as a sketch that failed every check', async () => {
+    // What `localehub mockup capture` uploads: the device's own pixels plus the element boxes that came
+    // out of the same moment's `uiautomator dump`. The platform cannot see inside a PNG, and before this
+    // it pretended to: the bytes went to the sketch analyzer, whose regexes found no `<image>`, no
+    // colours and no components, so every screenshot came back "looks like a wireframe, go and build a
+    // replica instead" — advice that sends a caller to redo a screen that was already perfect.
+    //
+    // Its own project, because the fixture above is deliberately a one-screen project (several tests
+    // below count its screens) and a second screen in it would be a different assertion's problem.
+    const created = await client!.callTool({
+      name: 'create_project',
+      arguments: { name: `Capture ${runId}`, source_locale: 'en-US', locales: ['ja-JP'], platforms: ['ios'] },
+    });
+    const captureProject = payload<{ project: { id: string } }>(created).project.id;
+    const imported = await client!.callTool({
+      name: 'import_translations',
+      arguments: {
+        project_id: captureProject,
+        confirm: true,
+        files: [
+          {
+            path: 'ios/en-US/Localizable.strings',
+            locale: 'en-US',
+            platform: 'ios',
+            entries: [
+              { key: 'checkout.title', value: 'Checkout' },
+              { key: 'checkout.pay', value: 'Pay now' },
+            ],
+          },
+        ],
+      },
+    });
+    expect(imported.isError, JSON.stringify(imported.content)).toBeFalsy();
+
+    const captured = await call<{ mockupId: string; report: { findings: { code: string }[]; stats: Record<string, unknown> } }>(
+      `/projects/${captureProject}/mockups`,
+      {
+        method: 'POST',
+        token: session.token,
+        body: {
+          name: 'captured',
+          platform: 'ios',
+          locale: 'en-US',
+          // The file's `base64` helper takes text; these are bytes.
+          imageBase64: PNG_1080_1920.toString('base64'),
+          mimeType: 'image/png',
+          markers: [
+            { key: 'checkout.title', x: 0.05, y: 0.3, width: 0.4, height: 0.04, text: 'Checkout' },
+            { key: 'checkout.pay', x: 0.2, y: 0.88, width: 0.6, height: 0.05, text: 'Pay now' },
+          ],
+        },
+      },
+    );
+    expect(captured.status).toBeLessThan(300);
+
+    const stored = captured.body.data!;
+    expect(stored.report.stats.inspected).toBe(false);
+    expect(stored.report.findings.map((finding) => finding.code)).toEqual(['CAPTURED_IMAGE']);
+    // The zeros stay, and `inspected` is what tells a reader they are the absence of a measurement
+    // rather than a measurement of nothing.
+    expect(stored.report.stats.pictures).toBe(0);
+    expect(stored.report.stats.markers).toBe(2);
+    // Key matching is not affected by how the picture was made.
+    expect(stored.report.stats.missingKeys).toBe(0);
+
+    const detail = await call<{ mockup: { kind: string; width: number; height: number; mimeType: string } }>(
+      `/projects/${captureProject}/mockups/${stored.mockupId}`,
+      { token: session.token },
+    );
+    expect(detail.body.data!.mockup).toMatchObject({ kind: 'image', mimeType: 'image/png', width: 1080, height: 1920 });
+
+    // Best effort: this suite leaves its projects behind elsewhere too, but there is no reason to add to
+    // that when the cleanup route is one call away.
+    await call(`/projects/${captureProject}?confirmName=${encodeURIComponent(`Capture ${runId}`)}`, {
+      method: 'DELETE',
+      token: session.token,
+    }).catch(() => undefined);
+  }, 120_000);
 
   it('serves the image under the type it decided, with the headers that make an SVG safe to serve', async () => {
     const list = await call<{ id: string; width: number | null; markerCount: number }[]>(`/projects/${projectId}/mockups`, {

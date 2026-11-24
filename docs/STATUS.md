@@ -2750,6 +2750,51 @@ marker 是否对上 key、CSS 里有没有 overflow:hidden+固定高度），**�
 **没做的**：`flutter` 还没进 `platform` 的取值（要动数据库枚举，等用户点头）；MCP 的 `import_translations`
 对 `.arb` 文件仍按 `format: 'json'` 记账；已上传的安卓越界屏仍要看真图才能修（§1.79 的真机渲染路径）。
 
+### 1.81 真机截图：把"手抄坐标"这一步整个换掉（用户：「开工」）
+
+§1.79 说清楚了安卓还原度低的直接原因（坐标越界），但只拦住了"再传一次"；已经传上去的那些屏，以及
+"以后怎么传"这件事，都要靠**取真值**。这一条就是真值：`localehub mockup capture`。
+
+**它做什么**：`adb exec-out screencap -p` 取像素、`uiautomator dump` 取每个元素的真实 `bounds`，两者来自**同一时刻**——
+所以图就是应用本身，框是量出来的，不是抄出来的。手抄坐标是这套流程里唯一反复出错的一步（§1.79：19/29 屏越界、
+最远 4.64 倍），换成"读"就没有这一步可错。
+
+| 位置 | 内容 |
+| --- | --- |
+| `local-sync/src/ui-dump.ts`（新） | `parseUiDump` + `markersFromDump`：解析 dump、把 bounds 换成比例坐标、按阅读顺序排、去掉嵌套重复、跳过空/零尺寸/整块出画的节点、部分出画的裁到可见部分 |
+| `local-sync/src/device.ts`（新） | adb 驱动（注入 runner，可无设备测试）：选设备、截屏、取层级、读型号/系统/语言/前台包名；`adb` 不在 PATH 时会去找 `platform-tools`（**这台机器上就是这种情况**：`which adb` 为空，但 `~/Library/Android/sdk/platform-tools/adb` 可用） |
+| `local-sync` `captureScreenMockup` | 反查 key（按屏幕文字对平台在该语言下的译文）→ 写 `.localehub/mockups/<屏名>.png` + 同名 manifest → 本地跑一遍平台的报告 → `--confirm` 上传 |
+| API/CLI | `localehub mockup capture --name <屏> [--serial] [--locale] [--keys] [--include-system-ui] [--confirm]` |
+| `contracts/mockup-report.ts` | **位图的报告不再撒谎**（见下） |
+| 教程/文档 | instructions、`screen-sketch-guide` §5、`docs/MCP.md` §2.10 都写明「原生应用能跑起来就别写 HTML，直接截」 |
+
+**顺手修掉的一个真 bug（不做的话这个功能会自相矛盾）**：上传位图（PNG/JPEG）时，平台把**字节**当成 SVG 交给
+`analyzeSketch` 去正则匹配——匹配不到 `<image>`、颜色、组件，于是**每一张截图**都会被报成
+`NO_PICTURES` + `NO_SOURCE_COLOURS`（"看着像线框图"），并劝调用方"改用 document"。按这个建议走，用户会把一张
+本来就正确的截图重做一遍。现在位图走新的 `analyzeRasterImage`：只报 `MISSING_KEYS` 这类与标记有关的事，
+外加一条 info 级 `CAPTURED_IMAGE` 说明"平台存下这张图但不解析像素"，`stats.inspected: false` 标记那三个 0 是
+**没量**而不是"图里没有"。这条也进了仓库自己的守卫测试（每个 code 必须有可达场景 + 教程对照行）。
+
+**真实设备上跑通（不是模拟数据）**：这台机器上连着两台云手机，用 `127.0.0.1:5555`（SM-G998B，Android 13）上
+真实运行的 `com.luluking.lulu_king`：截到 1080×1920，解析 16 个节点 → 5 个标记，5 条文案全部按平台译文反查到 key。
+
+| 证据 | 结果 |
+| --- | --- |
+| 存储的字节 | 平台 `/image` 返回的 PNG 与设备产出的文件 **sha256 完全一致**（ETag 就是同一个校验和）——图是真图，不是重画 |
+| 平台侧判定 | `kind: image`、`missingKeys: 0`、`findings: ["CAPTURED_IMAGE"]`、`stats.inspected: false` |
+| 反复可跑 | `scripts/check-device-capture.mjs`：自己建探针项目、把**当前屏幕上真实的文字**当作 key 推上去、截图上传、逐项核对（7 项全 ok），最后删项目与临时工作区；没有设备时打印 SKIP 退出 0（CI 没有手机不算失败） |
+| 单元 | **577 通过**（+23：dump 解析 12、驱动 11） |
+| 集成 | **192 通过**（+1：位图上传的报告不再报 NO_PICTURES，且它用**自己的项目**——共享 fixture 是"一屏项目"，多一屏会打乱另外几个断言） |
+| lint / typecheck | 0 warning / 0 error |
+
+**踩到的两个坑**：①`uiautomator dump` 的"成功"可以是 `<hierarchy></hierarchy>`——空树也回报成功。判据不能是
+"响应里有 `<hierarchy`"，得是"里面有 `<node`"，否则会把正在切换的界面当成一屏没有文字的应用拒掉。
+②同一份 dump 里，文字几乎都不在 `text` 而在 `content-desc`（现代应用把标题放在 ImageView/自定义 View 的
+无障碍描述上），而且一个节点常常用 `&#10;` 串起两三行文案——只读 `text` 的版本在真机上把 42 个节点读成 1 条文案，
+这就是 ui-dump.ts 顶部那段注释的由来。
+
+**没做的**：iOS 侧只留了接缝（`xcrun simctl` 能出图，但取元素层级要 `idb`，这台机器没装）；`--include-system-ui`
+默认关，状态栏/导航栏的文案不属于产品；列表类长屏要滚动的部分仍要分帧截。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

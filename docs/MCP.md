@@ -308,7 +308,7 @@ Token 推得上去、落不下来——这正是规格要的分离。
 | --- | --- | --- |
 | `instructions` | 两个方向别搞反、三条事后难改的规则、分批上限、dry-run 默认 | 客户端在调用任何工具前放进上下文 |
 | `localehub://import-guide` | 完整上传教程：调用形状、逐条规则、实测边界、推荐顺序、`.strings` 解析坑 | Agent 按需读取 |
-| `localehub://screen-sketch-guide` | 界面草图教程：五种输入怎么选、节点表、key/namespace 从哪来、画框与越界、上限、两件不可逆的事、CLI 从源码生成的做法，以及 §7「传完先看 `report`」的逐条对照表 | Agent 按需读取 |
+| `localehub://screen-sketch-guide` | 界面草图教程：五种输入怎么选、节点表、key/namespace 从哪来、画框与越界、上限、两件不可逆的事、CLI 从源码生成、**真机截图（`localehub mockup capture`）**，以及 §7「传完先看 `report`」的逐条对照表 | Agent 按需读取 |
 | `import-localization-files` 提示词 | 七步流程，供人在客户端里直接唤起 | 人（斜杠命令） |
 | `upload-screen-sketch` 提示词 | 九步流程（0–8）：整页复刻或页面转 HTML → 自检五个问题 → 上报标记 → 读 `report`，没还原到位就按 advice 改输入后重传 | 人（斜杠命令） |
 | `map-app-screens` 提示词 | 五步流程：先把 App 的每一屏与进入它的触发点列成表，再一屏一屏传 | 人（斜杠命令） |
@@ -378,7 +378,7 @@ CLI 的 `localehub scan` 输出（`expanded` 字段直接给中文说明）。�
   "name": "checkout",           // 屏幕的身份：同名再传 = 整体替换
   "platform": "ios",            // 这张图的端；同名 key 在多个端都存在时优先取该端那条
   "locale": "en-US",            // 图里文字用的语言，通常就是 sourceLocale
-  "image_base64": "…",          // SVG / PNG / JPEG，解码后 ≤ 2 MB
+  "image_base64": "…",          // SVG / PNG / JPEG，解码后 ≤ 2 MB。PNG/JPEG 原样存下、不解析像素，见下面「真机截图」
   "markers": [
     { "key": "checkout.pay", "x": 0.06, "y": 0.87, "width": 0.88, "height": 0.07, "text": "Pay now" }
   ],
@@ -507,6 +507,14 @@ localehub mockup --page src/app/projects/page.tsx --name 项目列表 --confirm 
 里照它渲染——**没有 `allow-scripts`，所以脚本、事件属性、`javascript:` 都不会执行**，页面只是被看，不会动。
 配色、圆角、字体、阴影、背景都是页面自己的，这正是「还原度」的来源；代价是本能行为（由接口填的数据）不出现，
 所以某个状态要展示就把那个状态写成静态 HTML 或作为一帧——「动态数据除外」。
+
+**原生应用最准的输入不是 HTML，是它自己跑起来的样子。** 手抄布局数值是这套流程里唯一反复出错的一步——
+某安卓工程 29 屏里 19 屏的坐标落到画框外，最远 4.64 倍。CLI 的 `localehub mockup capture` 把这一步换掉：
+它调 `adb exec-out screencap -p` 取像素、`uiautomator dump` 取每个元素的真实 bounds，两者来自同一时刻，
+所以图就是应用本身、框是量出来的。key 按屏幕上的文字反查平台在这个语言下的译文（`--keys` 可覆盖），
+查不到的照传并在 `markers.unmatched` 里报。这样传上来的是 `image_base64`（PNG），平台的 `report` 会显示
+`stats.inspected: false` 与一条 `CAPTURED_IMAGE`——**这是说明「没量像素」而不是「图里什么都没有」**，
+别照着 `pictures: 0` 去改一张已经正确的截图。
 
 **这条路上唯一真正的坑，是那份 HTML 不是真实界面的 HTML。** 拿不到源码时容易退化成「照着印象画一张像它的图」，
 传上来就成了一页线框图（见下面的 `DRAWN_SHAPES`；这是整页复刻那条路的判据——自己画图的 `image_base64` 走另一套检查，

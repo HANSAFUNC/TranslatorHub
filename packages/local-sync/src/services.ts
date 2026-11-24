@@ -33,8 +33,9 @@ import { executeApply, planApply, toApplyReportPayload } from './apply';
 import { scanAndCollect, type ScanSummary } from './scan';
 import { analyzeSketch } from '@localehub/contracts';
 
-import { analyzeDocument, documentMarkers, isFullDocument } from '@localehub/contracts';
+import { analyzeDocument, analyzeRasterImage, documentMarkers, imageDimensions, isFullDocument } from '@localehub/contracts';
 import { inlineLocalImages, inlinePageAssets, readPageFile } from './ui-extract';
+import { keyIndexFromTranslations, markersFromDump, parseUiDump } from './ui-dump';
 import { StateStore } from './state';
 
 export interface ServiceContext {
@@ -862,6 +863,257 @@ export class LocalSyncServices {
         (result.markers.unmatched.length
           ? `，${result.markers.unmatched.length} 个还没有导入（编辑器会显示「平台没有这个 Key」）。`
           : '。'),
+    };
+  }
+
+  /**
+   * A screen that is running, captured instead of described.
+   *
+   * Every other way in is a transcription: the HTML a caller wrote, the `ui` tree a caller described,
+   * the picture a caller drew and measured by eye. This one is a reading — `screencap` hands back the
+   * pixels and `uiautomator dump` hands back where every element actually is, from the same moment. So
+   * the picture is the app, and a marker lands on the element it names by construction rather than by
+   * arithmetic.
+   *
+   * It exists because the alternative was measured and failed: an app whose screens were rebuilt as
+   * HTML by hand came back with 19 of its 29 Android screens laid out past the frame (the worst at
+   * 4.64×, one rendering blank), and no amount of re-reading the layout could be trusted to fix it.
+   * Capture is the only input here that cannot be wrong about where things are.
+   *
+   * The keys still have to come from somewhere: a device shows *values*, not key names. They are
+   * looked up in the platform's own translations for the captured locale, and whatever cannot be
+   * resolved is reported rather than guessed at.
+   */
+  async captureScreenMockup(input: {
+    name: string;
+    platform?: string;
+    locale?: string;
+    namespace?: string;
+    /** The screenshot, exactly as the device produced it. */
+    image: Buffer;
+    /** The `uiautomator dump` document for the same moment as the screenshot. */
+    dumpXml: string;
+    /** Which device this came from, written into the manifest for whoever reviews the screen later. */
+    device?: Record<string, unknown>;
+    /** `text` (or a resource-id's last segment) → key, when the caller already knows the mapping. */
+    keys?: Record<string, string>;
+    /** Keep the status bar and navigation bar's own nodes. Off: they are not the app's copy. */
+    includeSystemUi?: boolean;
+    confirm?: boolean;
+    replace?: boolean;
+  }): Promise<OperationResult> {
+    const config = this.config().config;
+    const guard = this.workspace();
+    const dimensions = imageDimensions(input.image, 'image/png');
+    if (!dimensions) {
+      throw new LocaleHubError(
+        ErrorCode.VALIDATION_ERROR,
+        '这张截图不是能识别的 PNG。截屏要用 `adb exec-out screencap -p`（不能过 shell 重定向，那会破坏字节）。',
+        422,
+      );
+    }
+
+    const parsed = parseUiDump(input.dumpXml);
+    if (!parsed.nodes.length) {
+      throw new LocaleHubError(
+        ErrorCode.VALIDATION_ERROR,
+        '这份 uiautomator dump 里没有任何带 bounds 的节点。先 `adb shell uiautomator dump` 再取回文件；屏幕全黑或正在动画时会拿到空树，重取一次。',
+        422,
+      );
+    }
+    // The launcher and the system UI are in the same hierarchy as the app. Their nodes belong to a
+    // different package, and their strings are the framework's, not the product's.
+    const nodes =
+      input.includeSystemUi || !parsed.packageName
+        ? parsed.nodes
+        : parsed.nodes.filter((node) => !node.packageName || node.packageName === parsed.packageName);
+
+    const locale = input.locale ?? config.project.sourceLocale;
+    const namespace = input.namespace ?? '';
+
+    // What is on screen are values. The platform's own translations for that locale are the only
+    // dictionary that can say what they are called — and it is read once, in pages, rather than asked
+    // per string: there is no "search by value" and inventing one would be a lie about the index.
+    const rows: { key: string; namespace: string; value: string | null }[] = [];
+    let truncation: string | null = null;
+    if (!input.keys) {
+      const pageSize = 200;
+      const maxRows = 20_000;
+      let cursor: string | undefined;
+      for (;;) {
+        const page = await this.client().listTranslations(this.projectId(), {
+          locale,
+          limit: pageSize,
+          ...(cursor ? { cursor } : {}),
+        });
+        rows.push(...page.items.map((item) => ({ key: item.key, namespace: item.namespace ?? '', value: item.value ?? null })));
+        if (!page.nextCursor) break;
+        cursor = page.nextCursor;
+        if (rows.length >= maxRows) {
+          truncation = `项目在这个语言下有超过 ${maxRows} 条译文，只读了前 ${maxRows} 条用于匹配`;
+          break;
+        }
+      }
+    }
+    const candidates = keyIndexFromTranslations(rows, namespace);
+
+    const byResourceId = new Map<string, string>();
+    for (const [token, key] of Object.entries(input.keys ?? {})) {
+      byResourceId.set(token, key);
+      byResourceId.set(token.split('/').pop()!, key);
+    }
+
+    const resolveKey = (text: string, node: { resourceId: string }): string | null => {
+      if (input.keys) {
+        const id = node.resourceId.split('/').pop() ?? '';
+        return byResourceId.get(text) ?? byResourceId.get(node.resourceId) ?? (id ? byResourceId.get(id) ?? null : null) ?? text;
+      }
+      const found = candidates(text);
+      return found.length === 1 ? found[0]! : null;
+    };
+
+    const { markers, skipped, ambiguous } = markersFromDump(nodes, {
+      width: dimensions.width,
+      height: dimensions.height,
+      namespace,
+      resolveKey,
+      candidates,
+    });
+    if (!markers.length) {
+      throw new LocaleHubError(
+        ErrorCode.VALIDATION_ERROR,
+        `这一屏上没有任何可翻译的文字（读了 ${nodes.length} 个节点）。确认应用在前台、这一屏已经加载完再截一次。`,
+        422,
+      );
+    }
+    if (markers.length > 400) {
+      throw new LocaleHubError(
+        ErrorCode.VALIDATION_ERROR,
+        `这一屏解析出 ${markers.length} 个标记，平台一个屏幕的上限是 400。这一屏可能包含列表或长文，请截取真正要看的那一屏。`,
+        422,
+      );
+    }
+
+    const resolved = input.keys ? markers.length : markers.filter((marker) => candidates(marker.text).length === 1).length;
+    const unmatched = [...new Set(markers.filter((m) => !input.keys && candidates(m.text).length !== 1).map((m) => m.text))];
+
+    // The platform's own reading of a bitmap: it stores the picture and says plainly that it did not
+    // look inside it. Run here so the caller hears the same thing before uploading.
+    const report = analyzeRasterImage({
+      mimeType: 'image/png',
+      width: dimensions.width,
+      height: dimensions.height,
+      markers: markers.map((marker) => ({
+        key: marker.key,
+        namespace: marker.namespace,
+        text: marker.text,
+        missing: !input.keys && candidates(marker.text).length !== 1,
+      })),
+      legend: [],
+    });
+
+    const outDir = join(guard.root, '.localehub', 'mockups');
+    mkdirSync(outDir, { recursive: true });
+    const stem = input.name.replace(/[^\p{L}\p{N}._-]+/gu, '-');
+    const imagePath = join(outDir, `${stem}.png`);
+    const manifestPath = join(outDir, `${stem}.json`);
+    writeFileSync(imagePath, input.image);
+
+    const writeManifest = (uploaded: { mockupId: string; checksum: string } | null): void => {
+      writeFileSync(
+        manifestPath,
+        `${JSON.stringify(
+          {
+            $comment:
+              '由 localehub mockup capture 生成：这张 .png 是真机上的这一屏，标记框是同一时刻量出来的元素位置。' +
+              '要重截就再跑一次，不要手改这里的文件。',
+            kind: 'image',
+            projectId: this.projectId(),
+            name: input.name,
+            platform: input.platform ?? config.project.platforms?.[0] ?? 'android',
+            locale,
+            namespace: namespace || null,
+            canvas: { width: dimensions.width, height: dimensions.height },
+            source: 'device-capture',
+            device: input.device ?? null,
+            nodes: nodes.length,
+            markers: markers.length,
+            markersResolved: resolved,
+            unmatched,
+            ambiguous,
+            skipped,
+            uploaded,
+            generatedAt: new Date().toISOString(),
+          },
+          null,
+          2,
+        )}\n`,
+        'utf8',
+      );
+    };
+    writeManifest(null);
+
+    const platform = input.platform ?? config.project.platforms?.[0] ?? 'android';
+    const summary = {
+      name: input.name,
+      platform,
+      locale,
+      kind: 'image' as const,
+      canvas: { width: dimensions.width, height: dimensions.height },
+      device: input.device ?? null,
+      nodes: nodes.length,
+      markers: markers.length,
+      markersResolved: resolved,
+      unmatched,
+      ambiguous,
+      skipped,
+      sample: markers.slice(0, 8).map((marker) => ({ key: marker.key, text: marker.text, x: marker.x, y: marker.y })),
+      imagePath: relative(guard.root, imagePath),
+      manifestPath: relative(guard.root, manifestPath),
+      warnings: [...(truncation ? [truncation] : []), ...(unmatched.length ? [`${unmatched.length} 条文案在 ${locale} 下找不到对应的 key，已用文案本身当 key；平台会在 markers.unmatched 里再报一次`] : [])],
+      report,
+      uploaded: false as boolean,
+      requiresConfirmation: !input.confirm,
+    };
+
+    if (!input.confirm) {
+      return {
+        ...summary,
+        message:
+          `从设备截到 ${dimensions.width}×${dimensions.height} 的一屏，${nodes.length} 个节点 → ${markers.length} 个标记` +
+          `（写入 ${summary.imagePath}）。要提交到平台，加 --confirm。`,
+      };
+    }
+
+    const result = await this.client().uploadScreenMockup(this.projectId(), {
+      name: input.name,
+      platform,
+      locale,
+      imageBase64: input.image.toString('base64'),
+      mimeType: 'image/png',
+      width: dimensions.width,
+      height: dimensions.height,
+      markers,
+      ...(namespace ? { namespace } : {}),
+      replace: input.replace ?? true,
+    });
+    writeManifest({ mockupId: result.mockupId, checksum: result.image.checksum });
+
+    return {
+      ...summary,
+      uploaded: true,
+      requiresConfirmation: false,
+      mockupId: result.mockupId,
+      replaced: result.replaced,
+      matchedKeys: result.markers.matchedKeys,
+      unmatched: result.markers.unmatched,
+      imagePathOnPlatform: result.imagePath,
+      message:
+        `已提交真机截图：${result.markers.total} 个标记，${result.markers.matchedKeys} 个对上了平台的 Key` +
+        (result.markers.unmatched.length
+          ? `，${result.markers.unmatched.length} 个还没有导入（编辑器会显示「平台没有这个 Key」）。`
+          : '。') +
+        '这一屏在编辑器里就是真机上的样子，点标记跳到对应译文。',
     };
   }
 

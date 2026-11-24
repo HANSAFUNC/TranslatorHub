@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { loadEnvFiles } from '@localehub/config';
 import type { PlatformName } from '@localehub/contracts';
-import { LocalSyncServices } from '@localehub/local-sync';
+import { LocalSyncServices, captureAndroidScreen, systemDeviceRunner } from '@localehub/local-sync';
 import { loadLocalConfig, renderLocalConfig } from '@localehub/workspace';
 import { flagBool, parseArgs } from './args';
 
@@ -73,6 +73,22 @@ const HELP = `localehub <command>
       to force the replica path for a page whose doctype was stripped.
 
       Either way the output goes to .localehub/mockups/ and nothing is uploaded without --confirm.
+
+  mockup capture --name <screen> [--platform android] [--locale zh-CN]
+         [--namespace <ns>] [--serial <adb-serial>] [--keys <json-file>]
+         [--include-system-ui] [--confirm]
+      Capture the screen that is running on an attached Android device: screencap for the pixels and
+      uiautomator dump for where every element is, from the same moment. The picture is the app, and a
+      marker lands on the element it names by construction — nothing is transcribed, so nothing can be
+      transcribed wrong.
+
+      This is the answer for an app that only exists as an installed APK: rebuild it as HTML by hand and
+      the layout drifts (19 of 29 screens in one measured project were laid out past the phone's frame);
+      capture it and the layout cannot drift. Keys come from the platform's own translations for the
+      captured locale, matched by the text on screen; --keys overrides that with a
+      {"text or resource-id": "key"} file, and anything unresolved is reported, not guessed.
+
+      With several devices attached, --serial picks one. The screen is left as it was found.
 
   patch
       Write a git patch of the current working tree (never commits).
@@ -178,6 +194,47 @@ async function main(): Promise<void> {
       return;
     }
     case 'mockup': {
+      if (positionals[0] === 'capture') {
+        const name = flags.name as string | undefined;
+        if (!name) {
+          process.stderr.write('mockup capture requires --name <screen> (the screen this is, e.g. 首页)\n');
+          process.exitCode = 2;
+          return;
+        }
+        // The device is read here, at the edge, and the rest of the operation is pure: the service
+        // takes bytes and a dump, which is also what lets it be tested without a phone attached.
+        const captured = captureAndroidScreen(systemDeviceRunner(), {
+          ...(flags.serial ? { serial: flags.serial as string } : {}),
+        });
+        let keys: Record<string, string> | undefined;
+        if (flags.keys) {
+          keys = JSON.parse(readFileSync(resolve(workspace, flags.keys as string), 'utf8')) as Record<string, string>;
+        }
+        const result = await services.captureScreenMockup({
+          name,
+          image: captured.image,
+          dumpXml: captured.dumpXml,
+          device: captured.device as unknown as Record<string, unknown>,
+          ...(flags.platform ? { platform: flags.platform as string } : {}),
+          ...(flags.locale ? { locale: flags.locale as string } : {}),
+          ...(flags.namespace ? { namespace: flags.namespace as string } : {}),
+          ...(keys ? { keys } : {}),
+          includeSystemUi: flagBool(flags, 'include-system-ui'),
+          confirm: flagBool(flags, 'confirm'),
+          replace: flags.replace === undefined ? undefined : flagBool(flags, 'replace'),
+        });
+        if (json) return output(result);
+        process.stdout.write(
+          `${result.name} · ${result.platform} · ${result.locale} · 真机截图 ${(result.canvas as { width: number }).width}×${(result.canvas as { height: number }).height}\n`,
+        );
+        process.stdout.write(
+          `  ${result.nodes} 个节点 → ${result.markers} 个标记（${result.markersResolved} 个对上了 key）\n`,
+        );
+        process.stdout.write(`  截图：${result.imagePath}\n`);
+        for (const warning of result.warnings as string[]) process.stdout.write(`  ⚠ ${warning}\n`);
+        process.stdout.write(`${result.message}\n`);
+        return;
+      }
       if (positionals[0] === 'check') {
         const target = positionals[1];
         if (!target) {
