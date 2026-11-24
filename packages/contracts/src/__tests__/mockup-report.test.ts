@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { FINDING_CODES, analyzeDocument, analyzeSketch } from '../mockup-report';
+import { FINDING_CODES, analyzeDocument, analyzeRasterImage, analyzeSketch } from '../mockup-report';
 import { documentAssets, documentMarkers, isFullDocument, normalizeDocument } from '../mockup-document';
 import {
   REMOTE_MCP_IMPORT_GUIDE,
@@ -126,6 +126,8 @@ describe('every finding is reachable and explained', () => {
     Parameters<typeof analyzeSketch>[0] & {
       document?: Parameters<typeof analyzeDocument>[0]['document'];
       frame?: Parameters<typeof analyzeDocument>[0]['frame'];
+      /** Set for the codes only a captured bitmap can carry: bytes, so neither markup reader applies. */
+      raster?: Parameters<typeof analyzeRasterImage>[0];
     }
   > = {
     NO_PICTURES: { svg: page('<text fill="#306eee">我的</text>'), markers: [{ key: 'home.title', text: '我的', component: 'card' }], legend: [{ name: 'card' }] },
@@ -241,6 +243,16 @@ describe('every finding is reachable and explained', () => {
       markers: [{ key: 'a', text: '我的', component: 'card' }],
       legend: [{ name: 'card' }],
     },
+    CAPTURED_IMAGE: {
+      svg: '',
+      markers: [],
+      raster: {
+        mimeType: 'image/png',
+        width: 1080,
+        height: 1920,
+        markers: [{ key: 'home.title', text: '我的' }],
+      },
+    },
     CLIPPED_BOX: {
       svg: '',
       document: {
@@ -261,7 +273,9 @@ describe('every finding is reachable and explained', () => {
 
   /** Whichever reader the scenario is for: a picture goes to one, a page to the other. */
   function reportFor(scenario: (typeof scenarios)[string]) {
-    return scenario.document
+    return scenario.raster
+      ? analyzeRasterImage(scenario.raster)
+      : scenario.document
       ? analyzeDocument({
           document: scenario.document,
           markers: scenario.markers,

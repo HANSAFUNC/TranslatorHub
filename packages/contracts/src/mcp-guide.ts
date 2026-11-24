@@ -41,6 +41,8 @@ export const REMOTE_MCP_INSTRUCTIONS = [
   '最常见的成因是单位：安卓的数值是 dp，同一屏的截图是 2× 或 2.625×，把截图像素当 dp 抄就会整屏放大。',
   '节点的 text 默认就是 key（可用 key 覆盖）；指向还没导入的 key 不算错，会在 markers.unmatched 里报告，导入后自动对上。',
   '有 shell 权限、且页面是 JSX/TSX/HTML 时更省事：localehub mockup --page <页面文件> --confirm 读同一个页面的源码并直接上传。',
+  '原生应用**能跑起来**时还有比写 HTML 更准的一条路：localehub mockup capture（adb 取 screencap + uiautomator dump，' +
+  '图就是应用本身、框是量出来的真实位置；要接设备、要 shell 权限）。' +
   '注意没有 dry run：同名屏幕再传一次是整体替换（旧图与旧标记不再保留），别拿它「先试一下」。细节见 localehub://screen-sketch-guide。',
   '',
   '术语（可选，但那是「同一个词只有一种译法」的唯一办法）：get_glossary 读，extract_glossary_candidates 看项目已有的说法，upsert_glossary_terms 提，import_glossary_terms 导整份词表（默认草稿）。',
@@ -470,6 +472,18 @@ localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表  
 localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表 --confirm  # 生成并上传
 \`\`\`
 
+**原生应用（iOS/安卓/Flutter/RN）能跑起来时，不要写 HTML——直接截。** 真机/模拟器上停在那一屏：
+
+\`\`\`bash
+localehub mockup capture --name 隐私设置 --locale zh-CN --serial <adb 序列号>            # 预览：截屏 + 解析层级，只写 .localehub/mockups/
+localehub mockup capture --name 隐私设置 --locale zh-CN --serial <adb 序列号> --confirm  # 截屏并上传
+\`\`\`
+
+它调 \`adb exec-out screencap -p\` 取像素、\`uiautomator dump\` 取每个元素的真实 bounds，两者来自同一时刻——
+所以图就是应用本身，框是**量出来**的而不是抄出来的（手抄坐标正是这套流程里反复出错的那一步）。
+key 按屏幕上的文字反查平台自己的译文（\`--keys\` 可以给一份「文案 → key」的覆盖表）；查不到的照传，
+平台会在 \`markers.unmatched\` 里报。连了多台设备时用 \`--serial\` 指定。
+
 它扫 JSX/TSX/HTML，把页面上的每一段文字取出来做成元素树（\`t("checkout.pay", "Pay now")\` 会同时拿到 key 与文案），
 把 class 与 \`<style>\` 读成颜色与字号，并打印「哪些字符串变成了标记」。不加 \`--confirm\` 不上传，正好用来先给我看一眼。
 \`--platform\` / \`--locale\` / \`--namespace\` / \`--width\` / \`--height\` 与工具参数同义，\`--keys <json>\` 覆盖 key 映射。
@@ -496,6 +510,7 @@ localehub mockup --page apps/web/src/app/projects/page.tsx --name 项目列表 -
 
 | finding | 图上看是什么样 | 下一次怎么传 |
 | --- | --- | --- |
+| \`CAPTURED_IMAGE\` | 不适用——这是一张**位图**（真机截图、设计稿导出），平台原样存下、不解析像素 | 不用改：\`pictures\` / \`sourceColours\` 是 0 是因为**没量**（\`stats.inspected: false\`），不是图里没有。要那类检查就传 \`document\` 或 \`ui\`；真机截图用 \`localehub mockup capture --confirm\` 取，框与像素来自同一时刻 |
 | \`NO_PICTURES\` | 一个图片/图标都没有 | 行内 \`<svg>\` 会直接画出来；位图内联成 \`data:image/…\`；仓库里的图用 \`localehub mockup --page\`（自动内联小图） |
 | \`PLACEHOLDER_PICTURES\` | 若干灰底斜线占位框 | 同上；占位框是因为图片只有 URL，平台不联网取图 |
 | \`NO_SOURCE_COLOURS\` | 全是平台默认的黑白灰，看不出是哪个 App | 颜色所在的样式表用 \`css\` 字段一起传（\`:root\` 变量会解析），或 \`theme: {"accent": "品牌色", "background": "底色"}\`；class 写成 Tailwind 的也能读到 |

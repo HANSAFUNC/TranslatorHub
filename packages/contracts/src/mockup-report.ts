@@ -84,6 +84,10 @@ export const FINDING_CODES = [
   // different canvas arrives clipped — or, past a whole screen's worth, arrives blank.
   'FRAME_OVERFLOW',
   'CANVAS_MISMATCH',
+  // A picture the platform cannot read. An SVG is markup, so a sketch can be inspected element by
+  // element; a PNG or JPEG is pixels, and none of the sketch checks can see inside it. Saying which
+  // of the two was stored is the difference between "we checked this" and "we stored this".
+  'CAPTURED_IMAGE',
 ] as const;
 
 export type FindingCode = (typeof FINDING_CODES)[number];
@@ -150,6 +154,15 @@ export interface MockupReportStats {
    * translator click through". Reporting only the second reads as a lost frame and earns a re-upload.
    */
   framesWithMarkers?: number;
+  /**
+   * Whether the platform read the picture's contents, or only stored them.
+   *
+   * Absent means read — the platform drew the sketch, or parsed the page. A captured screenshot is
+   * bytes the platform never decodes, and `pictures` / `sourceColours` are 0 for every one of them for
+   * exactly that reason. Without this flag a reader would take those zeros at face value and set about
+   * "fixing" a screen that is a faithful photograph of a working app.
+   */
+  inspected?: boolean;
 }
 
 export interface MockupReport {
@@ -339,6 +352,63 @@ export function analyzeSketch(input: {
       markers: input.markers.length,
       missingKeys: input.markers.filter((marker) => marker.missing).length,
       components,
+    },
+    clean: findings.length === 0,
+  };
+}
+
+/**
+ * Read a picture the platform does not decode, and say only what is true of it.
+ *
+ * Three kinds of screen arrive as bytes: a design draft someone exported, a screenshot someone took,
+ * and — the one that matters most — a capture of the app actually running on a device, whose element
+ * boxes came from the same moment as its pixels. All three are opaque here: `analyzeSketch` reads SVG
+ * markup and `analyzeDocument` reads HTML, and neither can read a PNG.
+ *
+ * So this reports what the markers and the legend say and nothing about the picture's contents. It
+ * exists because the alternative was tried and is worse: raster bytes were handed to the sketch
+ * analyzer, whose regexes found no `<image>`, no `<svg>` and no colours, and every screenshot came back
+ * "no pictures, no colours of its own — looks like a wireframe" with advice to go and build a replica
+ * instead. A caller who believed that would redo a screen that was already perfect.
+ */
+export function analyzeRasterImage(input: {
+  mimeType: string;
+  /** The image's real size, read from its header — so the count of boxes is anchored to something. */
+  width?: number | null;
+  height?: number | null;
+  markers: readonly ReportMarker[];
+  legend?: readonly { name: string }[];
+}): MockupReport {
+  const findings: MockupFinding[] = [];
+  const missingKeys = [...new Set(input.markers.filter((marker) => marker.missing).map((marker) => marker.key))];
+
+  const missing = missingKeyFinding(missingKeys);
+  if (missing) findings.push(missing);
+
+  const size = input.width && input.height ? `${input.width}×${input.height}` : '尺寸未知';
+  findings.push({
+    code: 'CAPTURED_IMAGE',
+    severity: 'info',
+    title: `这是一张位图（${size}）：平台存下来直接用，不解析里面的像素`,
+    advice:
+      '所以「有没有素材、颜色是不是平台的」这些检查对它不成立——真要那些结论，就传 `document`（整页复刻，浏览器渲染）' +
+      '或 `ui`（平台自己重画）。这张图的价值在别处：标记框是量出来的真实位置，译者看到的也就是真机上的样子。' +
+      '用 `localehub mockup capture --confirm` 从设备直接取，框和像素来自同一时刻。',
+  });
+
+  return {
+    findings,
+    stats: {
+      // Zeros, and `inspected: false` to say why: these are not measurements of a picture with nothing
+      // in it, they are the absence of a measurement.
+      pictures: 0,
+      placeholders: 0,
+      sourceColours: 0,
+      frames: distinctFrames(input.markers).length,
+      markers: input.markers.length,
+      missingKeys: input.markers.filter((marker) => marker.missing).length,
+      components: input.legend?.length ?? 0,
+      inspected: false,
     },
     clean: findings.length === 0,
   };

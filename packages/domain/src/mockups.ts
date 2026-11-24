@@ -1,6 +1,6 @@
 import { Prisma } from '@localehub/database';
 import type { Prisma as PrismaTypes } from '@localehub/database';
-import { ErrorCode, LocaleHubError, MAX_MARKERS_PER_MOCKUP, MAX_MOCKUP_BYTES, MAX_MOCKUP_DIMENSION, MockupExpectations, analyzeDocument, analyzeSketch, canonicalizeLocaleTag, defaultViewport, detectImageType, documentFrameFit, documentMarkers, extractUiSpec, imageDimensions, isFullDocument, isValidLocaleTag, normalizeDocument, normalizeMarker, renderUiSketch, type MockupDocument, type MockupImageType, type MockupMarkerInput, type MockupReport, type PlatformName, type ReviewStatus, type UiLegendItem, type UiSpec, type UiTheme, uiSpecIssues, unsafeSvgReasons } from '@localehub/contracts';
+import { ErrorCode, LocaleHubError, MAX_MARKERS_PER_MOCKUP, MAX_MOCKUP_BYTES, MAX_MOCKUP_DIMENSION, MockupExpectations, analyzeDocument, analyzeRasterImage, analyzeSketch, canonicalizeLocaleTag, defaultViewport, detectImageType, documentFrameFit, documentMarkers, extractUiSpec, imageDimensions, isFullDocument, isValidLocaleTag, normalizeDocument, normalizeMarker, renderUiSketch, type MockupDocument, type MockupImageType, type MockupMarkerInput, type MockupReport, type PlatformName, type ReviewStatus, type UiLegendItem, type UiSpec, type UiTheme, uiSpecIssues, unsafeSvgReasons } from '@localehub/contracts';
 import { createHash } from 'node:crypto';
 
 /**
@@ -733,12 +733,23 @@ export async function upsertScreenMockup(
     missing: !known.has(`${marker.namespace}\u0000${marker.key}`),
   }));
   const report = input.image
-    ? analyzeSketch({
-        svg: input.image.bytes.toString('utf8'),
-        markers: reportMarkers,
-        legend: input.legend ?? [],
-        ...(input.expectations ? { expectations: input.expectations } : {}),
-      })
+    ? input.image.mimeType === 'image/svg+xml'
+      ? analyzeSketch({
+          svg: input.image.bytes.toString('utf8'),
+          markers: reportMarkers,
+          legend: input.legend ?? [],
+          ...(input.expectations ? { expectations: input.expectations } : {}),
+        })
+      : // A raster is pixels, not markup: running the sketch analyzer over PNG bytes found no pictures
+        // and no colours every time, and told every screenshot it looked like a wireframe. Nothing here
+        // reads inside the bytes, so the report says so instead of inventing conclusions.
+        analyzeRasterImage({
+          mimeType: input.image.mimeType,
+          width: input.image.width,
+          height: input.image.height,
+          markers: reportMarkers,
+          legend: input.legend ?? [],
+        })
     : analyzeDocument({
         document: input.document!,
         markers: reportMarkers,
