@@ -5,6 +5,7 @@ import { YamlAdapter } from '../adapters/yaml';
 import { AppleStringsAdapter } from '../adapters/ios-strings';
 import { AndroidXmlAdapter, localeFromAndroidPath } from '../adapters/android-xml';
 import { XcstringsAdapter } from '../adapters/xcstrings';
+import { ArbAdapter, arbTagForLocale, localeFromArbPath, localeFromArbTag } from '../adapters/arb';
 import { StringsdictAdapter } from '../adapters/stringsdict';
 import { PoAdapter } from '../adapters/po';
 import { XliffAdapter } from '../adapters/xliff';
@@ -458,6 +459,7 @@ describe('adapter registry', () => {
   it('maps file extensions to formats', () => {
     expect(formatForExtension('a/b.json')).toBe('json');
     expect(formatForExtension('a/b.xcstrings')).toBe('xcstrings');
+    expect(formatForExtension('lib/l10n/app_zh_CN.arb')).toBe('arb');
     expect(formatForExtension('a/b.stringsdict')).toBe('ios-stringsdict');
     expect(formatForExtension('a/b.strings')).toBe('ios-strings');
     expect(formatForExtension('a/b.xliff')).toBe('xliff');
@@ -471,5 +473,276 @@ describe('adapter registry', () => {
     // `csv` used to stand in here as an unregistered format; it is registered now, so this uses
     // one that genuinely has no adapter.
     expect(() => createAdapter('parquet' as never)).toThrow(/No adapter registered/);
+  });
+});
+
+/**
+ * Flutter's ARB.
+ *
+ * The three things that make it not-just-JSON are each a way to break a real project: `@@locale`
+ * (the file's own statement of which language it holds), `@key` metadata (what gen-l10n turns into
+ * typed parameters, and what a template key must have or the build fails), and plural/select values
+ * (objects in the file, one ICU message on the platform's side).
+ */
+describe('Flutter ARB adapter', () => {
+  const adapter = new ArbAdapter();
+  const EN = `{
+  "@@locale": "en",
+  "appTitle": "InsureTalk Flutter",
+  "@appTitle": {
+    "description": "App title (brand name, same in every language)"
+  },
+  "unknownRouteBody": "Unregistered route: {route}",
+  "@unknownRouteBody": {
+    "description": "Body of the unknown-route page",
+    "placeholders": {
+      "route": {
+        "type": "String"
+      }
+    }
+  }
+}
+`;
+
+  it('reads entries, and takes the description and placeholders from the metadata', async () => {
+    const entries = await adapter.parse(input('lib/l10n/app_en.arb', EN, { locale: 'en', platform: 'ios' }));
+    expect(entries.map((entry) => entry.key)).toEqual(['appTitle', 'unknownRouteBody']);
+
+    const [title, body] = entries;
+    expect(title.value).toBe('InsureTalk Flutter');
+    expect(title.description).toBe('App title (brand name, same in every language)');
+    expect(body.description).toBe('Body of the unknown-route page');
+    expect(body.placeholders).toEqual([{ name: 'route', type: 'String' }]);
+    expect(body.platformMetadata?.arbLocale).toBe('en');
+  });
+
+  it('patches a value without touching the metadata, the order or the formatting', async () => {
+    const patched = await adapter.applyPatch({
+      originalContent: Buffer.from(EN, 'utf8'),
+      changes: [
+        {
+          key: 'unknownRouteBody',
+          namespace: '',
+          platform: 'ios',
+          locale: 'zh-CN',
+          previousValue: 'Unregistered route: {route}',
+          newValue: '未注册的路由：{route}',
+        },
+      ],
+      preserveUnknownFields: true,
+    });
+    const text = patched.toString('utf8');
+    expect(text).toContain('"unknownRouteBody": "未注册的路由：{route}"');
+    // The metadata block, including the placeholder declaration, is untouched...
+    expect(text).toContain('"placeholders": {');
+    expect(text).toContain('"type": "String"');
+    // ...and nothing else moved.
+    expect(text.indexOf('"appTitle"')).toBeLessThan(text.indexOf('"unknownRouteBody"'));
+    expect(text).toContain('"@@locale": "en"');
+  });
+
+  it('turns a plural object into one ICU message, taking the argument name from the metadata', async () => {
+    const file = `{
+  "@@locale": "en",
+  "cartItems": {
+    "one": "{count} item",
+    "other": "{count} items"
+  },
+  "@cartItems": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
+}
+`;
+    const [entry] = await adapter.parse(input('lib/l10n/app_en.arb', file, { locale: 'en' }));
+    expect(entry.key).toBe('cartItems');
+    const plural = parseIcuPlural(entry.value);
+    expect(plural?.kind).toBe('plural');
+    expect(plural?.argName).toBe('count');
+    expect(plural?.quantities).toEqual({ one: '{count} item', other: '{count} items' });
+  });
+
+  it('reads a select as a select, not as a plural', async () => {
+    // `{gender, plural, …}` is what a branch-name guess produces, and gen-l10n compiles it into
+    // nonsense. The declared placeholder type is what settles it.
+    const file = `{
+  "@@locale": "en",
+  "greeting": {
+    "male": "Hello sir",
+    "female": "Hello madam",
+    "other": "Hello"
+  },
+  "@greeting": {
+    "placeholders": {
+      "gender": {
+        "type": "String"
+      }
+    }
+  }
+}
+`;
+    const [entry] = await adapter.parse(input('lib/l10n/app_en.arb', file, { locale: 'en' }));
+    const parsed = parseIcuPlural(entry.value);
+    expect(parsed?.kind).toBe('select');
+    expect(parsed?.argName).toBe('gender');
+    expect(entry.value.startsWith('{gender, select,')).toBe(true);
+  });
+
+  it('writes a patched plural back as branches', async () => {
+    const file = `{
+  "@@locale": "en",
+  "cartItems": {
+    "one": "{count} item",
+    "other": "{count} items"
+  }
+}
+`;
+    const patched = await adapter.applyPatch({
+      originalContent: Buffer.from(file, 'utf8'),
+      changes: [
+        {
+          key: 'cartItems',
+          namespace: '',
+          platform: 'ios',
+          locale: 'zh-CN',
+          previousValue: '{count, plural, one {{count} item} other {{count} items}}',
+          newValue: buildIcuPlural({ argName: 'count', quantities: { one: '{count} 件', other: '{count} 件' } }),
+        },
+      ],
+      preserveUnknownFields: true,
+    });
+    const text = patched.toString('utf8');
+    expect(text).toContain('"one": "{count} 件"');
+    expect(text).toContain('"other": "{count} 件"');
+    expect(text).not.toContain('"other": "{count} items"');
+    // Still valid JSON with the key where it was.
+    expect(Object.keys(JSON.parse(text))).toEqual(['@@locale', 'cartItems']);
+  });
+
+  it('refuses to flatten a plural into a plain string', async () => {
+    const file = `{
+  "@@locale": "en",
+  "cartItems": {
+    "one": "{count} item",
+    "other": "{count} items"
+  }
+}
+`;
+    await expect(
+      adapter.applyPatch({
+        originalContent: Buffer.from(file, 'utf8'),
+        changes: [
+          {
+            key: 'cartItems',
+            namespace: '',
+            platform: 'ios',
+            locale: 'zh-CN',
+            previousValue: '{count, plural, one {{count} item} other {{count} items}}',
+            newValue: '{count} 件商品',
+          },
+        ],
+        preserveUnknownFields: true,
+      }),
+    ).rejects.toThrow(/plural\/select branches/);
+  });
+
+  it('inserts a new key together with the placeholders its value uses', async () => {
+    const patched = await adapter.applyPatch({
+      originalContent: Buffer.from(EN, 'utf8'),
+      changes: [
+        {
+          key: 'welcomeBack',
+          namespace: '',
+          platform: 'ios',
+          locale: 'en',
+          previousValue: null,
+          newValue: 'Welcome back, {name}',
+        },
+      ],
+      preserveUnknownFields: true,
+    });
+    const text = patched.toString('utf8');
+    const root = JSON.parse(text) as Record<string, unknown>;
+    expect(root.welcomeBack).toBe('Welcome back, {name}');
+    // gen-l10n generates the parameter from this declaration — without it `{name}` is a literal.
+    expect(root['@welcomeBack']).toEqual({ placeholders: { name: { type: 'String' } } });
+  });
+
+  it('warns when the file says it is a different language than the mapping does', async () => {
+    const thai = EN.replace('"@@locale": "en"', '"@@locale": "zh"');
+    const entries = await adapter.parse(input('lib/l10n/app_th.arb', thai, { locale: 'th-TH', platform: 'ios' }));
+    const issues = await adapter.validate(asNormalized('arb', 'lib/l10n/app_th.arb', entries));
+    expect(issues.map((issue) => issue.code)).toContain('ARB_LOCALE_MISMATCH');
+  });
+
+  it('warns when a value uses a placeholder the metadata does not declare', async () => {
+    const file = `{
+  "@@locale": "en",
+  "greeting": "Hello {name}",
+  "@greeting": {
+    "description": "greeting"
+  }
+}
+`;
+    const entries = await adapter.parse(input('lib/l10n/app_en.arb', file, { locale: 'en' }));
+    const issues = await adapter.validate(asNormalized('arb', 'lib/l10n/app_en.arb', entries));
+    expect(issues.map((issue) => issue.code)).toContain('ARB_UNDECLARED_PLACEHOLDER');
+  });
+
+  it('keeps an ICU plural that the file wrote as a string as a string', async () => {
+    // Both spellings are real ARB; the platform stores one canonical ICU message, and the file has
+    // to come back the way it went in.
+    const file = `{
+  "@@locale": "en",
+  "cartItems": "{count, plural, one {# item} other {# items}}",
+  "@cartItems": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
+}
+`;
+    const entries = await adapter.parse(input('lib/l10n/app_en.arb', file, { locale: 'en' }));
+    const [serialized] = await adapter.serialize(asNormalized('arb', 'lib/l10n/app_en.arb', entries));
+    const root = JSON.parse(serialized.content) as Record<string, unknown>;
+    expect(typeof root.cartItems).toBe('string');
+    expect(root.cartItems).toBe('{count, plural, one {# item} other {# items}}');
+  });
+
+  it('round-trips a file: parse -> serialize -> parse', async () => {
+    const entries = await adapter.parse(input('lib/l10n/app_zh_CN.arb', EN, { locale: 'zh-CN', platform: 'ios' }));
+    const [file] = await adapter.serialize(asNormalized('arb', 'lib/l10n/app_zh_CN.arb', entries));
+    expect(JSON.parse(file.content)['@@locale']).toBe('zh_CN');
+    const reparsed = await adapter.parse(input('lib/l10n/app_zh_CN.arb', file.content, { locale: 'zh-CN', platform: 'ios' }));
+    expect(reparsed.map((entry) => [entry.key, entry.value, entry.description])).toEqual(
+      entries.map((entry) => [entry.key, entry.value, entry.description]),
+    );
+    expect(reparsed[1]?.placeholders).toEqual([{ name: 'route', type: 'String' }]);
+  });
+
+  it('names the locale the way the file system does, in both directions', () => {
+    expect(localeFromArbPath('lib/l10n/app_zh_CN.arb')).toBe('zh-CN');
+    expect(localeFromArbPath('lib/l10n/app_zh_TW.arb')).toBe('zh-TW');
+    expect(localeFromArbPath('lib/l10n/app_en.arb')).toBe('en');
+    expect(localeFromArbPath('lib/l10n/l10n_pt_BR.arb')).toBe('pt-BR');
+    // No locale in the name is not a locale.
+    expect(localeFromArbPath('lib/l10n/app.arb')).toBeNull();
+    expect(localeFromArbPath('lib/l10n/app_en.json')).toBeNull();
+
+    expect(arbTagForLocale('zh-CN')).toBe('zh_CN');
+    expect(arbTagForLocale('en')).toBe('en');
+    expect(localeFromArbTag('zh_CN')).toBe('zh-CN');
+    expect(localeFromArbTag('zh')).toBe('zh');
+  });
+
+  it('detects an ARB file by extension and content', async () => {
+    expect(await adapter.detect('lib/l10n/app_en.arb', Buffer.from(EN, 'utf8'))).toBe(true);
+    expect(await adapter.detect('lib/l10n/app_en.arb', Buffer.from('not json', 'utf8'))).toBe(false);
+    expect(await adapter.detect('locales/en.json', Buffer.from(EN, 'utf8'))).toBe(false);
   });
 });

@@ -6,6 +6,7 @@ import { AppleStringsAdapter } from './adapters/ios-strings';
 import { StringsdictAdapter } from './adapters/stringsdict';
 import { XcstringsAdapter } from './adapters/xcstrings';
 import { AndroidXmlAdapter } from './adapters/android-xml';
+import { ArbAdapter } from './adapters/arb';
 import { PoAdapter } from './adapters/po';
 import { XliffAdapter } from './adapters/xliff';
 import { CsvAdapter } from './adapters/csv';
@@ -21,6 +22,7 @@ export * from './adapters/ios-strings';
 export * from './adapters/stringsdict';
 export * from './adapters/xcstrings';
 export * from './adapters/android-xml';
+export * from './adapters/arb';
 export * from './adapters/po';
 export * from './adapters/xliff';
 export * from './adapters/tabular';
@@ -36,6 +38,7 @@ const REGISTRY: Record<FileFormatId, () => FormatAdapter> = {
   'ios-stringsdict': () => new StringsdictAdapter(),
   xcstrings: () => new XcstringsAdapter(),
   'android-xml': () => new AndroidXmlAdapter(),
+  arb: () => new ArbAdapter(),
   csv: () => new CsvAdapter(),
   xlsx: () => new XlsxAdapter(),
 };
@@ -56,6 +59,8 @@ export function supportedFormats(): FileFormatId[] {
 export function formatForExtension(filePath: string): FileFormatId | null {
   const lower = filePath.toLowerCase();
   if (lower.endsWith('.xcstrings')) return 'xcstrings';
+  // Before `.json`: an ARB file is JSON, but it is not a JSON translation file (metadata, `@@locale`).
+  if (lower.endsWith('.arb')) return 'arb';
   if (lower.endsWith('.csv')) return 'csv';
   if (lower.endsWith('.xlsx')) return 'xlsx';
   if (lower.endsWith('.stringsdict')) return 'ios-stringsdict';

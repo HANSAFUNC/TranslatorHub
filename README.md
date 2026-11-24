@@ -139,7 +139,7 @@ localehub/
 │   ├── database/     Prisma Schema、RLS 迁移、TenantPrisma
 │   ├── domain/       领域服务（翻译、同步引擎、QA、AI）
 │   ├── sync-engine/  三方比较、同步计划、冲突与回写计划（纯函数）
-│   ├── format-adapters/ JSON / YAML / .strings / .stringsdict / .xcstrings / Android XML / PO / XLIFF
+│   ├── format-adapters/ JSON / YAML / .strings / .stringsdict / .xcstrings / Android XML / PO / XLIFF / Flutter ARB
 │   ├── workspace/    本地文件访问边界、原子写入、Git 集成
 │   ├── api-client/   REST 客户端
 │   ├── local-sync/   本地仓库引擎（CLI 使用：扫描、三方比较、安全写回）

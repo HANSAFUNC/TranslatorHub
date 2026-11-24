@@ -73,7 +73,9 @@ apps/*          → 上述包
 
 统一 `FormatAdapter` 接口；JSON 通过自研 span scanner 做**原地 token 替换**，因此缩进、键序、
 注释与未知字段逐字节保留；其余格式（YAML 用 Document API，.strings/.stringsdict/Android XML/
-PO/XLIFF 用带偏移的正则扫描）同样是原地补丁而非整体重写。
+PO/XLIFF 用带偏移的正则扫描）同样是原地补丁而非整体重写。Flutter 的 ARB 走 JSON 那套 scanner
+（它就是 JSON），额外负责 `@@locale`、`@key` 元数据与复数/选择分支对象的读写——细节见 §6 与
+`packages/format-adapters/src/adapters/arb.ts` 的注释。
 
 ### 4.4 packages/database
 

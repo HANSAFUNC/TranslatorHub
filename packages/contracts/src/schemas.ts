@@ -19,6 +19,9 @@ export const formatIdSchema = z.enum([
   'ios-stringsdict',
   'xcstrings',
   'android-xml',
+  // Flutter's ARB is writable in place like the others: it is JSON, and the values are spliced
+  // rather than the file regenerated. See `format-adapters/src/adapters/arb.ts`.
+  'arb',
 ]);
 
 /**
@@ -118,6 +121,17 @@ export const scanEntrySchema = z.object({
   platformMetadata: z.record(z.unknown()).optional(),
   deleted: z.boolean().optional(),
 });
+
+/**
+ * How much one scan upload may weigh.
+ *
+ * A scan carries every entry in the repository, and the size of that is the repository's, not the
+ * platform's — but the *transport* limit has to be a number, so it is sized against the platform's
+ * own batch cap (`SYNC_MAX_ENTRIES_PER_BATCH`, 20,000 entries). Express's 100 kB default is not
+ * that number: with it, a project of a few thousand entries could not be scanned at all, and the
+ * refusal arrived as "request entity too large" with nothing to act on.
+ */
+export const MAX_SCAN_REQUEST_BYTES = 8 * 1024 * 1024;
 
 export const scanBatchSchema = z.object({
   projectId: z.string().min(1),

@@ -13,7 +13,7 @@ import {
   type RawEntry,
   type ValidationIssue,
 } from '@localehub/contracts';
-import { createAdapter, formatForExtension, localeFromAndroidPath, supportedFormats } from '@localehub/format-adapters';
+import { createAdapter, formatForExtension, localeFromAndroidPath, localeFromArbPath, supportedFormats } from '@localehub/format-adapters';
 import type { WorkspaceGuard } from './index';
 
 const SKIP_DIRS = new Set([
@@ -251,11 +251,19 @@ function resolveLocale(
   return canonicalizeLocaleTag(options.sourceLocale);
 }
 
-/** Derive a locale from a path: values-ja/, ja.lproj/, locales/ja-JP/, ... */
+/**
+ * Derive a locale from a path: values-ja/, ja.lproj/, locales/ja-JP/, app_zh_CN.arb, ...
+ *
+ * The ARB case is the one that lives in the *file name* rather than a directory, which is why it
+ * needs its own branch: `lib/l10n/app_zh_CN.arb` is the only place that file's locale is written,
+ * and no number of path segments would spell it.
+ */
 export function deriveLocaleFromPath(relativePath: string, knownLocales: string[]): string | null {
   const android = localeFromAndroidPath(relativePath);
+  const arb = localeFromArbPath(relativePath);
   const candidates = [
     android,
+    arb,
     /(?:^|[/\\])([A-Za-z]{2,3}(?:-[A-Za-z0-9]+)*)\.lproj(?:[/\\]|$)/.exec(relativePath)?.[1] ?? null,
     ...relativePath.split(/[/\\]/).filter(Boolean),
   ].filter((value): value is string => Boolean(value));
@@ -270,6 +278,10 @@ export function deriveLocaleFromPath(relativePath: string, knownLocales: string[
     if (byLanguage) return canonicalizeLocaleTag(byLanguage);
   }
   if (android) return canonicalizeLocaleTag(android);
+  // An ARB file names its own locale the way an Android `values-*` directory does — `app_zh_CN.arb`
+  // is the only statement of it anywhere — so it is taken at its word when the config does not
+  // already know that locale.
+  if (arb) return canonicalizeLocaleTag(arb);
   return null;
 }
 
@@ -284,7 +296,7 @@ function namespaceFor(mapping: FileMappingConfig, relativePath: string, locale: 
 function looksLikeLocalizationFile(file: string, knownLocales: string[]): boolean {
   const lower = file.toLowerCase();
   if (knownLocales.some((locale) => lower.includes(locale.toLowerCase()))) return true;
-  if (/\.(strings|stringsdict|xcstrings)$/.test(lower)) return true;
+  if (/\.(strings|stringsdict|xcstrings|arb)$/.test(lower)) return true;
   if (/values-[a-z]{2}/.test(lower)) return true;
   if (/\.(po|pot|xliff|xlf)$/.test(lower)) return true;
   return false;

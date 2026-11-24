@@ -119,6 +119,8 @@ export type FileFormatId =
   | 'ios-stringsdict'
   | 'xcstrings'
   | 'android-xml'
+  /** Flutter's ARB (`app_en.arb`) — JSON plus `@@locale`, `@key` metadata and plural/select objects. */
+  | 'arb'
   /** Bulk editing and import validation (spec §10.1). Import/export, not repository sync. */
   | 'csv'
   | 'xlsx';

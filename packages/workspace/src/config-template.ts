@@ -1,5 +1,6 @@
 import { stringify as toYaml } from 'yaml';
 import { DEFAULT_MCP_SCOPES, type PlatformName } from '@localehub/contracts';
+import { arbTagForLocale } from '@localehub/format-adapters';
 
 /**
  * The `.localehub/config.yaml` template.
@@ -24,6 +25,16 @@ export interface LocalConfigTemplateInput {
    * written back is a mapping that can never be applied.
    */
   localesDir?: string;
+  /**
+   * Which repository layout to describe.
+   *
+   * `web` (the default) is the JSON tree `locales/<locale>/…`; `flutter` is gen-l10n's flat
+   * `lib/l10n/<template>_<locale>.arb`, with flat keys (ARB keys are identifiers, never paths) and
+   * no namespace from the path — a Flutter app's keys are one global set.
+   */
+  preset?: 'web' | 'flutter';
+  /** Flutter only: the `<template>` in `<template>_<locale>.arb`. Defaults to `app`. */
+  flutterTemplate?: string;
 }
 
 export interface LocalConfigTemplateResult {
@@ -37,8 +48,13 @@ export function renderLocalConfig(input: LocalConfigTemplateInput): LocalConfigT
   const sourceLocale = input.sourceLocale;
   const targets = [...new Set(input.locales.filter((locale) => locale && locale !== sourceLocale))];
   const platforms = [...new Set(input.platforms ?? ['web'])];
-  const dir = input.localesDir ?? 'locales';
-  const extension = 'json';
+  const flutter = input.preset === 'flutter';
+  const dir = input.localesDir ?? (flutter ? 'lib/l10n' : 'locales');
+  const extension = flutter ? 'arb' : 'json';
+  // gen-l10n names the files `<template>_<locale>.arb`, and the locale is spelled with underscores
+  // there (`app_zh_CN.arb`) while every locale tag the platform accepts uses dashes.
+  const template = input.flutterTemplate ?? 'app';
+  const nameFor = (locale: string) => (flutter ? `${template}_${arbTagForLocale(locale)}.arb` : null);
 
   const files = [
     {
@@ -47,9 +63,9 @@ export function renderLocalConfig(input: LocalConfigTemplateInput): LocalConfigT
       locale: sourceLocale,
       format: extension,
       source: true,
-      paths: [`${dir}/${sourceLocale}/**/*.${extension}`],
-      keyMode: 'nested',
-      namespaceFromPath: true,
+      paths: [flutter ? `${dir}/` + nameFor(sourceLocale) : `${dir}/${sourceLocale}/**/*.${extension}`],
+      keyMode: flutter ? 'flat' : 'nested',
+      namespaceFromPath: !flutter,
     },
     ...targets.map((locale) => ({
       id: `${platforms[0]}-${locale.toLowerCase()}`,
@@ -57,9 +73,9 @@ export function renderLocalConfig(input: LocalConfigTemplateInput): LocalConfigT
       locale,
       format: extension,
       source: false,
-      paths: [`${dir}/${locale}/**/*.${extension}`],
-      keyMode: 'nested',
-      namespaceFromPath: true,
+      paths: [flutter ? `${dir}/` + nameFor(locale) : `${dir}/${locale}/**/*.${extension}`],
+      keyMode: flutter ? 'flat' : 'nested',
+      namespaceFromPath: !flutter,
     })),
   ];
 
@@ -83,7 +99,9 @@ export function renderLocalConfig(input: LocalConfigTemplateInput): LocalConfigT
       // out of reach of the sync engine, which is the whole point of the allowlist.
       allowWrite: [`${dir}/**`],
       denyRead: ['.env*', '**/secrets/**', 'node_modules/**'],
-      denyWrite: ['.env*', '**/secrets/**', '**/*.generated.*'],
+      // `lib/l10n/generated/` is gen-l10n's output: source code, not a language resource, so it is
+      // denied for writing and ignored for scanning in the Flutter preset.
+      denyWrite: ['.env*', '**/secrets/**', '**/*.generated.*', ...(flutter ? [`${dir}/generated/**`] : [])],
     },
     sync: {
       defaultDirection: 'bidirectional',
@@ -97,7 +115,7 @@ export function renderLocalConfig(input: LocalConfigTemplateInput): LocalConfigT
       maxFilesPerBatch: 500,
     },
     files,
-    ignore: { keys: ['debug.*'], paths: ['**/*.generated.*'] },
+    ignore: { keys: ['debug.*'], paths: ['**/*.generated.*', ...(flutter ? [`${dir}/generated/**`] : [])] },
   };
 
   return {

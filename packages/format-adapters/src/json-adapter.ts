@@ -11,6 +11,7 @@ import {
   type ValidationIssue,
 } from '@localehub/contracts';
 import { JsonScanner, PATH_SEP, joinPath, type JsonScanResult } from './json-scan';
+import { lineOfOffset } from './text-utils';
 
 export interface JsonAdapterOptions {
   /** dotted keys are produced from nested objects (default) or used literally */
@@ -285,12 +286,6 @@ function walk(
     return;
   }
   visit(path, node);
-}
-
-function lineOfOffset(text: string, offset: number): number {
-  let line = 1;
-  for (let i = 0; i < offset && i < text.length; i += 1) if (text[i] === '\n') line += 1;
-  return line;
 }
 
 export { contentHash };

@@ -665,6 +665,35 @@ node apps/cli/dist/bin.js mcp-config          # 打印 MCP 客户端配置片段
 Agent 侧的正确用法：需要平台的三方比较、冲突检测与基线记录时，让 Agent 用 Bash 跑上面的命令，
 而不是绕过它们直接改译文文件——直接改会让平台失去基线，冲突检测随之失效。
 
+### 3.1 Flutter 仓库：ARB
+
+Flutter 工程的本地化文件由 `flutter gen-l10n` 定义：`lib/l10n/app_<locale>.arb`，一个语言一个文件，
+语言用下划线拼（`app_zh_CN.arb`），旁边还有 gen-l10n 生成的一整目录 Dart。平台按这一套来：
+
+```bash
+localehub init --preset flutter --project prj_xxx --source-locale en --locales zh-CN,th
+```
+
+生成的映射就是每个语言一条 `lib/l10n/app_<tag>.arb`，`keyMode: flat`（ARB 的 key 是标识符，不是路径），
+`namespaceFromPath: false`（Flutter 全 app 一套 key），并且把 `lib/l10n/generated/**` 同时放进
+`denyWrite` 与 `ignore.paths`——那是 gen-l10n 的产物，不是语言资源。
+
+写回只替换变化的值 token（ARB 就是 JSON，用与 JSON 相同的 span scanner），所以键序、缩进与 `@` 元数据
+逐字节保留。三条 ARB 自己的规矩：
+
+- **`@@locale` 是文件自己的语言声明**，与映射声明的语言不一致时 `validate` 报 `ARB_LOCALE_MISMATCH`
+  ——中文落进泰语文件是这类不一致最常见的后果；
+- **`@key` 元数据不动，也不臆造**。`description` 与 `placeholders` 会读进词条（译员看得到说明，
+  gen-l10n 靠它生成有类型的参数）；值里用了而元数据没声明的占位符报 `ARB_UNDECLARED_PLACEHOLDER`，
+  因为那是会变成界面上一个字面量的错；
+- **复数/选择在文件里是对象**（`{"one": …, "other": …}`），平台的规范值仍是 ICU 串。把一条复数改写成
+  纯字符串会被**拒绝**：那会让 `@key.placeholders` 声明一个值里已经不存在的参数，产出一个 gen-l10n
+  不再能正确编译的文件。
+
+`required-resource-attributes: true` 的工程（模板每条词条都要有 `@` 元数据）也能直接用：平台不新增
+词条到模板里，`apply` 只写已存在 Key 的值。端到端检查：`node scripts/check-flutter-arb.mjs`
+（造一个真实的 Flutter 目录 → init/scan/push/pull/apply → 断言文件只有那一行变了）。
+
 ## 4. Skill 下发
 
 Skill（工作流程与规范文档）通过 MCP 以 resource 下发，指令型 Skill 额外注册一个 prompt：

@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { loadEnvFiles } from '@localehub/config';
+import type { PlatformName } from '@localehub/contracts';
 import { LocalSyncServices } from '@localehub/local-sync';
 import { loadLocalConfig, renderLocalConfig } from '@localehub/workspace';
 import { flagBool, parseArgs } from './args';
@@ -17,7 +18,11 @@ import { flagBool, parseArgs } from './args';
 const HELP = `localehub <command>
 
   init [--project <id>] [--api <url>] [--source-locale en-US] [--locales ja-JP,zh-CN]
+       [--preset web|flutter] [--platform web,ios] [--locales-dir <dir>]
+       [--flutter-template app]
       Create .localehub/config.yaml in the current repository.
+      --preset flutter describes a Flutter app: gen-l10n's flat lib/l10n/app_<locale>.arb,
+      flat keys, and lib/l10n/generated/ kept out of reach.
 
   info
       Print project, workspace policy, git state and configuration validation.
@@ -113,6 +118,22 @@ async function main(): Promise<void> {
       process.stdout.write(
         `scanned ${result.filesScanned} file(s), ${result.entriesFound} entr(ies), locales: ${(result.locales as string[]).join(', ')}\n`,
       );
+      // Whether the scan reached the platform, said out loud.
+      //
+      // This used to be silent: the summary line printed the local count either way, so a scan the
+      // API refused (a body over the transport limit, an expired token) read exactly like one it
+      // accepted — and the next command failed with "No scan available". The upload result is the
+      // one thing a caller cannot infer from the numbers above it.
+      if (result.uploaded !== true) {
+        process.stdout.write(
+          `上传失败：${result.uploadError ?? '平台没有接受这次扫描'}\n` +
+            '  扫描结果只在本地；修好原因后重跑 localehub scan，再 preview / apply。\n',
+        );
+      } else if ((result.expanded as string[]).length) {
+        // The platform grows the project to match the repository. Saying so is what keeps a first
+        // push from silently adding a language nobody expected.
+        process.stdout.write(`平台补充了：${(result.expanded as string[]).join('、')}\n`);
+      }
       if ((result.errors as unknown[]).length) process.stdout.write(`errors: ${JSON.stringify(result.errors)}\n`);
       // Print the warnings themselves, not just how many there were: when a scan matches no files
       // they are the only thing that explains why.
@@ -238,7 +259,15 @@ async function main(): Promise<void> {
       return;
     }
     case 'apply': {
-      if (!action || action === 'preview') {
+      // Which of the two things `apply` means here.
+      //
+      // Bare `apply` and `apply preview` are the dry run. Asking to write is `--confirm` — the form
+      // the help documents — or an explicit `write` action. Branching on the positional alone made
+      // `apply --confirm --apply-plan <id>` fall through to the preview: it printed the diff, exited
+      // 0, and wrote nothing, which is a success report for a repository that did not change.
+      const wantsWrite =
+        action !== 'preview' && (action === 'write' || flagBool(flags, 'confirm') || flags['apply-plan'] !== undefined);
+      if (!wantsWrite) {
         const result = await services.previewApply({
           create_backup: !flagBool(flags, 'no-backup'),
           include_drafts: flagBool(flags, 'include-drafts'),
@@ -432,6 +461,13 @@ function init(workspace: string, flags: Record<string, string | boolean>): void 
     .split(',')
     .map((locale) => locale.trim())
     .filter(Boolean);
+  const preset = flags.preset === 'flutter' ? 'flutter' : 'web';
+  const platforms = flags.platform
+    ? String(flags.platform)
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean)
+    : [preset === 'flutter' ? 'universal' : 'web'];
 
   // The same template the Remote MCP's `create_project` returns, so a repository initialised here
   // and one initialised by an agent produce the same file.
@@ -440,15 +476,21 @@ function init(workspace: string, flags: Record<string, string | boolean>): void 
     projectName: (flags.name as string | undefined) ?? 'My Product',
     sourceLocale,
     locales,
-    platforms: ['web'],
+    platforms: platforms as PlatformName[],
+    preset,
     apiUrl,
     ...(flags['locales-dir'] ? { localesDir: flags['locales-dir'] as string } : {}),
+    ...(flags['flutter-template'] ? { flutterTemplate: flags['flutter-template'] as string } : {}),
   });
 
   mkdirSync(join(workspace, '.localehub'), { recursive: true });
   writeFileSync(configPath, yaml, 'utf8');
+  const flutterHint =
+    preset === 'flutter'
+      ? `\n  Flutter: the ARB files live at ${(flags['locales-dir'] as string | undefined) ?? 'lib/l10n'}/, and \`flutter gen-l10n\` reads them; lib/l10n/generated/ is written by gen-l10n, not by us.\n`
+      : '';
   process.stdout.write(
-    `wrote ${configPath}\n\nNext steps:\n  1. put your project id in project.id\n  2. export ${'LOCALEHUB_TOKEN'}=...\n  3. localehub info && localehub scan\n  4. localehub sync preview\n`,
+    `wrote ${configPath}${flutterHint}\nNext steps:\n  1. put your project id in project.id\n  2. export ${'LOCALEHUB_TOKEN'}=...\n  3. localehub info && localehub scan\n  4. localehub sync preview\n`,
   );
 }
 

@@ -25,7 +25,8 @@
 ### 1.3 格式适配器
 
 - JSON（自研 span scanner，原地 token 替换）、YAML（Document API 保留注释）、
-  iOS `.strings`、`.stringsdict`、`.xcstrings`、Android `strings.xml`/`plurals.xml`、PO、XLIFF。
+  iOS `.strings`、`.stringsdict`、`.xcstrings`、Android `strings.xml`/`plurals.xml`、PO、XLIFF、
+  Flutter ARB（`app_<locale>.arb`，见 §1.78）。
 - 29 个 round-trip / 原地补丁测试通过，含复数分支、XML 实体、引号与换行转义。
 
 ### 1.4 本地仓库操作（CLI）
@@ -2568,6 +2569,62 @@ zh-CN: [["cart","购物车"], …]
 slug**，第二次创建返回 `CONFLICT`「A record with these values already exists」（检查脚本第一版就是这么撞上的）。
 纯中文名不会撞（会落到 `project-<时间戳>`），所以是个窄口子，但报错信息对使用者毫无指向。要修的话是「slug 冲突时
 加后缀」或「返回一条说明是 slug 撞了的错误」，需要用户点头再动。
+### 1.78 兼容 Flutter（第一步：ARB 打通；界面还原是第二步）
+
+用户要求「要兼容 Flutter」，并确认两件事都要：**本地化文件（ARB）** 与 **界面还原那条路**。本条目是第一步。
+盘面结论：全仓此前**没有任何** ARB/Flutter 的处理——`.arb` 不在 `formatForExtension` 里（扫描时直接跳过），
+没有适配器，`formatIdSchema`（仓库映射可声明的格式）也不认它。用户机器上就有真实工程（`~/ios-flutter/flutter_app`，
+7 语言 × 345 条，`lib/l10n/app_*.arb`，每条带 `@key` 元数据 + `placeholders`，自带 `l10n_check.dart` 门禁）。
+
+**做了什么**
+
+| 位置 | 内容 |
+| --- | --- |
+| `format-adapters/src/adapters/arb.ts`（新） | ARB 适配器：`@@locale`/`@key` 元数据/复数与选择对象；写回沿用 JSON 的 span scanner，只替换变化的值 token |
+| `contracts` | `FileFormatId` 与 `formatIdSchema` 加 `arb`（可原地写回，所以进得了仓库映射） |
+| `format-adapters/index.ts` | 注册 + `formatForExtension('.arb')`（放在 `.json` 之前） |
+| `icu.ts` | `parseIcuPlural`/`buildIcuPlural` 支持 `kind`（plural/selectordinal/**select**）——把 select 写成 plural 会编出没意义的代码 |
+| `workspace/scanner.ts` | `deriveLocaleFromPath` 认 `app_zh_CN.arb`（语言写在**文件名**里，任何目录段都拼不出来）；`looksLikeLocalizationFile` 加 `.arb`，未映射的 ARB 文件会警告 |
+| `workspace/config-template.ts` + `cli init` | `--preset flutter`：每语言一条 `lib/l10n/app_<tag>.arb`、`keyMode: flat`、`namespaceFromPath: false`、`lib/l10n/generated/**` 进 `denyWrite` 与 `ignore`；另有 `--platform`、`--flutter-template` |
+
+**三条 ARB 自己的规矩**（都在适配器注释里写了原因）：`@@locale` 与映射不一致 → `ARB_LOCALE_MISMATCH` 警告；
+值里用了而元数据没声明的占位符 → `ARB_UNDECLARED_PLACEHOLDER` 警告（gen-l10n 会让它变成界面上的字面量）；
+把复数对象改写成纯字符串 → **拒绝**（会让 `@key.placeholders` 声明一个值里不存在的参数）。插入新 key **不臆造 description**。
+
+**顺手挖出并修掉的两个「报了成功其实没做」**（都不是 ARB 的错，但这个流程撞上了它们）
+
+1. **扫描上传超过 100 kB 就被拒**。API 只给 mockup 路由挂了 4 MB 解析器，其余路由用 Express 默认的
+   100 kB；而 CLI 一次上传整份扫描。真实工程（本次 1209 条，用户的 iOS 工程 8307 条）**根本传不上去**，
+   而且 CLI 只打印「scanned N files」，**不提上传失败**——用户会以为扫完了。修法：把「大体积路由」抽成
+   `mountLargeBodyParser`，`/sync/scans` 按平台自己的批次上限（`SYNC_MAX_ENTRIES_PER_BATCH` 20000 条）给
+   `MAX_SCAN_REQUEST_BYTES = 8 MB`，413 的文案写清上限与「分批要带 partial=true」；CLI 的 scan 现在会明确报
+   「上传失败：…」或「平台补充了：…」。
+2. **`localehub apply --confirm --apply-plan <id>`（帮助里写的那条）不写文件**：分支只看位置参数，
+   `--confirm` 落进 preview，打印 diff、退出码 0、**什么都没写**。修好后帮助里的两条用法都真的会写。
+
+**验证**（本轮全部跑过）
+
+| 证据 | 结果 |
+| --- | --- |
+| 单元：`format-adapters` +14、`workspace/flutter.test.ts` +7 | 539 通过（32 文件） |
+| 集成 | 191 通过 |
+| 单元：`scripts/check-flutter-arb.mjs`（新，端到端） | 造真实 Flutter 目录（3 文件 1209 条，**故意超过 100 kB**）→ init/scan/push/pull/apply → **只有 1 行变化**；`@@locale`、403 条词条、`@appTitle.description`、复数对象形状与键序全部不变；`lib/l10n/generated/` 未被触碰 |
+| 真文件抽样（用户自己的 `app_en.arb` 等 7 个文件） | `localehub scan` 读到 7 文件 **2415 条**（345×7），`sync push` 全部创建；改一条 zh-CN 译文 → pull → apply → `diff` 只有那一行，1601 行其余字节相同 |
+| lint / typecheck / MCP 工具页检查 | 全绿 |
+
+**遗留与下一步**
+
+- 第二步「界面还原/草图」按 Flutter 走：文档里已有 Flutter 的取值对照表（padding/SizedBox/assets），
+  这次没有改；等用户指出实测卡在哪一步（上传被拒？数值不对？素材没内联？）再动手。
+- **没加 `flutter` 端**：`platformSchema`/`PlatformKind` 仍是 web/ios/android/universal。ARB 是跨端的，
+  文件集用 `universal` 是诚实的（草图同理按它实际运行的端选 ios/android/web）。加一个端要动 DB 枚举
+  （本仓第一条 `ALTER TYPE … ADD VALUE` 迁移）、两处内联枚举、web 选择器、`UI_VIEWPORTS`、`projects.controller`
+  的 `max(4)` 与 MCP 文案——等真有需求再做，别现在铺开。
+- 交付说明书里那张「首批格式」表（§10.1）还没加 ARB：那套文档有 .md 与 .docx 两份，用户上次说「不用，
+  你就修改好就行」，这次同样先只在仓库文档里写清，等他要版本再说。
+- **MCP 的 `import_translations` 仍把文件记成 `format: 'json'`**（`apps/mcp-remote/src/server.ts:344`）：ARB 确实是 JSON，所以这条记录不算错到底，但丢了「这是 Flutter 的 ARB」。改法是让 mcp-remote 依赖 `@localehub/format-adapters` 并用 `formatForExtension(path)`——但那要给 mcp-remote 加依赖、并像 bullmq 那样在 `docker/local-layer.Dockerfile` 补一行 symlink 拷贝（layer 构建不跑 pnpm install），代价不成比例；先记在这里。CLI 那条路（scan/push/apply）的格式来自 config，不受影响。
+- 途中记录：`local-sync/src/apply.ts:178` 有一处空转的 `...(item.identity.platform === 'web' ? {} : {})`（加不加都
+  是空对象），是历史残留，不影响行为，留着没动。
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |

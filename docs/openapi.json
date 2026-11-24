@@ -2971,6 +2971,7 @@
                 "ios-stringsdict",
                 "xcstrings",
                 "android-xml",
+                "arb",
                 "csv",
                 "xlsx"
               ],
@@ -8213,7 +8214,8 @@
                             "ios-strings",
                             "ios-stringsdict",
                             "xcstrings",
-                            "android-xml"
+                            "android-xml",
+                            "arb"
                           ]
                         },
                         "fileHash": {

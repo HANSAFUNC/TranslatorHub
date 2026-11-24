@@ -297,9 +297,13 @@ Idempotency-Key: repo-commit-a1b2-plan-xyz
 
 | format                                                                                             | 用途             | `content` 编码                                                   |
 | -------------------------------------------------------------------------------------------------- | ---------------- | ---------------------------------------------------------------- |
-| `json` / `yaml` / `po` / `xliff` / `ios-strings` / `ios-stringsdict` / `xcstrings` / `android-xml` | 仓库同步格式     | `utf8`（默认，内联文本）                                         |
+| `json` / `yaml` / `po` / `xliff` / `ios-strings` / `ios-stringsdict` / `xcstrings` / `android-xml` / `arb` | 仓库同步格式     | `utf8`（默认，内联文本）                                         |
 | `csv`                                                                                              | 产品经理批量编辑 | `utf8`，带 BOM（Excel 否则按系统代码页读，非 ASCII 会乱码）      |
 | `xlsx`                                                                                             | 产品经理批量编辑 | `base64` + `mimeType`（工作簿是 zip 压缩包，不能塞进 JSON 文本） |
+
+`arb` 是 Flutter 的 `app_<locale>.arb`：JSON 加三条约定（`@@locale`、`@key` 元数据、复数/选择写成对象），
+平台的规范值仍是 ICU 消息串，元数据里的 `description`/`placeholders` 会带进词条。写回只替换变化的值 token，
+所以键序、缩进与 `@` 元数据逐字节保留。
 
 两处刻意的不对称：
 

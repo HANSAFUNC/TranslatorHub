@@ -13,21 +13,29 @@ export interface ParsedPlural {
   argName: string;
   quantities: Record<string, string>;
   exactMatches?: Record<string, string>;
+  /**
+   * Which ICU argument kind the branches came from. `plural` and `selectordinal` branch on a
+   * number; `select` branches on a string (a gender, a plan name) — ARB and gen-l10n treat those
+   * as different kinds of message, and writing one back as the other produces a file that no
+   * longer compiles.
+   */
+  kind?: 'plural' | 'selectordinal' | 'select';
 }
 
-const HEADER = /^\s*\{\s*([A-Za-z0-9_]+)\s*,\s*(plural|selectordinal)\s*,\s*/;
+const HEADER = /^\s*\{\s*([A-Za-z0-9_]+)\s*,\s*(plural|selectordinal|select)\s*,\s*/;
 
-export function buildIcuPlural(parsed: ParsedPlural): string {
+export function buildIcuPlural(parsed: ParsedPlural, kind: 'plural' | 'selectordinal' | 'select' = 'plural'): string {
   const branches = Object.entries(parsed.quantities)
     .map(([quantity, value]) => `${quantity} {${value}}`)
     .join(' ');
-  return `{${parsed.argName}, plural, ${branches}}`;
+  return `{${parsed.argName}, ${kind}, ${branches}}`;
 }
 
 export function parseIcuPlural(value: string): ParsedPlural | null {
   const header = HEADER.exec(value);
   if (!header) return null;
   const argName = header[1] ?? 'count';
+  const kind = (header[2] ?? 'plural') as 'plural' | 'selectordinal' | 'select';
   let index = header[0].length;
   const quantities: Record<string, string> = {};
   const exactMatches: Record<string, string> = {};
@@ -56,7 +64,7 @@ export function parseIcuPlural(value: string): ParsedPlural | null {
     else quantities[selector] = body;
   }
   if (Object.keys(quantities).length === 0) return null;
-  return { argName, quantities, ...(Object.keys(exactMatches).length ? { exactMatches } : {}) };
+  return { argName, quantities, kind, ...(Object.keys(exactMatches).length ? { exactMatches } : {}) };
 }
 
 export function isPluralValue(value: string): boolean {
