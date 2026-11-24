@@ -174,13 +174,13 @@ claude mcp add --transport http localehub-remote http://localhost:3003/mcp \
 工具标注（MCP `annotations`）：`create_project`、`import_translations`、`translate_entries`、
 `review_translation_entries`、`update_translation_draft`、`submit_review`、`mark_applied`、
 `upload_screen_mockup`、`upsert_glossary_terms`、`import_glossary_terms` 声明 `readOnlyHint: false`，
-其余 11 个为只读。
+其余 12 个为只读。
 客户端据此可以判断哪些调用会改动平台数据。
 
-只有两个写工具能预演：`import_translations`（`confirm: true` 才落库）与 `mark_applied`
-（`dry_run: true` 只看结果）。其余写工具——`create_project`、`translate_entries`、
-`review_translation_entries`、`update_translation_draft`、`upsert_glossary_terms`、`import_glossary_terms`、
-`upload_screen_mockup`——一调即写，
+有三个入口可以先看不写：`import_translations`（`confirm: true` 才落库）、`mark_applied`
+（`dry_run: true` 只看结果）与 `translate_entries`（`write_drafts: false` 只返回草稿）。其余写工具——
+`create_project`、`review_translation_entries`、`submit_review`、`update_translation_draft`、
+`upsert_glossary_terms`、`import_glossary_terms`、`upload_screen_mockup`——一调即写，
 没有 dry-run 开关；`upload_screen_mockup` 还会整体替换同名屏幕，`destructiveHint` 为 true。
 
 约束：
@@ -308,9 +308,10 @@ Token 推得上去、落不下来——这正是规格要的分离。
 | --- | --- | --- |
 | `instructions` | 两个方向别搞反、三条事后难改的规则、分批上限、dry-run 默认 | 客户端在调用任何工具前放进上下文 |
 | `localehub://import-guide` | 完整上传教程：调用形状、逐条规则、实测边界、推荐顺序、`.strings` 解析坑 | Agent 按需读取 |
-| `localehub://screen-sketch-guide` | 界面草图教程：三种输入、节点表、key/namespace 从哪来、上限、两件不可逆的事、CLI 从源码生成的做法，以及 §7「传完先看 `report`」的逐条对照表 | Agent 按需读取 |
+| `localehub://screen-sketch-guide` | 界面草图教程：五种输入怎么选、节点表、key/namespace 从哪来、画框与越界、上限、两件不可逆的事、CLI 从源码生成的做法，以及 §7「传完先看 `report`」的逐条对照表 | Agent 按需读取 |
 | `import-localization-files` 提示词 | 七步流程，供人在客户端里直接唤起 | 人（斜杠命令） |
-| `upload-screen-sketch` 提示词 | 七步流程：整页复刻或页面转 HTML → 上报标记 → 读 `report`，没还原到位就按 advice 改输入后重传 | 人（斜杠命令） |
+| `upload-screen-sketch` 提示词 | 九步流程（0–8）：整页复刻或页面转 HTML → 自检五个问题 → 上报标记 → 读 `report`，没还原到位就按 advice 改输入后重传 | 人（斜杠命令） |
+| `map-app-screens` 提示词 | 五步流程：先把 App 的每一屏与进入它的触发点列成表，再一屏一屏传 | 人（斜杠命令） |
 | 工具与字段的 `description` | 每个字段在什么情况下会出错（如 `platform` 默认 `web`，iOS 必须显式传） | 随 `tools/list` 一起下发 |
 
 关键一条：**字段描述随 schema 走，所以默认值也能被解释**。`platform` 的 schema 现在是
@@ -345,7 +346,7 @@ Token 推得上去、落不下来——这正是规格要的分离。
 | 项目没有（仓库多了 `ko.lproj`） | **自动新增**，带中文可读名（`韩语`），报告在 `expansion.localesAdded` |
 | 无法判断（项目同时有 `zh-CN` 和 `zh-TW`，来的是 `zh`） | **拒绝**并列出候选，要求传确切代码 |
 
-平台（端）同理：项目只声明了 `web`，仓库来了 `ios` 的内容，就自动加上，报告在 `expansion.platformsAdded`。
+端（`platform`）同理：项目只声明了 `web`，仓库来了 `ios` 的内容，就自动加上，报告在 `expansion.platformsAdded`。
 
 **等价判断只在脚本与地区真正互替时成立**（`zh-Hans` ↔ `zh-CN`、`zh-Hant` ↔ `zh-TW`），或标签是光秃秃的语言
 （`ja` 对上唯一的 `ja-JP`）。它**不会**把 `zh-Hant` 认成 `zh-CN`——那会把繁体文本归到简体下。
@@ -368,7 +369,8 @@ CLI 的 `localehub scan` 输出（`expanded` 字段直接给中文说明）。�
 没有任何位置信息，所以「这句话在界面上出现在哪、多大、旁边是什么」从来不在平台里——翻译编辑器只能
 并排显示原文和译文，剩下的靠译者想象。
 
-`upload_screen_mockup` 补的就是这一半：一张界面草图 + 每个 key 的文字在图上的位置。
+`upload_screen_mockup` 补的就是这一半：一张界面草图 + 每个 key 的文字在图上的位置。字段全长这样
+（下面这份是**自己画图**那条路，也就是最后才用的一种；首选是交源码，见本节末尾）：
 
 ```jsonc
 {
@@ -384,13 +386,16 @@ CLI 的 `localehub scan` 输出（`expanded` 字段直接给中文说明）。�
 }
 ```
 
-这套流程对 Agent 也是**教过的**，不只是 schema 里写着：`instructions` 直接说「传 `ui` 即可，不用你画图、不用你量坐标」
-并给出 CLI 那条捷径；完整规则在资源 `localehub://screen-sketch-guide`（节点表、key/namespace 的来源、上限、
-`name` 与 `platform` 这两件不可逆的事），`upload-screen-sketch` 提示词供人在客户端里一键唤起。
-此前只有工具与字段的 `description` 提到 `ui`，而 `instructions`、上传教程、提示词三处都还在教「画一张草图 + 量坐标」——
-Agent 读完仍然会去手画。
+这套流程对 Agent 也是**教过的**，不只是 schema 里写着：`instructions` 里就是上面这两条路（整页传 `document`、
+片段传 `html`/`ui`）、画框由端固定、越界会被拒，外加 CLI 那条捷径；完整规则在资源
+`localehub://screen-sketch-guide`（节点表、key/namespace 的来源、上限、`name` 与 `platform` 这两件不可逆的事），
+`upload-screen-sketch` 提示词供人在客户端里一键唤起。
+（历史：早先 `instructions`、上传教程、提示词三处都在教「画一张草图 + 量坐标」，Agent 读完会去手画；
+三处已统一，见 `docs/STATUS.md` §1.80。）
 
-**首选：把页面的源码交上来。** `html` 是第三种输入（与 `ui`、`image_base64` 三选一）：平台解析出元素树，
+**首选：把页面的源码交上来。** 源码有两条路：整页给 `document`（见下面「整页复刻」那段，
+平台不重画、还原度最高），一段结构给 `html`（平台解析成元素树、自己排版画图）。`document` / `html` / `ui` /
+`frames` / `image_base64` **五选一，同时传两种会被拒绝**（错误里点名你传了哪两个）。走 `html` 这条路时，平台
 自己排版画图、自己算坐标，**颜色与组件外观也一起还原**——读它的 class（含 Tailwind 全套调色板）、inline style
 与 `<style>` 规则（含 `:root` 变量），所以一眼能认出是哪个页面。灰线框给得出位置，给不出「这是哪一屏」。
 
@@ -399,7 +404,7 @@ Agent 读完仍然会去手画。
 组件语汇都可以在平台侧继续演进，调用方不用重传。转写对照表在 `localehub://screen-sketch-guide`（顶栏 / 贴底标签栏 /
 开关 / 滑块 / 卡片 / 徽标 / 分段控件各有对应写法，类名不必是真 Tailwind——`class="tabbar"`、`class="card"` 也认）。
 
-**一个屏幕的多个状态**用 `frames` 传（与 `ui`/`html`/`image_base64` 互斥，最多 8 帧）：每帧 `{title, html|ui}`，
+**一个屏幕的多个状态**用 `frames` 传（与 `document`/`html`/`ui`/`image_base64` 互斥，最多 8 帧）：每帧 `{title, html|ui}`，
 平台横向排开、每帧上方写状态名，返回值 `markers.frames` 报告每帧的标记数。**组件**用节点上的 `component`
 （或 HTML 里的类名 / `data-component`）：平台给每个实例打编号徽章、在画布底部列出编号与实例数（只有一个组件时不画），
 并让组件内部的文案都归属该组件——编辑器旁边就是同一份清单，点一下高亮。
@@ -409,7 +414,7 @@ Agent 读完仍然会去手画。
 web 近黑）。**图片**只有带在载荷里的才画得出来：`<img src="data:image/png;base64,…">`（单张 ≤ 300 KB、合计 ≤ 1.2 MB）；
 外链与仓库路径是占位框（平台不联网取图），要真图就用 CLI——`localehub mockup --page` 会把页面引用的小图自动内联。
 
-**只解析，不渲染**：不跑浏览器、不执行 `<script>`、不联网取任何资源；`<script>`、`<style>`、注释里的文字都不会
+**片段这条路上只解析、不渲染**（整页那条路相反，见下面「整页复刻」）：不跑浏览器、不执行 `<script>`、不联网取任何资源；`<script>`、`<style>`、注释里的文字都不会
 被当成文案；样式只认渲染器画得出来的属性（颜色、圆角、字号字重、间距、阴影、对齐），`hsl()`、`@media`、伪类忽略。
 结尾给元素加 `data-key="checkout.pay"`（或 i18next 的 `data-i18n-key`）就能把文案对到 key 上——HTML 没有
 `t('…')` 那样的调用，不写就以文案本身为 key。
@@ -504,7 +509,8 @@ localehub mockup --page src/app/projects/page.tsx --name 项目列表 --confirm 
 所以某个状态要展示就把那个状态写成静态 HTML 或作为一帧——「动态数据除外」。
 
 **这条路上唯一真正的坑，是那份 HTML 不是真实界面的 HTML。** 拿不到源码时容易退化成「照着印象画一张像它的图」，
-传上来就成了一页线框图（见下面的 `DRAWN_SHAPES`）。原生界面也一样有源可抄：布局数值在工程里
+传上来就成了一页线框图（见下面的 `DRAWN_SHAPES`；这是整页复刻那条路的判据——自己画图的 `image_base64` 走另一套检查，
+手画的形状算 `NO_PICTURES`）。原生界面也一样有源可抄：布局数值在工程里
 （Auto Layout 约束、`layout_*`、Flutter 的 `padding`、RN 的 `StyleSheet`），图片在资源目录里
 （`Assets.xcassets`、`res/drawable*`、`assets/`）——按教程 §9 的逐栈对照表读出来，照抄数值、图内联成 `data:`。
 
@@ -518,13 +524,13 @@ localehub mockup --page src/app/projects/page.tsx --name 项目列表 --confirm 
 `ASSETS_NOT_INLINED`（相对路径素材没人能解析）、`NO_STYLE`（样式表没跟着上来）、`REMOTE_ASSETS`（看图的人要能访问
 那个域名）、`SCRIPTS_NOT_RUN`（脚本不会跑，动态数据除外）、`NO_PICTURES`、`DRAWN_SHAPES`。每条都带改法，Agent 按它改输入再同名重传。
 
-**画框是平台定的，不是调用方定的，而且在被核对。** 一屏渲染在多大的一块画布上，由 `platform` 决定：
+**画框是平台定的，不是调用方定的，而且在被核对。** 一屏渲染在多大的一块画框里，由 `platform` 决定：
 android 412×915、ios 390×844、web 1280×800（`UI_VIEWPORTS`）。传 `width`/`height` 也改不了它——复刻的是"一屏"，
 画框就是那一屏的尺寸。因此坐标必须落在框内，平台按绝对定位的 `left/top/width/height` 核对：
 
-- 有坐标越界 → **直接拒绝上传**（422，带越界处数、最远到多少 px、几倍），并回传 `report` 里一条
-  `FRAME_OVERFLOW`；页面自己声明了另一块画布（`.screen{width:412px;height:1371px}` 之类）→ 同样拒绝，
-  报 `CANVAS_MISMATCH`。框外的内容在编辑器和图里都不存在，收下等于交付一张缺角的图。
+- 有坐标越界 → **直接拒绝上传**（422，`details` 里带画框、越界处数、最远到多少 px、几倍、
+  量到的盒子数），错误码是 `FRAME_OVERFLOW`；页面自己声明了另一块画布（`.screen{width:412px;height:1371px}` 之类）→
+  同样拒绝，错误码 `CANVAS_MISMATCH`。因为上传就被拒，这两个码**不会**出现在一次成功上传的 `report` 里。框外的内容在编辑器和图里都不存在，收下等于交付一张缺角的图。
 - 最典型的成因是**单位**：安卓的 `layout_*`/`padding` 是 **dp**，而同一屏的截图通常是 **2× 或 2.625×**
   （412dp 的屏，2× 截图宽 824px，1080p 截图则是 2.625×）。把截图像素当 dp 抄，整页放大一倍，
   第二屏之后的内容全部落到框外。实测：某工程 29 屏里有 19 屏越界（另一个 iOS 工程 32 屏 0 屏），

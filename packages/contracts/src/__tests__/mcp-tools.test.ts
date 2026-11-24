@@ -81,10 +81,10 @@ describe('the Remote MCP tool registry', () => {
       'width',
     ]);
 
-    // The three inputs, and the sentence that says they are exclusive. A caller that sends two of
+    // The five inputs, and the sentence that says they are exclusive. A caller that sends two of
     // them gets a 422 whose wording is identical on the REST route, so it is worth pinning here.
     expect(schema.properties.html!.description).toContain('只解析');
-    expect(schema.properties.html!.description).toContain('三选一');
+    expect(schema.properties.html!.description).toContain('五选一');
     // The two halves of a whole page, which is what a caller who wants a replica has to know before
     // it sends one: what "no scripts" means for the data on it, and that it does not measure anything.
     expect(schema.properties.html!.description).toContain('整页');

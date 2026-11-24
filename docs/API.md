@@ -18,7 +18,7 @@
 | GET    | `/health`        | 健康检查（含数据库探测）                          |
 | GET    | `/health/ready`  | 就绪检查                                          |
 | GET    | `/system/queues` | BullMQ 队列深度                                   |
-| GET    | `/mcp/tools`     | Local / Remote MCP 工具清单与 JSON Schema（公开） |
+| GET    | `/mcp/tools`     | Remote MCP 工具清单与 JSON Schema（公开）          |
 
 ## 2. 认证与组织
 
@@ -140,16 +140,14 @@ public 路由不受影响，负载均衡仍可探测。
 | GET    | `/projects/:projectId/mockups/:mockupId`      | READONLY                 | 标记（含源文与 `?locale=` 的译文），按阅读顺序排序          |
 | GET    | `/projects/:projectId/mockups/:mockupId/image`| READONLY                 | 图片字节（非 JSON 信封）；带 ETag，可 304                  |
 | GET    | `/projects/:projectId/mockups/:mockupId/document` | READONLY             | 整页复刻的页面本身（`text/html`，`?frame=` 选状态）；带 ETag 与 `sandbox allow-same-origin` 的 CSP |
-| POST   | `/projects/:projectId/mockups`                | DEVELOPER + `sync.push`  | 上传/替换屏幕（`imageBase64` + `markers`，或 `ui` 由平台绘制） |
+| POST   | `/projects/:projectId/mockups`                | DEVELOPER + `sync.push`  | 上传/替换屏幕（五种输入选一：整页 `document`、片段 `html`、`ui` 平台绘制、`frames` 多状态、`imageBase64` + `markers`） |
 | DELETE | `/projects/:projectId/mockups/:mockupId`      | DEVELOPER + `sync.push`  | 删除屏幕（标记随外键级联）                                 |
 
-上传有四种输入，选一种（`frames` 与另外三种互斥）：
+上传有五种输入（`document` / `html` / `ui` / `frames` / `imageBase64`），**只能传一种**（`frames` 与另外四种互斥）：
 
 - **`frames`**：一个屏幕的多个状态，各占一帧排在同一张画布上（`[{title, html|ui}]`，最多 8 帧）。平台横向排开、
   每帧上方写状态名，`markers[].frame` 记住每条文案落在哪一帧，`components` 给出组件的编号清单
   （节点上的 `component`，或 HTML 里的类名 / `data-component`；组件内部的文案继承该组件）。
-
-
 - **`imageBase64` + `markers`**：调用方自己画的图，以及每个 Key 在图上的位置。
 - **`html`**：页面源码（HTML 或 JSX/TSX）。平台用 CLI 读仓库时同一个扫描器解析出元素树，再走下面 `ui` 那条路：
   排版、绘制、算坐标。颜色与组件外观读自 class（含 Tailwind 全套调色板）、inline style 与 `<style>` 规则。

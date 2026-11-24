@@ -78,7 +78,12 @@ describe('server instructions', () => {
       expect(instructions).toContain('归入');
       expect(instructions).toContain('自动新增');
       expect(instructions).toContain('platform 默认是 web');
-      expect(instructions).toContain('300~400');
+      // The batch advice used to be "300~400 per call, the whole import is a 5-second transaction".
+      // That stopped being true when the bulk path (`withOrganizationBulk`, 60 s) took over the import,
+      // and the stale sentence survived in three places for months: it made an agent split a 10,000-key
+      // project into 25 calls for no reason. Pinned the other way round now.
+      expect(instructions).toContain('60 秒');
+      expect(instructions).not.toContain('5 秒');
       expect(instructions).toContain('localehub://import-guide');
       // The dry-run default is the difference between "risky write" and "safe question".
       expect(instructions).toContain('dry run');
@@ -144,9 +149,14 @@ describe('the import guide', () => {
       // not carry. Without it, batching a 5,000-entry import proposed 5,000 deletions.
       expect(text).toContain('部分上传');
       expect(text).toContain('判成删除');
-      // And the property that makes it fast: the cost is the batch, not the project.
-      expect(text).toContain('与项目已经有多大无关');
+      // And the property that makes it fast — with the one thing it is *not* independent of. The
+      // guide used to promise "cost has nothing to do with how big the project is"; the preview step
+      // reads the project's existing translations (that is how it knows a batch deletes nothing), so
+      // that promise was wrong in the direction callers would trust most.
+      expect(text).toContain('主要与这一批的条数有关');
+      expect(text).toContain('项目越大，那一步越慢');
       expect(text).toContain('整批回滚');
+      expect(text).not.toContain('与项目已经有多大无关');
     } finally {
       await client.close();
     }
@@ -439,7 +449,7 @@ describe('tool schemas teach the arguments', () => {
       expect(file.namespace!.description).toContain('Localizable');
       expect(schema.properties.confirm!.default).toBe(false);
       expect(schema.properties.confirm!.description).toContain('dry run');
-      expect(schema.properties.files!.description).toContain('300~400');
+      expect(schema.properties.files!.description).toContain('60 秒');
     } finally {
       await client.close();
     }

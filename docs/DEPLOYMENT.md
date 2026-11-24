@@ -162,7 +162,7 @@ docker run --rm -i \
 ```
 
 把 `scan` 换成 `sync preview` / `sync push --confirm` / `apply --confirm` / `qa` 等即可；
-退出码 0 表示通过、2 表示用法错误、3 表示冲突或被阻断的写回（见 `localehub --help`）。
+退出码 0 表示通过、1 表示校验或执行失败（`mockup check` 没过、`init` 拒绝覆盖等）、2 表示用法错误、3 表示冲突或被阻断的写回（`sync apply` 的冲突、`qa` 有 ERROR、`release validate` 没过，见 `localehub --help`）。
 
 **禁止**挂载 `/`、`$HOME` 或 `/var/run/docker.sock`；`-v` 只能指向具体仓库目录。
 

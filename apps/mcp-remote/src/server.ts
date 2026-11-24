@@ -273,7 +273,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       '入参：{project_id, confirm, files:[{path, locale, platform, namespace?, entries:[{key,value}]}]}。' +
       'locale 按仓库实际目录填（zh-Hans.lproj 就传 zh-Hans）：等价标签归入已有语言、项目没有的自动新增，' +
       '两者都在返回值的 expansion 里报告。platform 默认 web，iOS 要传 ios；多张字符串表用 namespace 区分。' +
-      '整个导入在一个 5 秒事务里，单次只放 300~400 条，超时整批回滚。' +
+      '批量写入有 60 秒预算（不是普通接口的 5 秒）：真正的上限是请求体，几千条一批没问题，超时整批回滚。' +
       '默认 confirm=false 只报告不写入。细节见资源 localehub://import-guide。',
     async (input: {
       project_id: string;
@@ -1145,7 +1145,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
   define(
     'validate_release',
     '发布前校验（缺译、占位符、过期、未解决冲突）',
-    async (input: { project_id: string; locales?: string[]; fail_on?: string }) => {
+    async (input: { project_id: string }) => {
       assertRole(actor, input.project_id, Role.READONLY);
       return sync.validateForRelease(input.project_id, actor);
     },
@@ -1170,7 +1170,7 @@ export async function buildRemoteMcpServer(actor: ActorContext, prisma: PrismaCl
       '**内容多高盒子就多高**：不要用固定 height + overflow:hidden 收口——排到盒子外面的文案在图上不存在，后面找不回来（CLIPPED_BOX）。' +
       '**每个元素绝对定位**：容器 position:relative、元素 position:absolute + left/top/width/height，坐标照抄工程的数值；' +
       '不要用 flex/grid 让浏览器替你排——字体差一点整块就挪走，平台会报 FLOW_LAYOUT。' +
-      '**不要照着眼睛画一张像那个界面的图**：灰条当文字、手画的形状当图标，传上来就是线框图，平台会报 DRAWN_SHAPES。' +
+      '**不要照着眼睛画一张像那个界面的图**：灰条当文字、手画的形状当图标，传上来就是线框图，平台会报 NO_PICTURES（手画的形状不算素材）。' +
       '原生界面（iOS/安卓/Flutter/RN）的布局数值和图片都在工程里（Auto Layout 约束、layout_*、Flutter 的 padding、资源目录），' +
       '照抄数值、把图内联上来——逐栈对照表见资源 localehub://screen-sketch-guide 的 §9。' +
       'key 从元素上的 data-key / data-i18n-key 来，整页的标记位置由浏览器实测、不用你给坐标；' +

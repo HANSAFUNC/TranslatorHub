@@ -124,6 +124,17 @@ check(
   'the guide carries the numbered delivery standard',
 );
 check(guideText.includes('CLIPPED_BOX'), 'the guide names the finding for a box that hides its content');
+// The frame: one fixed size per platform, and a page drawn for another one is refused rather than
+// rendered clipped. Pinned here because it is the rule the Android uploads violated 19 times out of 29
+// while every report said `clean: true`.
+check(
+  guideText.includes('FRAME_OVERFLOW') && guideText.includes('CANVAS_MISMATCH'),
+  'the guide names the findings that refuse a page laid out for another canvas',
+);
+check(
+  guideText.includes('412×915') && guideText.includes('390×844') && guideText.includes('1280×800'),
+  'the guide states the fixed frame for each platform',
+);
 check(
   guideText.includes('内容多高') && guideText.includes('overflow'),
   'the standard says the canvas must not clip its content',
@@ -137,8 +148,12 @@ check(promptText.includes('localehub://screen-sketch-guide'), 'the prompt sends 
 check(promptText.includes('不要传 markers'), 'the prompt says not to hand-roll markers');
 check(promptText.includes('report'), 'the prompt tells the agent to read the report back');
 check(
-  promptText.includes('自检') && promptText.includes('四个问题'),
+  promptText.includes('自检') && promptText.includes('五个问题'),
   'the prompt makes the pre-upload self-check a step',
+);
+check(
+  promptText.includes('会被拒绝上传') && promptText.includes('FRAME_OVERFLOW'),
+  'the prompt says an off-frame page is refused, not silently accepted',
 );
 check(promptText.includes('CLIPPED_BOX') && promptText.includes('FLOW_LAYOUT'), 'the prompt names the findings that gate an upload');
 // Mapping the app before drawing it: the step that turns "a few screens" into "the app's screens". It

@@ -746,7 +746,7 @@ describe('screen mockups', () => {
       },
     });
     expect(response.status).toBe(422);
-    expect(JSON.stringify(response.body.error)).toContain('三种输入选一种');
+    expect(JSON.stringify(response.body.error)).toContain('只用一种输入');
   }, 60_000);
 
   it('accepts a realistic payload over REST, which the default 100 kB body limit would not', async () => {
@@ -1139,7 +1139,7 @@ describe('screen mockups', () => {
       },
     });
     expect(both.status).toBe(422);
-    expect(both.body.error!.message).toContain('不要同时传');
+    expect(both.body.error!.message).toContain('只用一种输入');
   }, 60_000);
 
   it('answers a body over the route limit with 413 in the standard envelope', async () => {

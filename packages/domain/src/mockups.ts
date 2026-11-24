@@ -329,7 +329,7 @@ function resolveDocumentInput(
     else legend.push({ index: legend.length + 1, name: marker.component, count: 1 });
   }
   const viewport = defaultViewport(input.platform ?? undefined);
-  assertPageFitsFrame(document, viewport);
+  assertPageFitsFrame(document, viewport, input.platform ?? undefined);
   return { image: null, document, markers, legend, width: viewport.width, height: viewport.height };
 }
 
@@ -343,18 +343,37 @@ function resolveDocumentInput(
  * because nothing here looked at the numbers against the frame they would be drawn into. A page that
  * arrives clipped is worse than one that arrives late: it is the picture a translator then reads.
  */
-function assertPageFitsFrame(document: MockupDocument, frame: { width: number; height: number }): void {
+/**
+ * Why a page laid out for another canvas is nearly always a unit problem, in that platform's terms.
+ *
+ * Android is the one that bites: the layout's numbers are dp while a screenshot of the same screen is
+ * 2× or 2.625× (a 412dp screen is 824 or 1080 px wide), so reading one as the other scales the page up.
+ * Telling an iOS or web caller that would be advice about a platform they are not on.
+ */
+function densityHint(frame: { width: number; height: number }, platform: string | undefined): string {
+  if (platform !== 'android') return '';
+  return (
+    '最常见的来源是单位搞混：安卓的布局数值是 dp，而同一屏的截图是 2× 或 2.625×' +
+    `（${frame.width}dp 的屏，2× 截图宽 ${frame.width * 2}px，1080p 的截图则是 2.625×）——按 1× 读就会整屏放大。`
+  );
+}
+
+function assertPageFitsFrame(
+  document: MockupDocument,
+  frame: { width: number; height: number },
+  platform: string | undefined,
+): void {
   const fit = documentFrameFit(document, frame);
   const overrun = fit.pastRight + fit.pastBottom;
   const ratio = fit.ratio >= 1.5 ? `，最远到 ${Math.round(Math.max(fit.maxRight, fit.maxBottom))}px（约 ${fit.ratio} 倍）` : '';
   if (overrun > 0) {
     throw new LocaleHubError(
       ErrorCode.VALIDATION_ERROR,
-      `这一页画在 ${frame.width}×${frame.height} 的框外：${overrun} 处坐标越界${ratio}。` +
-        `复刻的是"一屏"，画框由平台按端固定（android ${frame.width}×${frame.height}），上传方改不了，` +
-        '框外的内容在编辑器和图里都不存在。最常见的来源是单位搞混：安卓的布局数值是 dp，同一屏的截图却是 ' +
-        `2× 或 2.625×（${frame.width}dp 的屏，截图宽 ${frame.width * 2} 或 ${Math.round(frame.width * 2.625)}px）——` +
-        `按 1× 读就会整屏放大。按 ${frame.width}×${frame.height} 重画这一页，或把数值先除以截图倍数。`,
+      `FRAME_OVERFLOW：这一页画在 ${frame.width}×${frame.height} 的框外，${overrun} 处坐标越界${ratio}。` +
+        `复刻的是"一屏"，画框由 platform（${platform ?? '未指定，按 web 算'}）固定成 ${frame.width}×${frame.height}，` +
+        '上传方改不了，框外的内容在编辑器和图里都不存在。' +
+        densityHint(frame, platform) +
+        `按 ${frame.width}×${frame.height} 重画这一页，或把数值先换算到画框的坐标系里。`,
       422,
       {
         frame,
@@ -370,7 +389,7 @@ function assertPageFitsFrame(document: MockupDocument, frame: { width: number; h
   if (fit.declared && (Math.abs(fit.declared.width - frame.width) > 1 || Math.abs(fit.declared.height - frame.height) > 1)) {
     throw new LocaleHubError(
       ErrorCode.VALIDATION_ERROR,
-      `页面自己声明了 ${fit.declared.width}×${fit.declared.height} 的画布（${fit.declared.selector}），` +
+      `CANVAS_MISMATCH：页面自己声明了 ${fit.declared.width}×${fit.declared.height} 的画布（${fit.declared.selector}），` +
         `平台按 ${frame.width}×${frame.height} 渲染——请把那份样式里的 width/height 改成平台的尺寸。`,
       422,
       { frame, declared: fit.declared },
@@ -419,6 +438,30 @@ export function resolveMockupInput(input: {
    */
   platform?: string | null;
 }): ResolvedMockupInput {
+  // Exactly one input, and the check has to see all of them.
+  //
+  // It used to name three (`ui` / `html` / `image_base64`) and run *after* the replica branch was
+  // chosen, so `{document, ui}` stored the page and dropped the description without a word — the
+  // caller's sketch was silently the other one it sent. Refusing costs a round trip; not refusing
+  // costs an upload the caller believes shows something it does not.
+  const given = [
+    ['document', input.document],
+    ['html', input.html],
+    ['ui', input.ui],
+    ['frames', input.frames?.length ? input.frames : null],
+    ['image_base64', input.imageBase64],
+  ]
+    .filter(([, value]) => Boolean(value))
+    .map(([name]) => name);
+  if (given.length > 1) {
+    throw new LocaleHubError(
+      ErrorCode.VALIDATION_ERROR,
+      `一次只用一种输入，你传了 ${given.join(' + ')}。五种输入选一种：document（整页复刻）、html（页面源码/片段）、` +
+        'ui（界面描述）、frames（一屏多状态）、image_base64（自己画的图，配 markers）。',
+      422,
+    );
+  }
+
   // A whole page is not read into an element tree at all: it is stored and rendered. Everything below
   // is the drawn path, which is what a fragment, a `ui` description and a hand-drawn picture take.
   if (wantsDocument(input)) return resolveDocumentInput(input);
@@ -427,22 +470,9 @@ export function resolveMockupInput(input: {
   const hasUi = Boolean(input.ui);
   const hasHtml = Boolean(input.html);
 
-  if ([hasImage, hasUi, hasHtml].filter(Boolean).length > 1) {
-    throw new LocaleHubError(
-      ErrorCode.VALIDATION_ERROR,
-      '三种输入选一种：ui（界面描述）、html（页面源码）、image_base64（自己画的图，配 markers）。不要同时传。',
-      422,
-    );
-  }
-
+  // `frames` alongside `ui` / `html` / `image_base64` was refused here too; the single-input check above
+  // now covers it (and `document`, which this one never saw), so this branch only lays the board out.
   if (input.frames?.length) {
-    if (hasUi || hasHtml || hasImage) {
-      throw new LocaleHubError(
-        ErrorCode.VALIDATION_ERROR,
-        '传了 frames 就不要再传 ui / html / image_base64：每个状态在自己的 frame 里给。',
-        422,
-      );
-    }
     const viewport = defaultViewport(input.platform ?? undefined);
     const frames = input.frames.map((frame) => {
       const root = frame.ui

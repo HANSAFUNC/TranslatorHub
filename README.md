@@ -115,7 +115,7 @@ node apps/cli/dist/bin.js apply --confirm --apply-plan <id>
 ```
 
 `node apps/cli/dist/bin.js mcp-config` 会打印上面这段（URL 由平台自己报告，也可以用
-`--remote` 显式指定）。它提供 15 个平台工具，**不提供任何本地文件读写能力**。
+`--remote` 显式指定）。它提供 22 个平台工具，**不提供任何本地文件读写能力**。
 
 读写仓库的 14 个动作在 CLI 里（上表那些命令），Agent 用 Bash 调用即可。这样做的好处是
 本地动作有明确的退出码、可以固定在 CI 里跑、受 `allowWrite` 白名单与备份/原子写保护，
@@ -198,10 +198,10 @@ CORS_ORIGINS=http://localhost:3000,http://192.168.200.172:3000
 | 文档                                         | 内容                                     |
 | -------------------------------------------- | ---------------------------------------- |
 | [docs/PRD.md](docs/PRD.md)                   | 产品需求、角色、验收场景                 |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构、模块边界、双 MCP 设计              |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构、模块边界、为什么只有一个 MCP       |
 | [docs/DATABASE.md](docs/DATABASE.md)         | ER 关系、RLS、迁移说明                   |
 | [docs/API.md](docs/API.md)                   | REST API、错误码、幂等与并发             |
-| [docs/MCP.md](docs/MCP.md)                   | Local / Remote MCP 工具与配置            |
+| [docs/MCP.md](docs/MCP.md)                   | Remote MCP 的工具、配置与接入教程        |
 | [docs/SYNC.md](docs/SYNC.md)                 | 三方同步、基线、冲突算法与回写安全规则   |
 | [docs/SKILLS.md](docs/SKILLS.md)             | Skill 安装、权限与执行边界               |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)     | 部署、备份、可观测性                     |

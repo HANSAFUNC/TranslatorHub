@@ -183,8 +183,19 @@ describe('resolveMockupInput', () => {
   });
 
   it('refuses both inputs, and neither, with a sentence that names the alternatives', () => {
-    expect(() => drawn({ ui: page, imageBase64: base64(png(4, 4)) })).toThrow(/不要同时传/);
-    expect(() => drawn({ html: '<div><p>你好</p></div>', ui: page })).toThrow(/三种输入选一种/);
+    // The refusal names what was sent *and* what the alternatives are: "不要同时传" left a caller with
+    // no idea which of the five inputs it should have picked.
+    expect(() => drawn({ ui: page, imageBase64: base64(png(4, 4)) })).toThrow(/ui \+ image_base64.*五种输入选一种/s);
+    expect(() => drawn({ html: '<div><p>你好</p></div>', ui: page })).toThrow(/只用一种输入/);
+    // `document` + `ui` used to resolve to the page and drop the description silently: the caller got a
+    // sketch that was neither of the two things it sent, and no message about it.
+    expect(() =>
+      resolveMockupInput({
+        document: '<!doctype html><html><body><p data-key="a">hi</p></body></html>',
+        ui: page,
+        platform: 'ios',
+      }),
+    ).toThrow(/document \+ ui/);
     expect(() => drawn({})).toThrow(/传 ui/);
   });
 });

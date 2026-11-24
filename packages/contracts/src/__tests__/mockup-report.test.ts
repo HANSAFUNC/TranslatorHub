@@ -4,6 +4,7 @@ import { FINDING_CODES, analyzeDocument, analyzeSketch } from '../mockup-report'
 import { documentAssets, documentMarkers, isFullDocument, normalizeDocument } from '../mockup-document';
 import {
   REMOTE_MCP_IMPORT_GUIDE,
+  REMOTE_MCP_INSTRUCTIONS,
   REMOTE_MCP_SKETCH_GUIDE,
   remoteScreenMapPrompt,
   remoteSketchPrompt,
@@ -372,6 +373,51 @@ describe('the frame a page is drawn for', () => {
   });
 });
 
+
+/**
+ * The frame rule, in every text an agent reads before it draws.
+ *
+ * A rule that lives only in the guide's §9 is a rule the caller meets after it has already written the
+ * page: the instructions are what a client puts in front of the model before any tool call, and the
+ * prompt is what walks it through the upload. Both used to describe only the redrawing path — "the
+ * platform parses the element tree, lays it out and computes the coordinates" — which is false for a
+ * whole page, where the platform renders the markup as it is: that is exactly the belief that produces a
+ * page laid out for some other canvas.
+ */
+describe('what the prompts say about the frame', () => {
+  it('names the frame and the refusal in all three texts', () => {
+    for (const [name, text] of [
+      ['instructions', REMOTE_MCP_INSTRUCTIONS],
+      ['sketch prompt', remoteSketchPrompt({})],
+      ['sketch guide', REMOTE_MCP_SKETCH_GUIDE],
+    ] as const) {
+      expect(text, name).toContain('412×915');
+      expect(text, name).toContain('390×844');
+    }
+    // The refusal is new behaviour: a caller that does not know about it reads a 422 as a platform fault.
+    expect(remoteSketchPrompt({})).toContain('会被拒绝上传');
+    expect(remoteSketchPrompt({})).toContain('FRAME_OVERFLOW');
+    expect(REMOTE_MCP_SKETCH_GUIDE).toContain('FRAME_OVERFLOW');
+    expect(REMOTE_MCP_SKETCH_GUIDE).toContain('CANVAS_MISMATCH');
+  });
+
+  it('separates the two paths in the instructions, because only one of them is redrawn', () => {
+    expect(REMOTE_MCP_INSTRUCTIONS).toContain('不重画');
+    expect(REMOTE_MCP_INSTRUCTIONS).toContain('自己排版画图');
+    // And the unit trap, which is what actually produced the broken pages in the field.
+    expect(REMOTE_MCP_INSTRUCTIONS).toContain('dp');
+    expect(REMOTE_MCP_INSTRUCTIONS).toContain('2.625');
+  });
+
+  it('numbers the conventions it actually lists', () => {
+    // The heading said 四条 while the list had six — a count nobody re-reads is a count that drifts.
+    const heading = /## 10\. (.)条容易踩错的约定/.exec(REMOTE_MCP_SKETCH_GUIDE)?.[1];
+    const count = ['①', '②', '③', '④', '⑤', '⑥', '⑦'].filter((mark) => REMOTE_MCP_SKETCH_GUIDE.includes(`**${mark}`)).length;
+    const numerals: Record<string, number> = { 四: 4, 五: 5, 六: 6, 七: 7, 八: 8 };
+    expect(heading).toBeDefined();
+    expect(numerals[heading!]).toBe(count);
+  });
+});
 /**
  * Fidelity is the uploader's job, and it cannot be done from imagination.
  *

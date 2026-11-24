@@ -162,13 +162,18 @@ export const remoteToolSchemas = {
             .min(1)
             .max(20000)
             .describe(
-              '本文件的全部条目。schema 允许到 20000，但一次调用请控制在 300~400 条：整个导入在一个 5 秒的事务里，超时整批回滚。',
+              '本文件的全部条目。schema 允许到 20000，批量写入本身有 60 秒预算（实测一个 10,400 条的项目按每批 800 全部通过）——' +
+              '真正的限制是请求体——这个工具跑在 MCP 传输的 4 MB 上限上（仓库扫描走 REST 那条路才是 8 MB），所以按体积分批，不要按条数硬拆；' +
+              '超时整批回滚，减小批次重跑即可。',
             ),
         }),
       )
       .min(1)
       .max(500)
-      .describe('要导入的文件列表。按「文件 × 语言」拆开，每批 300~400 条。'),
+      .describe(
+        '要导入的文件列表。按「文件 × 语言」拆开。每批多大由体积决定：批量写入有 60 秒预算（实测 10,400 条按每批 800 全部通过），' +
+          '真正的上限是请求体，所以几千条一批没问题，别按 300~400 硬拆。',
+      ),
     confirm: z
       .boolean()
       .default(false)
@@ -218,7 +223,7 @@ export const remoteToolSchemas = {
       .enum(['DRAFT', 'APPROVED'])
       .default('DRAFT')
       .describe(
-        '落成什么状态。默认 DRAFT——只警告、不进发布前校验。APPROVED 会让违反它的译文挡住发布，' +
+        '落成什么状态。默认 DRAFT——违反它只算警告，出在发布前校验里但不挡住发布。APPROVED 会让违反它的译文挡住发布，' +
           '因此需要 PROJECT_MANAGER 角色：导入现成词表的人通常确实知道这些词已经定过，但那是他要声明的事，不是默认。',
       ),
   }),
@@ -247,7 +252,7 @@ export const remoteToolSchemas = {
       )
       .min(1)
       .max(200)
-      .describe('要提的词条。已定稿的词条不会被改动，会被列在 skipped 里'),
+      .describe('要提的词条。已定稿的词条不会被改动，会被列在 untouched 里'),
   }),
   search_translation_memory: z.object({
     project_id: z.string(),
@@ -341,8 +346,9 @@ export const remoteToolSchemas = {
   }),
   validate_release: z.object({
     project_id: z.string(),
-    locales: z.array(localeTagSchema).optional(),
-    fail_on: z.enum(['ERROR', 'WARNING']).default('ERROR'),
+    // `locales` and `fail_on` used to sit here. The handler calls `validateForRelease(project_id, actor)`
+    // and the service takes no such arguments, so both were silently ignored — a caller passing
+    // `fail_on: 'WARNING'` got the ERROR threshold anyway. A knob that does nothing is worse than no knob.
   }),
   /**
    * The half of context a key cannot carry.
@@ -361,7 +367,7 @@ export const remoteToolSchemas = {
       .string()
       .min(1)
       .max(120)
-      .describe('这个界面的名字，如 "checkout" 或 "登录页"。它是屏幕的身份：同一个名字再传一次会整体替换（图片与标记），不会堆积 checkout-2、checkout-final。'),
+      .describe('这个界面的名字，如 "checkout" 或 "登录页"。它是屏幕的身份（连同 platform）：同名同端再传一次会整体替换（图片与标记），不会堆积 checkout-2、checkout-final；同名换端会并存两张。'),
     platform: platformSchema
       .default('web')
       .describe(
@@ -376,7 +382,9 @@ export const remoteToolSchemas = {
      *
      * A caller reading a page's source has the structure but not an image, and measuring coordinates by
      * hand is where sketches go wrong. With `ui` the platform lays the page out, draws it and computes
-     * every marker itself. Exactly one of `ui` / `image_base64` is required.
+     * every marker itself. One of the five inputs (`document` / `html` / `ui` / `frames` /
+     * `image_base64`) is required, and exactly one: `ui` here is the drawn path, `image_base64` the one
+     * the caller supplies both the picture and the markers for.
      */
     /**
      * The page's own source, for a caller that has the markup rather than a description of it.
@@ -396,7 +404,7 @@ export const remoteToolSchemas = {
           '颜色与组件外观按 class（含 Tailwind）、inline style 与 <style> 规则还原，只解析、不渲染、不执行脚本、不联网。' +
           '**整页**（带 <!doctype html> 或 <html>）走复刻：原文存下来，编辑器在沙箱里照着渲染，' +
           '样式与素材按页面自己的来，还原度最高——素材要么内联成 data: URI，要么是能公开访问的 https 地址。' +
-          '想让 iOS 的多张字符串表各归各位，配合 namespace 使用。与 ui / image_base64 三选一。',
+          '想让 iOS 的多张字符串表各归各位，配合 namespace 使用。document / html / ui / frames / image_base64 五选一：一次只用一种输入，传两种会被拒。',
       ),
     document: z
       .string()
@@ -441,14 +449,14 @@ export const remoteToolSchemas = {
       .optional()
       .describe(
         '一个屏幕的多个状态，各占一帧、排在同一张画布上：译者能看到同一个 key 在每种状态下读起来是什么样（或者根本不出现）。' +
-          '每帧给 html（整页则整帧复刻）或 ui 之一；给了 frames 就不要再传 ui / html / image_base64。' +
+          '每帧给 html（整页则整帧复刻）、document（整帧复刻）或 ui 之一；给了 frames 就不要再传 document / html / ui / image_base64。' +
           '一帧一个状态，别把同一状态拆开——帧多到看不清时，挑真正影响译文的那几个。',
       ),
     ui: uiSpecSchema.optional().describe(
       '界面描述：按元素描述页面，平台据此画出草图并自动计算每个标记的位置与大小——不需要你量坐标。' +
         'root 是一个树：screen 里放 text / button / input / card / row / image 等节点，节点上的 text 就是界面上显示的文字，' +
         '它同时是标记的默认 key（可用 key 覆盖）。**这是近似，不是复刻**：字体、渐变、阴影都是平台的，图标要靠内联 SVG，' +
-        '所以只在拿不到整页 HTML、或手上本来就只有一段结构时才用它——有页面源码就传 document。与 image_base64 二选一。',
+        '所以只在拿不到整页 HTML、或手上本来就只有一段结构时才用它——有页面源码就传 document。五种输入（document / html / ui / frames / image_base64）只能传一种。',
     ),
     image_base64: z
       .string()
@@ -457,7 +465,8 @@ export const remoteToolSchemas = {
         `草图本身，base64（可以带 data: 前缀）。支持 SVG / PNG / JPEG，解码后不超过 ${Math.round(MAX_MOCKUP_BYTES / 1024 / 1024)} MB。` +
           `整个请求（图片 + 标记的 text/note）共用 ${Math.round(MAX_MOCKUP_REQUEST_BYTES / 1024 / 1024)} MB 的传输上限，base64 会让图片占约 1.37 倍——超了整单会被拒。` +
           'SVG 最省事也最清晰，适合设计稿——但**不要用它照着印象画一张界面**：那样的线框图译者认不出是哪个页面，' +
-          '平台会报 DRAWN_SHAPES。真实界面优先传 document；确实是截图/设计稿时，照片和插画请用真图（内联 PNG/JPEG），' +
+          '平台会报 NO_PICTURES（手画的形状不算素材；DRAWN_SHAPES 只判整页复刻那条路）。真实界面优先传 document；' +
+          '确实是截图/设计稿时，照片和插画请用真图（内联 PNG/JPEG），' +
           '不要用色块代替。不要在里面放 <script>、事件属性或 <foreignObject>，会被拒绝。',
       ),
     mime_type: z

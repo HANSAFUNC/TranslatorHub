@@ -153,7 +153,7 @@ function McpOnboarding({
               '1. 读这个仓库里的语言文件（locales/**），解析成 key/value；',
               '2. 用 create_project 建项目，source_locale 用源语言，platforms 用实际端（iOS 就是 ios）；',
               '3. 用 import_translations 上传：先 confirm=false 跑一遍，把 locale 与 platform 的判定理由告诉我，',
-              '   我确认后按每批 300~400 条分批导入；',
+              '   我确认后按体积分批导入（批量写入有 60 秒预算，不按条数硬拆）；',
               '4. 把返回的 config 写进 .localehub/config.yaml。',
             ].join('\n')}
           />
@@ -293,7 +293,7 @@ function McpOnboarding({
       <Card>
         <CardHeader>
           <CardTitle className="text-base">还需要什么</CardTitle>
-          <CardDescription>上面四步之外的常见问题</CardDescription>
+          <CardDescription>上面几步之外的常见问题</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-2 text-sm">
           <p>
@@ -303,8 +303,11 @@ function McpOnboarding({
             ，受 <code className="font-mono text-xs">.localehub/config.yaml</code> 的 workspace 白名单约束。
           </p>
           <p>
-            <span className="font-medium">让译者看到界面</span>：在上面的日常提示词里加一句即可——传{' '}
-            <code className="bg-muted rounded px-1 font-mono text-xs">ui</code> 元素树，图与标记由平台生成，Agent 不需要画图。
+            <span className="font-medium">让译者看到界面</span>：在上面的日常提示词里加一句即可——有页面源码就传整页
+            <code className="bg-muted rounded px-1 font-mono text-xs">document</code>（平台不重画，还原度最高），
+            只有一段结构时传 <code className="bg-muted rounded px-1 font-mono text-xs">html</code> /{' '}
+            <code className="bg-muted rounded px-1 font-mono text-xs">ui</code> 元素树（平台重画，图与标记由平台生成）——
+            两条路都不需要 Agent 画图、量坐标。
             仓库里有页面源码时更省事：<code className="bg-muted ml-1 rounded px-1 font-mono text-xs">localehub mockup --page &lt;文件&gt; --confirm</code>。
           </p>
           <p>

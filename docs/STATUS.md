@@ -2674,6 +2674,82 @@ marker 是否对上 key、CSS 里有没有 overflow:hidden+固定高度），**�
 **没做的**：真机/模拟器取真值（`uiautomator dump` + `screencap`，把真图当背景、bounds 当 marker 锚点）是还原度的
 根治办法，但它是新能力，等用户点头；`隐私设置` 那种 4.64 倍的屏，靠这次的拒绝只能拦住"再传一次"，
 已经传上去的那张仍要看真图才能修。
+### 1.80 MCP 的提示词与教程：三个视角审一遍，再换两个视角审一遍
+
+用户要求「mcp的提示词也要完善教程 多agent反复审核」。所以这一轮分两步：先把提示词与教程本身补齐
+（Flutter 的坑、画框规则、统一的自检清单），再用**两组、五个 agent** 从不同视角审——每一条结论都先回代码里核，
+核不实的当场丢掉，核实的才动文本。
+
+**这一轮改了什么（按"agent 到底会读到哪一句"排）**
+
+| 位置 | 改动 |
+| --- | --- |
+| `REMOTE_MCP_INSTRUCTIONS` | 两条路（整页 `document` 首选 / 片段 `html`·`ui` 重画）各一句，画框由端固定、越界被拒一句，其余指向教程；导入预算由「5 秒 / 300~400 条」改成真实的 **60 秒批量事务、按体积分批** |
+| 教程 §0–§12 | 补 Flutter 全栈行（ARB 标识符、扁平命名空间、`lib/l10n/**`、`generated/**` 不可写）；§3 每栈 key 来源表；§9 五问自检 + 「一屏装不下不要拉长画框」；§7 把"拒绝"与"非错误的发现"分开说 |
+| 工具 `description` | `upload_screen_mockup` 写明五种输入只能传一种、`validate_release` 删掉两个平台**从不读**的入参（`locales`/`fail_on`） |
+| 五个 prompt | `import-localization-files` 第 4 步不再要求 locale「逐字符相同」（与导入指南 §2 的"等价标签平台自己对齐"冲突），改成填仓库目录名 |
+
+**多 agent 审出来的东西**（每条都在代码里核过；"×"= agent 说错了，没改）
+
+| 发现 | 核验结果 |
+| --- | --- |
+| 导入建议「5 秒 / 每批 300~400 条」 | ✅ 真的错：写入量由调用方决定的路径走 `withOrganizationBulk`（60 秒），条数由体积决定。**五处**已改；第六处（web 页面的示例提示词）第二轮才抓到 |
+| 「Agent 的批准会被拒——这是设计」 | ❌ 不成立：只是**默认签发的 token 里没有 `translation.review`**。改写成"由人审核"，并说明别为它加 scope |
+| `validate_release` 的 `locales` / `fail_on` | ✅ 真的从不被读。留着就是"看起来能配"，已从 schema 删掉 |
+| `{document, ui}` 同时传 | ✅ 原来**静默**按 document 处理。排他性校验移到 replica 分支之前，现在 422 并点名传了哪两个 |
+| 本地自检与平台不一致（本地按 web 画框检查 iOS 页面） | ✅ 本地预检改传该端的画框，并补了 `FRAME_OVERFLOW` 回归测试 |
+| 「越界会回传 report 里一条 FRAME_OVERFLOW」 | ❌ 实际是 422 的 `details`——上传就被拒，不会出现在一次成功上传的 report 里 |
+| `frames` 的互斥列表与帧形状漏了 `document` | ✅ zod 本来就允许 `frames[].document`，三处文案（API.md / MCP.md / 字段描述）只改了一半 |
+| 「`html` 是第三种输入（三选一）」 | ✅ 与自己的清单（列了五条）自相矛盾，且引用了 instructions 里**已不存在**的那句话 |
+| 「只有两个写工具能预演」 | ✅ 同文件另一处写三个（`translate_entries` 的 `write_drafts:false`）；"一调即写"清单还漏了 `submit_review` |
+| §9 自检"四个都答没有才传" | ✅ 清单本身是五问 |
+| 「只解析，不渲染」当成上传的总述 | ✅ 只对片段/`ui` 成立；整页那条路是浏览器渲染 |
+| 同一概念两个词（画框 / 画布） | ✅ 已统一：**画框**＝一屏那块，**画布**只留给多帧拼板 |
+| 退出码（`docs/DEPLOYMENT.md`） | ✅ 漏了 1（`mockup check` 没过、`init` 拒绝覆盖）且低估了 3（`qa` ERROR、`release validate` 没过多用它） |
+| 交付说明书里「两种输入 / 三种输入」 | ✅ 两个旧说法互相矛盾，都改五种 |
+| 指南里的排版错误 | ✅ 双反引号（renders 出游离的反引号）、`\`§\`10` 把 § 单独包进 code span、提示词写"两帧"而 §12 写"多帧（上限 8）" |
+
+**第二轮换的是核对视角（「这几句话在代码里成立吗」）**，它抓到的东西比第一轮更值钱——包括一处**上一轮我自己引进的 bug**：
+
+| 发现 | 核验结果 |
+| --- | --- |
+| **本地预检取错了画框来源**（`local-sync/services.ts`） | ✅ 真 bug，上一轮加的：函数里第 613 行已经把 `platform` 解析好了（flag → 项目声明的端 → web），上传用的也是它，但第 665 行量画框时传的是**原始 flag** `input.platform`。于是 `localehub mockup check x.html` 在安卓项目里不传 `--platform` 时按 web 的 1280×800 量，平台按 412×915 判——「本地过、平台不过」原封不动，而这正是上一轮那条改动的**全部目的**。已改成 `defaultViewport(platform)`，并补了一条测试：项目声明 `[android]`、页面按 1280 宽排版、不传 `--platform` → 必须在本地说出 `FRAME_OVERFLOW`。**先复现（不加修复跑一遍，红）再修（绿）**，红的那次打印出来的正是 `1280×800 的画框` |
+| 「整个导入在一个事务里」 | ✅ 错：`recordScan` / `createPreview` / `push` **各开各的** 60 秒批量事务（`sync.ts:168/284/553`），MCP handler 顺序 await，没有外层事务。改成「三步各自的事务」，并写明超时的回滚只覆盖那一步：先提交的扫描行与计划会留下（1 小时后过期） |
+| 「开销与项目已有多大无关」 | ✅ 错：`createPreview` 的 `loadRemoteSnapshots` 会读该语言下的**全部**译文（这正是它敢保证「没在这批里的 key 不会被判成删除」的原因）。而 MCP handler 不传 locales，所以是读整项目。改成「写入量与条目只与本批有关；预览仍要读一遍项目现有译文，项目越大那一步越慢」 |
+| 「平台上没有任何工具能改 sourceLocale，只能重建」 | ✅ 不精确：MCP 里确实没有，但项目**一条译文都没有时** REST `PATCH /projects/:id` 与编辑器设置页都能改（`projects.service.ts` 只在 `entries > 0` 时拒绝）。改成「MCP 没有；还空着可以在编辑器/API 改，有译文了才只能重建」 |
+| 「HTTP 422 + `details` 带 frame/overflow/ratio」 | ✅ 只对 REST 成立：MCP 这条路上 `define()` 把错误包成 `{isError:true, content:[{text: JSON.stringify({error:{code,message}})}]}`——**没有 HTTP 状态，details 也被丢掉**。已按两条路分别写清 |
+| 导入提示词第 8 步把 `FRAME_OVERFLOW`／`CANVAS_MISMATCH` 列进「读 report 会发现的东西」 | ✅ 错：这两条在上传阶段就 422，根本没有 report 可读（与 §7 自相矛盾）。改成「若调用以 `isError` 回来且消息以这两个词开头，照消息里的尺寸与处数重画」 |
+| 「不写 key 就以文案本身为 key」 | ✅ 只对片段/`ui` 成立：整页复刻一处 `data-key` 都没有会被**直接拒收**（`mockups.ts` 的 `NO_KEYS` / 422）。已按两条路分开写 |
+| 「平台存下来的不是你的 HTML，而是它自己画的 SVG」 | ✅ 只对片段/`ui` 成立：整页那条路存的正是你的 HTML，交给浏览器渲染 |
+| 「`image_base64` 线框图会报 `DRAWN_SHAPES`」 | ✅ 错：`DRAWN_SHAPES` 只在 `analyzeDocument` 里产生（`mockup-report.ts:457`），`image_base64` 走 `analyzeSketch`，手画形状命中的是 `NO_PICTURES`。工具描述与 `server.ts` 都已改口 |
+| 默认 token 能做什么 | ✅ 只说了 review 一处：`DEFAULT_MCP_SCOPES` 里也没有 `translation.write` / `translation.apply` / `glossary.write`，所以 `update_translation_draft`、`mark_applied`、两个 glossary 写工具用默认 token 一律 403。已按工具逐项列出所需 scope |
+| 「默认 DRAFT——只警告、不进发布前校验」 | ✅ 后半句错：DRAFT 只把违反它的词条降成 WARNING（`qa.ts` 的 `loudness()`：只有 APPROVED 才是 ERROR），会进校验、不挡发布 |
+| 零碎但真的：`NO_KEYS` 还有第三个出现处（`localehub mockup --page` 的预览）；`NO_COMPONENTS` 在整页那条路判的是**页面源码里**的组件声明而不是标记；单个组件名时图例是空的（≥2 才有图例）；`en → en-US` 只在项目里恰有一个 `en-*` 时成立；导入工具的传输上限是 **4 MB**（MCP 传输），不是 8 MB（那是 REST 扫描） | ✅ 逐条按代码改掉 |
+
+**故意没照审稿意见做的**：审稿建议把「整页首选的说明」在 `instructions`／教程／工具 `description` 三处收敛成"引用"。
+没做——MCP 客户端只把**工具 `description`**摆在 agent 面前，resources 要 agent 主动去读；把它缩成引用，
+等于让"只列工具、不读资源"的客户端失去唯一看得见的规则。**矛盾必须修，重复不必删**：重复的那几段各改一半，
+正是这一轮好几个 bug 的成因。
+
+**验证**
+
+| 证据 | 结果 |
+| --- | --- |
+| `pnpm test` | **554 通过**（0 失败；新增的一条是「本地画框取自项目声明的端」的回归测试） |
+| `pnpm test:integration` | **191 通过**（顺手修掉一条过期断言：`不要同时传` → `只用一种输入`） |
+| `pnpm lint` / `pnpm typecheck` | 0 warning / 0 error |
+| `check-mcp-sketch-guide.mjs` | 通过：教程里的示例在真实栈上跑到底（含画框拒绝） |
+| `check-mcp-tool-pages.mjs` / `check-mcp-onboarding.mjs` | 通过；onboarding 第四步拿到的就是钉住的 `http://192.168.200.172:3003/mcp` |
+| 部署 | api/worker/mcp-remote 两次、web 一次，**都带 marker**（`deploy-local.sh` 会先在镜像里 grep 新文案，grep 不到就不换容器） |
+
+**踩到的坑**：web 那次部署我第一次写的 marker 用了指南里的措辞（「整页复刻，还原度最高」），而页面上的原话是
+「平台不重画，还原度最高」——`set -e` 让脚本在 tagging 之前就退了，容器没换（`Up 23 hours`）。
+这正是 marker 机制存在的意义：**它拦住的是"构建成功、其实没换镜像"**，而那正是过去一个下午里悄悄发生过三次的事。
+换个真实文案后正常上线。
+
+**没做的**：`flutter` 还没进 `platform` 的取值（要动数据库枚举，等用户点头）；MCP 的 `import_translations`
+对 `.arb` 文件仍按 `format: 'json'` 记账；已上传的安卓越界屏仍要看真图才能修（§1.79 的真机渲染路径）。
+
 ## 附：最终验证记录（本文件写入后重跑）
 
 | 命令                                             | 结果                                    |
